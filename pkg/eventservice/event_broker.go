@@ -285,7 +285,7 @@ func (c *eventBroker) logUnresetDispatchers(ctx context.Context) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		ticker := time.NewTicker(time.Minute * 10)
+		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
 		for {
 			select {
@@ -329,6 +329,7 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	if task.dispatcherStat.resetTs.Load() == 0 {
 		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
 		c.sendReadyEvent(remoteID, task.dispatcherStat)
+		log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.dispatcherStat.id))
 		return false, common.DataRange{}
 	}
 
@@ -348,7 +349,10 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	}
 
 	// target ts range: (dataRange.StartTs, dataRange.EndTs]
-	dmlState := c.eventStore.GetDispatcherDMLEventState(task.dispatcherStat.id)
+	ok, dmlState := c.eventStore.GetDispatcherDMLEventState(task.dispatcherStat.id)
+	if !ok {
+		return false, dataRange
+	}
 	if dataRange.StartTs >= dmlState.MaxEventCommitTs && dataRange.StartTs >= ddlState.MaxEventCommitTs {
 		// The dispatcher has no new events. In such case, we don't need to scan the event store.
 		// We just send the watermark to the dispatcher.
@@ -389,7 +393,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 			task.dispatcherStat.isInitialized.Store(true)
 		},
 	}
-	log.Info("send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.dispatcherStat.id))
+	log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.dispatcherStat.id))
 	c.getMessageCh(task.dispatcherStat.workerIndex) <- wrapE
 }
 
@@ -436,6 +440,16 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		log.Panic("get ddl events failed", zap.Error(err))
 	}
 
+	//2. Get event iterator from eventStore.
+	iter, err := c.eventStore.GetIterator(dispatcherID, dataRange)
+	if err != nil {
+		log.Panic("read events failed", zap.Error(err))
+	}
+	// TODO: use error to indicate the dispatcher is removed
+	if iter == nil {
+		return
+	}
+
 	// After all the events are sent, we need to
 	// drain the ddlEvents and wake up the dispatcher.
 	defer func() {
@@ -450,11 +464,6 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 	}()
 
-	//2. Get event iterator from eventStore.
-	iter, err := c.eventStore.GetIterator(dispatcherID, dataRange)
-	if err != nil {
-		log.Panic("read events failed", zap.Error(err))
-	}
 	defer func() {
 		eventCount, _ := iter.Close()
 		if eventCount != 0 {

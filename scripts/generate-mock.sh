@@ -26,3 +26,4 @@ fi
 "$MOCKGEN" -source coordinator/changefeed/changefeed_db_backend.go -destination coordinator/changefeed/mock/changefeed_db_backend.go
 "$MOCKGEN" -source pkg/etcd/etcd.go -destination pkg/etcd/mock/etcd.go
 "$MOCKGEN" -source pkg/etcd/client.go -destination pkg/etcd/mock/client.go
+"$MOCKGEN" -source maintainer/replica/tso_client.go -destination maintainer/replica/mock/tso_client.go

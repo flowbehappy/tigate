@@ -116,7 +116,7 @@ func (f *filter) FilterDDLEvent(ddl *commonEvent.DDLEvent) error {
 	for i, query := range queryList {
 		tableInfo := multiTableInfos[i]
 		// 只需要 判断 table name 需不需要过滤就行，如果 schema name 要过滤的话，整个 query 就不会给 dispatcher 了
-		tableName := tableInfo.Name.O
+		tableName := tableInfo.TableName.Table
 		if !f.ShouldIgnoreTable(schemaName, tableName) {
 			finalQuery = append(finalQuery, query)
 		}

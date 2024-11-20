@@ -45,7 +45,7 @@ type regionInfo struct {
 	lockedRangeState *regionlock.LockedRangeState
 }
 
-func (s *regionInfo) isStoped() bool {
+func (s *regionInfo) isStopped() bool {
 	// lockedRange only nil when the region's subscribedTable is stopped.
 	return s.lockedRangeState == nil
 }
@@ -117,6 +117,7 @@ func (s *regionFeedState) markStopped(err error) {
 	if s.state.v == stateNormal {
 		s.state.v = stateStopped
 		s.state.err = err
+		s.matcher.clear()
 	}
 }
 
@@ -127,6 +128,7 @@ func (s *regionFeedState) markRemoved() (changed bool) {
 	if s.state.v == stateStopped {
 		s.state.v = stateRemoved
 		changed = true
+		s.matcher.clear()
 	}
 	return
 }

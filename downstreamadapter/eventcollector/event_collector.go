@@ -137,6 +137,10 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 }
 
 func (c *EventCollector) AddDispatcher(target *dispatcher.Dispatcher, memoryQuota int) {
+	log.Info("add dispatcher", zap.Stringer("dispatcher", target.GetId()))
+	defer func() {
+		log.Info("add dispatcher done", zap.Stringer("dispatcher", target.GetId()))
+	}()
 	stat := &DispatcherStat{
 		dispatcherID: target.GetId(),
 		target:       target,
@@ -161,29 +165,29 @@ func (c *EventCollector) AddDispatcher(target *dispatcher.Dispatcher, memoryQuot
 	})
 
 	c.logCoordinatorRequestChan.In() <- &logservicepb.ReusableEventServiceRequest{
+		ID:      target.GetId().ToPB(),
 		Span:    target.GetTableSpan(),
 		StartTs: target.GetStartTs(),
 	}
 }
 
 func (c *EventCollector) RemoveDispatcher(target *dispatcher.Dispatcher) {
+	log.Info("remove dispatcher", zap.Stringer("dispatcher", target.GetId()))
+	defer func() {
+		log.Info("remove dispatcher done", zap.Stringer("dispatcher", target.GetId()))
+	}()
 	value, ok := c.dispatcherMap.Load(target.GetId())
 	if !ok {
 		return
 	}
 	stat := value.(*DispatcherStat)
+	stat.unregisterDispatcher(c)
 	c.dispatcherMap.Delete(target.GetId())
 
 	err := c.ds.RemovePath(target.GetId())
 	if err != nil {
 		log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
 	}
-
-	// TODO: handle the return error(now even it return error, it will be retried later, we can just ignore it now)
-	c.mustSendDispatcherRequest(stat.getCurrentEventService(), eventServiceTopic, DispatcherRequest{
-		Dispatcher: target,
-		ActionType: eventpb.ActionType_ACTION_TYPE_REMOVE,
-	})
 }
 
 func (c *EventCollector) WakeDispatcher(dispatcherID common.DispatcherID) {
@@ -192,13 +196,7 @@ func (c *EventCollector) WakeDispatcher(dispatcherID common.DispatcherID) {
 
 func (c *EventCollector) ResetDispatcherStat(stat *DispatcherStat) {
 	stat.reset()
-
-	// note: send the request to channel to avoid blocking the caller
-	c.addDispatcherRequestToSendingQueue(stat.getCurrentEventService(), eventServiceTopic, DispatcherRequest{
-		Dispatcher: stat.target,
-		StartTs:    stat.sendCommitTs.Load(),
-		ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
-	})
+	stat.resetDispatcher(c)
 }
 
 func (c *EventCollector) addDispatcherRequestToSendingQueue(serverId node.ID, topic string, req DispatcherRequest) {
@@ -217,15 +215,9 @@ func (c *EventCollector) processFeedback(ctx context.Context) {
 			return
 		case feedback := <-c.ds.Feedback():
 			if feedback.Pause {
-				c.addDispatcherRequestToSendingQueue(feedback.Dest.getCurrentEventService(), eventServiceTopic, DispatcherRequest{
-					Dispatcher: feedback.Dest.target,
-					ActionType: eventpb.ActionType_ACTION_TYPE_PAUSE,
-				})
+				feedback.Dest.pauseDispatcher(c)
 			} else {
-				c.addDispatcherRequestToSendingQueue(feedback.Dest.getCurrentEventService(), eventServiceTopic, DispatcherRequest{
-					Dispatcher: feedback.Dest.target,
-					ActionType: eventpb.ActionType_ACTION_TYPE_RESUME,
-				})
+				feedback.Dest.resumeDispatcher(c)
 			}
 		}
 	}
@@ -294,14 +286,16 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 	}
 
 	err := c.mc.SendCommand(&messaging.TargetMessage{
-		To:      c.serverId,
+		To:      target,
 		Topic:   eventServiceTopic,
 		Type:    typeRegisterDispatcherReq,
 		Message: []messaging.IOTypeT{message},
 	})
 
 	if err != nil {
-		log.Info("failed to send dispatcher request message to event service, try again later", zap.Error(err))
+		log.Info("failed to send dispatcher request message to event service, try again later",
+			zap.Stringer("target", target),
+			zap.Error(err))
 		// Put the request back to the channel for later retry.
 		c.dispatcherRequestChan.In() <- TargetAndDispatcherRequest{
 			Target: target,
@@ -368,7 +362,7 @@ func (c *EventCollector) updateMetrics(ctx context.Context) {
 
 func (c *EventCollector) updateResolvedTsMetric() {
 	var minResolvedTs uint64
-	c.dispatcherMap.Range(func(_, value interface{}) bool {
+	c.dispatcherMap.Range(func(key, value interface{}) bool {
 		if stat, ok := value.(*DispatcherStat); ok {
 			d := stat.target
 			if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
@@ -381,6 +375,9 @@ func (c *EventCollector) updateResolvedTsMetric() {
 	if minResolvedTs > 0 {
 		phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 		lagMs := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
+		log.Info("EventCollector resolved ts lag",
+			zap.Uint64("resolvedTs", minResolvedTs),
+			zap.Float64("lagMs", lagMs))
 		metrics.EventCollectorResolvedTsLagGauge.Set(lagMs)
 	}
 }
@@ -389,13 +386,14 @@ type DispatcherStat struct {
 	dispatcherID common.DispatcherID
 	target       *dispatcher.Dispatcher
 
-	currentEventServiceInfo struct {
+	eventServiceInfo struct {
 		sync.RWMutex
+		// the server this dispatcher is currently connected to(except local event service)
+		// if it is set to local event service id, ignore all messages from other event service
 		serverID node.ID
-	}
-
-	remoteCandidatesInfo struct {
-		sync.Mutex
+		// whether has received ready signal from `serverID`
+		readyEventReceived bool
+		// the remote event services which may contain data this dispatcher needed
 		remoteCandiates []node.ID
 	}
 
@@ -419,66 +417,228 @@ func (d *DispatcherStat) reset() {
 	d.waitHandshake.Store(true)
 }
 
-func (d *DispatcherStat) notifyReadyForReceiveData(server node.ID, eventCollector *EventCollector) {
-	d.currentEventServiceInfo.Lock()
-	d.currentEventServiceInfo.serverID = server
-	d.currentEventServiceInfo.Unlock()
-
-	eventCollector.addDispatcherRequestToSendingQueue(
-		server,
-		eventServiceTopic,
-		DispatcherRequest{
-			Dispatcher: d.target,
-			StartTs:    d.sendCommitTs.Load(),
-			ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
-		},
-	)
+func (d *DispatcherStat) checkEventSeq(event dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
+	switch event.GetType() {
+	case commonEvent.TypeDMLEvent,
+		commonEvent.TypeDDLEvent,
+		commonEvent.TypeHandshakeEvent:
+		expectedSeq := d.lastEventSeq.Add(1)
+		if event.GetSeq() != expectedSeq {
+			log.Warn("Received an out-of-order event, reset the dispatcher",
+				zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
+				zap.Stringer("dispatcher", d.target.GetId()),
+				zap.Uint64("receivedSeq", event.GetSeq()),
+				zap.Uint64("expectedSeq", expectedSeq),
+				zap.Uint64("commitTs", event.GetCommitTs()),
+				zap.Any("event", event))
+			d.reset()
+			eventCollector.addDispatcherRequestToSendingQueue(d.eventServiceInfo.serverID, eventServiceTopic, DispatcherRequest{
+				Dispatcher: d.target,
+				StartTs:    d.sendCommitTs.Load(),
+				ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
+			})
+			log.Info("reset dispatcher",
+				zap.Stringer("dispatcher", d.target.GetId()),
+				zap.Uint64("startTs", d.sendCommitTs.Load()))
+			return false
+		}
+		return true
+	default:
+		return true
+	}
 }
 
-func (d *DispatcherStat) checkNoReadySignalReceived(server node.ID) {
-	d.currentEventServiceInfo.RLock()
-	defer d.currentEventServiceInfo.RUnlock()
-	if d.currentEventServiceInfo.serverID != "" {
+func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
+	if d.eventServiceInfo.serverID != event.From {
+		// TODO: unregister from this invalid event service if it send events for a long time
+		return true
+	}
+	if d.waitHandshake.Load() {
+		log.Warn("Receive event before handshake event, ignore it",
+			zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
+			zap.Stringer("dispatcher", d.target.GetId()),
+			zap.Any("event", event))
+		return true
+	}
+	if !d.checkEventSeq(event, eventCollector) {
+		return true
+	}
+	// Note: a commit ts may have multiple transactions.
+	// it is ok to send the same txn multiple times?
+	// (we just want to avoid send old dml after new ddl)
+	if event.GetCommitTs() < d.sendCommitTs.Load() {
+		log.Warn("Receive resolved event before sendCommitTs, ignore it",
+			zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
+			zap.Stringer("dispatcher", d.target.GetId()),
+			zap.Uint64("sendCommitTs", d.sendCommitTs.Load()),
+			zap.Any("event", event))
+		return true
+	}
+	d.sendCommitTs.Store(event.GetCommitTs())
+	return false
+}
+
+func (d *DispatcherStat) handleHandshakeEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) {
+	d.eventServiceInfo.Lock()
+	defer d.eventServiceInfo.Unlock()
+	if event.GetType() != commonEvent.TypeHandshakeEvent {
+		log.Panic("should not happen")
+	}
+	if d.eventServiceInfo.serverID == "" {
+		log.Panic("should not happen: not server ID set")
+	}
+	if d.eventServiceInfo.serverID != event.From {
+		// check invariant: if the handshake event is not from the current event service, we must be reading from local event service.
+		if d.eventServiceInfo.serverID != eventCollector.serverId {
+			log.Panic("receive handshake event from remote event service, but current event service is not local event service",
+				zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
+				zap.Stringer("dispatcher", d.target.GetId()),
+				zap.Stringer("from", event.From))
+		}
+		return
+	}
+	if !d.checkEventSeq(event, eventCollector) {
+		return
+	}
+	d.waitHandshake.Store(false)
+	d.target.SetInitialTableInfo(event.Event.(*commonEvent.HandshakeEvent).TableInfo)
+}
+
+func (d *DispatcherStat) handleReadyEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) {
+	d.eventServiceInfo.Lock()
+	defer d.eventServiceInfo.Unlock()
+	if event.GetType() != commonEvent.TypeReadyEvent {
+		log.Panic("should not happen")
+	}
+	server := event.From
+	if d.eventServiceInfo.serverID == server {
+		// case 1: already received ready signal from the same server
+		if d.eventServiceInfo.readyEventReceived {
+			return
+		}
+		// case 2: first ready signal from the server
+		// (must be a remote candidate, because we won't set d.eventServiceInfo.serverID to local event service until we receive ready signal)
+		d.eventServiceInfo.serverID = server
+		d.eventServiceInfo.readyEventReceived = true
+		eventCollector.addDispatcherRequestToSendingQueue(
+			server,
+			eventServiceTopic,
+			DispatcherRequest{
+				Dispatcher: d.target,
+				StartTs:    d.sendCommitTs.Load(),
+				ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
+			},
+		)
+	} else if server == eventCollector.serverId {
+		// case 3: received first ready signal from local event service
+		if d.eventServiceInfo.serverID != "" {
+			eventCollector.addDispatcherRequestToSendingQueue(
+				d.eventServiceInfo.serverID,
+				eventServiceTopic,
+				DispatcherRequest{
+					Dispatcher: d.target,
+					ActionType: eventpb.ActionType_ACTION_TYPE_REMOVE,
+				},
+			)
+		}
+		d.eventServiceInfo.serverID = server
+		d.eventServiceInfo.readyEventReceived = true
+		d.eventServiceInfo.remoteCandiates = nil
+		eventCollector.addDispatcherRequestToSendingQueue(
+			server,
+			eventServiceTopic,
+			DispatcherRequest{
+				Dispatcher: d.target,
+				StartTs:    d.sendCommitTs.Load(),
+				ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
+			},
+		)
+	} else {
 		log.Panic("should not happen: we have received ready signal from other remote server",
 			zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
 			zap.Stringer("dispatcher", d.target.GetId()),
 			zap.Stringer("newRemote", server),
-			zap.Stringer("oldRemote", d.currentEventServiceInfo.serverID))
+			zap.Stringer("oldRemote", d.eventServiceInfo.serverID))
 	}
 }
 
-func (d *DispatcherStat) unregisterFromRemoteEventServiceIfHave(eventCollector *EventCollector) {
-	d.currentEventServiceInfo.Lock()
-	defer d.currentEventServiceInfo.Unlock()
-	if d.currentEventServiceInfo.serverID != "" {
-		eventCollector.addDispatcherRequestToSendingQueue(
-			d.currentEventServiceInfo.serverID,
-			eventServiceTopic,
-			DispatcherRequest{
-				Dispatcher: d.target,
-				ActionType: eventpb.ActionType_ACTION_TYPE_REMOVE,
-			},
-		)
+func (d *DispatcherStat) handleNotReusableEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) {
+	d.eventServiceInfo.Lock()
+	defer d.eventServiceInfo.Unlock()
+	if event.GetType() != commonEvent.TypeNotReusableEvent {
+		log.Panic("should not happen")
 	}
-	d.currentEventServiceInfo.serverID = ""
+	if event.From == d.eventServiceInfo.serverID {
+		if len(d.eventServiceInfo.remoteCandiates) > 0 {
+			eventCollector.addDispatcherRequestToSendingQueue(
+				d.eventServiceInfo.remoteCandiates[0],
+				eventServiceTopic,
+				DispatcherRequest{
+					Dispatcher: d.target,
+					StartTs:    d.target.GetStartTs(),
+					ActionType: eventpb.ActionType_ACTION_TYPE_REGISTER,
+					OnlyUse:    true,
+				},
+			)
+			d.eventServiceInfo.serverID = d.eventServiceInfo.remoteCandiates[0]
+			d.eventServiceInfo.remoteCandiates = d.eventServiceInfo.remoteCandiates[1:]
+		}
+	}
 }
 
-func (d *DispatcherStat) isCurrentEventService(server node.ID) bool {
-	d.currentEventServiceInfo.RLock()
-	defer d.currentEventServiceInfo.RUnlock()
-	return d.currentEventServiceInfo.serverID == server
+func (d *DispatcherStat) unregisterDispatcher(eventCollector *EventCollector) {
+	d.eventServiceInfo.RLock()
+	defer d.eventServiceInfo.RUnlock()
+	// must unregister from local event service
+	eventCollector.mustSendDispatcherRequest(eventCollector.serverId, eventServiceTopic, DispatcherRequest{
+		Dispatcher: d.target,
+		ActionType: eventpb.ActionType_ACTION_TYPE_REMOVE,
+	})
+	// unregister from remote event service if have
+	if d.eventServiceInfo.serverID != eventCollector.serverId {
+		eventCollector.mustSendDispatcherRequest(d.eventServiceInfo.serverID, eventServiceTopic, DispatcherRequest{
+			Dispatcher: d.target,
+			ActionType: eventpb.ActionType_ACTION_TYPE_REMOVE,
+		})
+	}
 }
 
-func (d *DispatcherStat) getCurrentEventService() node.ID {
-	d.currentEventServiceInfo.RLock()
-	defer d.currentEventServiceInfo.RUnlock()
-	return d.currentEventServiceInfo.serverID
+func (d *DispatcherStat) resetDispatcher(eventCollector *EventCollector) {
+	d.eventServiceInfo.RLock()
+	defer d.eventServiceInfo.RUnlock()
+
+	if d.eventServiceInfo.serverID == "" || !d.eventServiceInfo.readyEventReceived {
+		log.Panic("should not happen: reset dispatcher before receiving ready signal")
+	}
+
 }
 
-func (d *DispatcherStat) clearRemoteCandidateInfo() {
-	d.remoteCandidatesInfo.Lock()
-	defer d.remoteCandidatesInfo.Unlock()
-	d.remoteCandidatesInfo.remoteCandiates = nil
+func (d *DispatcherStat) pauseDispatcher(eventCollector *EventCollector) {
+	d.eventServiceInfo.RLock()
+	defer d.eventServiceInfo.RUnlock()
+
+	if d.eventServiceInfo.serverID == "" || !d.eventServiceInfo.readyEventReceived {
+		log.Panic("should not happen: pause dispatcher before receiving ready signal")
+	}
+
+	eventCollector.addDispatcherRequestToSendingQueue(d.eventServiceInfo.serverID, eventServiceTopic, DispatcherRequest{
+		Dispatcher: d.target,
+		ActionType: eventpb.ActionType_ACTION_TYPE_PAUSE,
+	})
+}
+
+func (d *DispatcherStat) resumeDispatcher(eventCollector *EventCollector) {
+	d.eventServiceInfo.RLock()
+	defer d.eventServiceInfo.RUnlock()
+
+	if d.eventServiceInfo.serverID == "" || !d.eventServiceInfo.readyEventReceived {
+		log.Panic("should not happen: resume dispatcher before receiving ready signal")
+	}
+
+	eventCollector.addDispatcherRequestToSendingQueue(d.eventServiceInfo.serverID, eventServiceTopic, DispatcherRequest{
+		Dispatcher: d.target,
+		ActionType: eventpb.ActionType_ACTION_TYPE_RESUME,
+	})
 }
 
 // TODO: better name
@@ -486,22 +646,19 @@ func (d *DispatcherStat) setRemoteCandidates(nodes []string, eventCollector *Eve
 	if len(nodes) == 0 {
 		return
 	}
-	d.currentEventServiceInfo.RLock()
-	// reading from a event service, ignore
-	if d.currentEventServiceInfo.serverID != "" {
+	d.eventServiceInfo.RLock()
+	defer d.eventServiceInfo.RUnlock()
+	// reading from a event service or checking remotes already, ignore
+	if d.eventServiceInfo.serverID != "" {
 		return
 	}
-	d.currentEventServiceInfo.RUnlock()
-
-	d.remoteCandidatesInfo.Lock()
-	defer d.remoteCandidatesInfo.Unlock()
-	// already set remote candidates
-	if len(d.remoteCandidatesInfo.remoteCandiates) > 0 {
-		return
+	d.eventServiceInfo.serverID = node.ID(nodes[0])
+	for i := 1; i < len(nodes); i++ {
+		d.eventServiceInfo.remoteCandiates = append(d.eventServiceInfo.remoteCandiates, node.ID(nodes[i]))
 	}
 
 	eventCollector.addDispatcherRequestToSendingQueue(
-		node.ID(nodes[0]),
+		d.eventServiceInfo.serverID,
 		eventServiceTopic,
 		DispatcherRequest{
 			Dispatcher: d.target,
@@ -510,25 +667,4 @@ func (d *DispatcherStat) setRemoteCandidates(nodes []string, eventCollector *Eve
 			OnlyUse:    true,
 		},
 	)
-	for i := 1; i < len(nodes); i++ {
-		d.remoteCandidatesInfo.remoteCandiates = append(d.remoteCandidatesInfo.remoteCandiates, node.ID(nodes[i]))
-	}
-}
-
-func (d *DispatcherStat) tryNextRemoteCandidate(eventCollector *EventCollector) {
-	d.remoteCandidatesInfo.Lock()
-	defer d.remoteCandidatesInfo.Unlock()
-	if len(d.remoteCandidatesInfo.remoteCandiates) > 0 {
-		eventCollector.addDispatcherRequestToSendingQueue(
-			d.remoteCandidatesInfo.remoteCandiates[0],
-			eventServiceTopic,
-			DispatcherRequest{
-				Dispatcher: d.target,
-				StartTs:    d.target.GetStartTs(),
-				ActionType: eventpb.ActionType_ACTION_TYPE_REGISTER,
-				OnlyUse:    true,
-			},
-		)
-		d.remoteCandidatesInfo.remoteCandiates = d.remoteCandidatesInfo.remoteCandiates[1:]
-	}
 }

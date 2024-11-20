@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/tiflow/pkg/retry"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -39,7 +40,7 @@ type SpanReplication struct {
 
 	schemaID int64
 	nodeID   node.ID
-	status   *heartbeatpb.TableSpanStatus
+	status   *atomic.Pointer[heartbeatpb.TableSpanStatus]
 
 	tsoClient TSOClient
 }
@@ -56,10 +57,10 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 		schemaID:     SchemaID,
 		Span:         span,
 		ChangefeedID: cfID,
-		status: &heartbeatpb.TableSpanStatus{
+		status: atomic.NewPointer(&heartbeatpb.TableSpanStatus{
 			ID:           id.ToPB(),
 			CheckpointTs: checkpointTs,
-		},
+		}),
 	}
 	log.Info("new replica set created",
 		zap.String("changefeed id", cfID.Name()),
@@ -86,7 +87,7 @@ func NewWorkingReplicaSet(
 		Span:         span,
 		ChangefeedID: cfID,
 		nodeID:       nodeID,
-		status:       status,
+		status:       atomic.NewPointer(status),
 		tsoClient:    tsoClient,
 	}
 	log.Info("new working replica set created",
@@ -104,8 +105,9 @@ func NewWorkingReplicaSet(
 
 func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {
 	if newStatus != nil {
-		if newStatus.CheckpointTs >= r.status.CheckpointTs {
-			r.status = newStatus
+		oldStatus := r.status.Load()
+		if newStatus.CheckpointTs >= oldStatus.CheckpointTs {
+			r.status.Store(newStatus)
 		}
 	}
 }
@@ -142,7 +144,7 @@ func (r *SpanReplication) NewAddDispatcherMessage(server node.ID) (*messaging.Ta
 			Config: &heartbeatpb.DispatcherConfig{
 				DispatcherID: r.ID.ToPB(),
 				Span:         r.Span,
-				StartTs:      r.status.CheckpointTs,
+				StartTs:      r.status.Load().CheckpointTs,
 				CurrentPdTs:  ts,
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Create,

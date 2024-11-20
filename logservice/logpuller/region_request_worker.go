@@ -67,6 +67,8 @@ type regionRequestWorker struct {
 
 	// used to indicate whether there are new pending ts events for every processores in dispatchResolvedTs
 	boolCache []bool
+	// used to avoid repeated hash calculation in dispatchResolvedTs
+	slotCache map[uint64]int
 }
 
 func newRegionRequestWorker(
@@ -83,6 +85,7 @@ func newRegionRequestWorker(
 		requestsCh: make(chan regionInfo, 256), // 256 is an arbitrary number.
 
 		boolCache: make([]bool, len(client.changeEventProcessors)),
+		slotCache: make(map[uint64]int),
 	}
 	worker.requestedRegions.subscriptions = make(map[SubscriptionID]regionFeedStates)
 	worker.tsBatches.events = make([]statefulEvent, len(client.changeEventProcessors))
@@ -103,7 +106,7 @@ func newRegionRequestWorker(
 			case <-ctx.Done():
 				return ctx.Err()
 			case region := <-worker.requestsCh:
-				if !region.isStoped() {
+				if !region.isStopped() {
 					worker.preFetchForConnecting = new(regionInfo)
 					*worker.preFetchForConnecting = region
 					return nil
@@ -130,7 +133,7 @@ func newRegionRequestWorker(
 			}
 			// The store may fail forever, so we need try to re-schedule al pending regions.
 			for _, region := range worker.clearPendingRegions() {
-				if region.isStoped() {
+				if region.isStopped() {
 					// It means it's a special task for stopping the table.
 					continue
 				}
@@ -276,7 +279,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 			zap.String("addr", s.store.storeAddr))
 
 		// It means it's a special task for stopping the table.
-		if region.isStoped() {
+		if region.isStopped() {
 			req := &cdcpb.ChangeDataRequest{
 				RequestId: uint64(subID),
 				Request:   &cdcpb.ChangeDataRequest_Deregister_{},
@@ -351,10 +354,10 @@ func (s *regionRequestWorker) getRegionState(subscriptionID SubscriptionID, regi
 func (s *regionRequestWorker) takeRegionState(subscriptionID SubscriptionID, regionID uint64) *regionFeedState {
 	s.requestedRegions.Lock()
 	defer s.requestedRegions.Unlock()
-	if states, ok := s.requestedRegions.subscriptions[subscriptionID]; ok {
-		state := states[regionID]
-		delete(states, regionID)
-		if len(states) == 0 {
+	if statesMap, ok := s.requestedRegions.subscriptions[subscriptionID]; ok {
+		state := statesMap[regionID]
+		delete(statesMap, regionID)
+		if len(statesMap) == 0 {
 			delete(s.requestedRegions.subscriptions, subscriptionID)
 		}
 		return state
@@ -432,13 +435,18 @@ func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) e
 	for i := range s.boolCache {
 		s.boolCache[i] = false
 	}
+	regionsLen := len(resolvedTs.Regions)/len(s.client.changeEventProcessors) + 1 // an average number
 	s.client.metrics.batchResolvedSize.Observe(float64(len(resolvedTs.Regions)))
-	for _, regionID := range resolvedTs.Regions {
-		slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
+	for i, regionID := range resolvedTs.Regions {
+		// We suppose that the length of changeEventProcessors is constant, so we can cache the hashes of the region
+		if _, exist := s.slotCache[regionID]; !exist {
+			s.slotCache[regionID] = hashRegionID(regionID, len(s.client.changeEventProcessors))
+		}
+		slot := s.slotCache[regionID]
 		if !s.boolCache[slot] {
 			s.tsBatches.events[slot].resolvedTsBatches = append(s.tsBatches.events[slot].resolvedTsBatches, resolvedTsBatch{
 				ts:      resolvedTs.Ts,
-				regions: make([]*regionFeedState, 0, len(resolvedTs.Regions)),
+				regions: make([]*regionFeedState, 0, min(len(resolvedTs.Regions)-i, regionsLen)),
 			})
 			s.boolCache[slot] = true
 		}

@@ -6,10 +6,8 @@ import (
 
 // A deque implemented by a doubly linked list of fixed-size blocks.
 type Deque[T any] struct {
-	blockLen int
-	maxLen   int
-
-	freeBlock []T // A free block to reduce frequent memory allocation.
+	blockWidth int
+	maxLen     int
 
 	blocks *list.List[[]T]
 	length int
@@ -23,19 +21,20 @@ func NewDequeDefault[T any]() *Deque[T] {
 	return NewDeque[T](32, 0)
 }
 
-// blockLen is the size of each block.
+// blockWidth is the size of each block.
 // maxLen is the maximum length of the deque. If the length exceeds maxLen, the oldest values will be removed. Zero means no limit.
-func NewDeque[T any](blockLen int, maxLen int) *Deque[T] {
-	if blockLen < 2 {
-		panic("blockLen must be at least 2")
+func NewDeque[T any](blockWidth int, maxLen int) *Deque[T] {
+	if blockWidth < 2 {
+		panic("blockWidth must be at least 2")
 	}
 	d := &Deque[T]{
-		blockLen: blockLen,
-		maxLen:   maxLen,
-		blocks:   list.NewList[[]T](),
+		blockWidth: blockWidth,
+		maxLen:     maxLen,
+		blocks:     list.NewList[[]T](),
+		length:     0,
+		front:      0,
+		back:       -1,
 	}
-	d.blocks.PushBack(make([]T, blockLen))
-	d.resetEmpty()
 	return d
 }
 
@@ -44,8 +43,9 @@ func (d *Deque[T]) Length() int {
 }
 
 func (d *Deque[T]) resetEmpty() {
-	d.front = d.blockLen / 2
-	d.back = d.blockLen/2 - 1
+	d.blocks.Remove(d.blocks.Front())
+	d.front = 0
+	d.back = -1
 }
 
 func (d *Deque[T]) BackRef() (*T, bool) {
@@ -79,19 +79,14 @@ func (d *Deque[T]) Front() (T, bool) {
 }
 
 func (d *Deque[T]) PushBack(item T) {
-	block := d.blocks.Back().Value
-	if d.back == d.blockLen-1 {
-		// the last block is full
-		if d.freeBlock != nil {
-			block = d.freeBlock
-			d.freeBlock = nil
-		} else {
-			block = make([]T, d.blockLen)
-		}
+	if d.back == -1 || d.back == d.blockWidth-1 {
+		// there is no block or the last block is full
+		block := make([]T, d.blockWidth)
 		d.blocks.PushBack(block)
 		d.back = -1
 	}
 
+	block := d.blocks.Back().Value
 	d.back++
 	block[d.back] = item
 	d.length++
@@ -120,10 +115,7 @@ func (d *Deque[T]) PopBack() (T, bool) {
 			d.resetEmpty()
 		} else {
 			d.blocks.Remove(le)
-			d.back = d.blockLen - 1
-			if d.freeBlock == nil {
-				d.freeBlock = block
-			}
+			d.back = d.blockWidth - 1
 		}
 	}
 
@@ -131,19 +123,20 @@ func (d *Deque[T]) PopBack() (T, bool) {
 }
 
 func (d *Deque[T]) PushFront(item T) {
-	block := d.blocks.Front().Value
 	if d.front == 0 {
 		// the first block is full
-		if d.freeBlock != nil {
-			block = d.freeBlock
-			d.freeBlock = nil
-		} else {
-			block = make([]T, d.blockLen)
-		}
+		block := make([]T, d.blockWidth)
 		d.blocks.PushFront(block)
-		d.front = d.blockLen
+		d.front = d.blockWidth
+		if d.back == -1 {
+			if d.length != 0 {
+				panic("back should not be -1 if the deque is not empty")
+			}
+			d.back = d.blockWidth - 1
+		}
 	}
 
+	block := d.blocks.Front().Value
 	d.front--
 	block[d.front] = item
 	d.length++
@@ -166,16 +159,13 @@ func (d *Deque[T]) PopFront() (T, bool) {
 	d.front++
 	d.length--
 
-	if d.front == d.blockLen {
+	if d.front == d.blockWidth {
 		// The current blocks is drained
 		if d.length == 0 {
 			d.resetEmpty()
 		} else {
 			d.blocks.Remove(le)
 			d.front = 0
-			if d.freeBlock == nil {
-				d.freeBlock = block
-			}
 		}
 	}
 

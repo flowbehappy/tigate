@@ -162,7 +162,7 @@ func BenchmarkDSGoroutine1000x1000x100(b *testing.B) {
 		b.ResetTimer()
 
 		inc.Store(0)
-		runGoroutine(chans, 1000, 100)
+		runGoroutine(chans, 1000, 1000)
 		wg.Wait()
 
 		if inc.Load() != int64(1000*1000*100) {
