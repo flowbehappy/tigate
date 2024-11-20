@@ -23,7 +23,6 @@ type Workload interface {
 }
 
 type UpdateOption struct {
-	DB              int
 	Table           int
 	RowCount        int
 	IsSpecialUpdate bool
