@@ -451,17 +451,17 @@ func (d *DispatcherStat) checkEventSeq(event dispatcher.DispatcherEvent, eventCo
 func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
 	if d.eventServiceInfo.serverID != event.From {
 		// TODO: unregister from this invalid event service if it send events for a long time
-		return false
+		return true
 	}
 	if d.waitHandshake.Load() {
 		log.Warn("Receive event before handshake event, ignore it",
 			zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
 			zap.Stringer("dispatcher", d.target.GetId()),
 			zap.Any("event", event))
-		return false
+		return true
 	}
 	if !d.checkEventSeq(event, eventCollector) {
-		return false
+		return true
 	}
 	// Note: a commit ts may have multiple transactions.
 	// it is ok to send the same txn multiple times?
@@ -472,10 +472,10 @@ func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent,
 			zap.Stringer("dispatcher", d.target.GetId()),
 			zap.Uint64("sendCommitTs", d.sendCommitTs.Load()),
 			zap.Any("event", event))
-		return false
+		return true
 	}
 	d.sendCommitTs.Store(event.GetCommitTs())
-	return true
+	return false
 }
 
 func (d *DispatcherStat) handleHandshakeEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) {
