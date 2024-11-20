@@ -149,6 +149,11 @@ func (v *versionedTableInfoStore) gc(gcTs uint64) bool {
 		return false
 	}
 
+	// cut down the reference count of column schema when the item is not be used
+	for _, item := range v.infos[:target-1] {
+		common.GetSharedColumnSchemaStorage().TryReleaseColumnSchema(item.info.ColumnSchema)
+	}
+
 	v.infos = v.infos[target-1:]
 	if len(v.infos) == 0 {
 		log.Panic("should not happen")

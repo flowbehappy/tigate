@@ -84,7 +84,7 @@ type Dispatcher struct {
 	filterConfig *config.FilterConfig
 
 	// tableInfo is the latest table info of the dispatcher
-	tableInfo atomic.Pointer[common.TableInfo]
+	tableInfo *common.TableInfo
 
 	// shared by the event dispatcher manager
 	sink sink.Sink
@@ -262,7 +262,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 			block = true
 			dml := event.(*commonEvent.DMLEvent)
 			dml.ReplicatingTs = d.creatationPDTs
-			dml.AssembleRows(d.tableInfo.Load())
+			dml.AssembleRows(d.tableInfo)
 			dml.AddPostFlushFunc(func() {
 				// Considering dml event in sink may be write to downstream not in order,
 				// thus, we use tableProgress.Empty() to ensure these events are flushed to downstream completely
@@ -279,7 +279,12 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 			block = true
 			event := event.(*commonEvent.DDLEvent)
 			// Update the table info of the dispatcher, when it receive ddl event.
-			d.tableInfo.Store(event.TableInfo)
+			oldTableInfo := d.tableInfo
+			d.tableInfo = event.TableInfo
+			if oldTableInfo != nil {
+				// here the old table info is released, so we need to cut down the reference count of column schema
+				common.GetSharedColumnSchemaStorage().TryReleaseColumnSchema(oldTableInfo.ColumnSchema)
+			}
 			log.Info("dispatcher receive ddl event",
 				zap.Stringer("dispatcher", d.id),
 				zap.String("query", event.Query),
@@ -313,7 +318,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 }
 
 func (d *Dispatcher) SetInitialTableInfo(tableInfo *common.TableInfo) {
-	d.tableInfo.Store(tableInfo)
+	d.tableInfo = tableInfo
 }
 
 func isCompleteSpan(tableSpan *heartbeatpb.TableSpan) bool {

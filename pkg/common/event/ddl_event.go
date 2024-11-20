@@ -212,7 +212,8 @@ func (t DDLEvent) Marshal() ([]byte, error) {
 	}
 	dispatcherIDData := t.DispatcherID.Marshal()
 	data = append(data, dispatcherIDData...)
-
+	// after Marshal, the ddlEvent is not used. So we need to cut down the reference count of column schema
+	common.GetSharedColumnSchemaStorage().TryReleaseColumnSchema(t.TableInfo.ColumnSchema)
 	return data, nil
 }
 
@@ -223,7 +224,15 @@ func (t *DDLEvent) Unmarshal(data []byte) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data[:len(data)-16], t)
+	err = json.Unmarshal(data[:len(data)-16], t)
+	if err != nil {
+		return err
+	}
+	// we clear the digest of the column schema
+	// to represent the table info is not use the shared column schema
+	// Thus, it does not particate in the gc of column schema
+	t.TableInfo.ColumnSchema.Digest.Clear()
+	return nil
 }
 
 func (t *DDLEvent) GetSize() int64 {

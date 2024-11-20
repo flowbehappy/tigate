@@ -21,15 +21,28 @@ type Digest struct {
 	b uint64
 	c uint64
 	d uint64
+	// use ok to represent the digest is valid or not
+	// if valid, means the ColumnSchema with digest use the columnSchema in SharedColumnSchemaStorage
+	// otherwise, verse versa.
+	ok bool
 }
 
 func ToDigest(b []byte) Digest {
 	return Digest{
-		a: binary.BigEndian.Uint64(b[0:8]),
-		b: binary.BigEndian.Uint64(b[8:16]),
-		c: binary.BigEndian.Uint64(b[16:24]),
-		d: binary.BigEndian.Uint64(b[24:32]),
+		a:  binary.BigEndian.Uint64(b[0:8]),
+		b:  binary.BigEndian.Uint64(b[8:16]),
+		c:  binary.BigEndian.Uint64(b[16:24]),
+		d:  binary.BigEndian.Uint64(b[24:32]),
+		ok: true,
 	}
+}
+
+func (d Digest) Clear() {
+	d.ok = false
+}
+
+func (d Digest) valid() bool {
+	return d.ok
 }
 
 func boolToInt(b bool) int {
@@ -116,6 +129,15 @@ func GetSharedColumnSchemaStorage() *SharedColumnSchemaStorage {
 type ColumnSchemaWithTableInfo struct {
 	*ColumnSchema
 	*model.TableInfo
+	count int // reference count
+}
+
+func NewColumnSchemaWithTableInfo(columnSchema *ColumnSchema, tableInfo *model.TableInfo) *ColumnSchemaWithTableInfo {
+	return &ColumnSchemaWithTableInfo{
+		ColumnSchema: columnSchema,
+		TableInfo:    tableInfo,
+		count:        1,
+	}
 }
 
 type SharedColumnSchemaStorage struct {
@@ -125,9 +147,11 @@ type SharedColumnSchemaStorage struct {
 	// We use SHA-256 to calculate the hash value to reduce the collision probability.
 	// However, there may still have some collisions in some cases,
 	// so we use a list to store the ColumnSchemaWithTableInfo object with the same hash value.
-	// ColumnSchemaWithTableInfo contains the ColumnSchema and TableInfo,
+	// ColumnSchemaWithTableInfo contains the ColumnSchema and TableInfo, and a reference count.
 	// we can compare the TableInfo to check whether the column schema is the same.
 	// If not the same, we will create a new ColumnSchema object and append it to the list.
+	// The reference count is used to check whether the ColumnSchema object can be released.
+	// If the reference count is 0, we can release the ColumnSchema object.
 	m     map[Digest][]ColumnSchemaWithTableInfo
 	mutex sync.Mutex
 }
@@ -183,27 +207,66 @@ func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableI
 	colSchemas, ok := s.m[digest]
 	if !ok {
 		// generate Column Schema
-		columnSchema := NewColumnSchema(tableInfo)
+		columnSchema := NewColumnSchema(tableInfo, digest)
 		s.m[digest] = make([]ColumnSchemaWithTableInfo, 1)
-		s.m[digest][0] = ColumnSchemaWithTableInfo{columnSchema, tableInfo}
+		s.m[digest][0] = *NewColumnSchemaWithTableInfo(columnSchema, tableInfo)
 		return columnSchema
 	} else {
-		for _, colSchemaWithTableInfo := range colSchemas {
+		for idx, colSchemaWithTableInfo := range colSchemas {
 			// compare tableInfo to check whether the column schema is the same
 			if compareSchemaInfoOfTableInfo(colSchemaWithTableInfo.TableInfo, tableInfo) {
+				s.m[digest][idx].count++
 				return colSchemaWithTableInfo.ColumnSchema
 			}
 		}
 		// not found the same column info, create a new one
-		columnSchema := NewColumnSchema(tableInfo)
-		s.m[digest] = append(s.m[digest], ColumnSchemaWithTableInfo{columnSchema, tableInfo})
+		columnSchema := NewColumnSchema(tableInfo, digest)
+		s.m[digest] = append(s.m[digest], *NewColumnSchemaWithTableInfo(columnSchema, tableInfo))
 		return columnSchema
+	}
+}
+
+// we call this function when each TableInfo with valid digest is released.
+// we decrease the reference count of the ColumnSchema object,
+// if the reference count is 0, we can release the ColumnSchema object.
+// the release of TableInfo will happens in the following scenarios:
+//  1. when the ddlEvent sent to event collector by event service, if they are not in the same node, mc will Marshal the ddlEvent to bytes and send to other node.
+//     Thus, after Marshal, this ddlEvent is released, the same as the TableInfo.
+//  2. when the dispatcher receive the next ddlEvent, it will catch the new tableInfo, and release the old one. Thus the old tableInfo is released.
+//  3. when the ddlEvent flushed successfully, the TableInfo is released.
+//     However, the tableInfo is shared with dispatcher, and dispatcher always release later, so we don't need to deal here.
+//  4. versionedTableInfo gc will release some tableInfo.
+func (s *SharedColumnSchemaStorage) TryReleaseColumnSchema(columnSchema *ColumnSchema) {
+	if !columnSchema.Digest.valid() {
+		return
+	}
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	colSchemas, ok := s.m[columnSchema.Digest]
+	if !ok {
+		log.Warn("try release column schema failed, column schema not found", zap.Any("columnSchema", columnSchema))
+		return
+	}
+	for idx, colSchemaWithTableInfo := range colSchemas {
+		if colSchemaWithTableInfo.ColumnSchema == columnSchema {
+			s.m[columnSchema.Digest][idx].count--
+			if s.m[columnSchema.Digest][idx].count == 0 {
+				// release the ColumnSchema object
+				SharedColumnSchemaCountGauge.Dec()
+				s.m[columnSchema.Digest] = append(s.m[columnSchema.Digest][:idx], s.m[columnSchema.Digest][idx+1:]...)
+				if len(s.m[columnSchema.Digest]) == 0 {
+					delete(s.m, columnSchema.Digest)
+				}
+			}
+		}
 	}
 }
 
 // ColumnSchema is used to store the column schema information of tableInfo.
 // ColumnSchema is shared across multiple tableInfos with the same schema, in order to reduce memory usage.
 type ColumnSchema struct {
+	// digest of the table info
+	Digest Digest `json:"digest"`
 	// ColumnID -> offset in model.TableInfo.Columns
 	ColumnsOffset map[int64]int `json:"columns_offset"`
 	// Column name -> ColumnID
@@ -252,8 +315,10 @@ type ColumnSchema struct {
 	RowColInfosWithoutVirtualCols *[]rowcodec.ColInfo `json:"row_col_infos_without_virtual_cols"`
 }
 
-func NewColumnSchema(tableInfo *model.TableInfo) *ColumnSchema {
+func NewColumnSchema(tableInfo *model.TableInfo, digest Digest) *ColumnSchema {
+	log.Info("create new column schema", zap.Any("tableInfo", tableInfo))
 	colSchema := &ColumnSchema{
+		Digest:           digest,
 		HasUniqueColumn:  false,
 		ColumnsOffset:    make(map[int64]int, len(tableInfo.Columns)),
 		NameToColID:      make(map[string]int64, len(tableInfo.Columns)),
@@ -325,6 +390,7 @@ func NewColumnSchema(tableInfo *model.TableInfo) *ColumnSchema {
 	colSchema.findHandleIndex(tableInfo)
 	colSchema.initColumnsFlag(tableInfo)
 
+	SharedColumnSchemaCountGauge.Inc()
 	return colSchema
 }
 
