@@ -152,12 +152,12 @@ func (m *matcher) matchCachedRollbackRow(initialized bool) {
 }
 
 func (m *matcher) tryCleanUnmatchedValue() {
-	if len(m.unmatchedValue) == 0 {
+	if m.unmatchedValue == nil {
 		return
 	}
 	// Only clear the unmatched value if it has been 10 seconds since the last prewrite event
 	// and there is no unmatched value left.
-	if time.Since(m.lastPrewriteTime) > 10*time.Second && len(m.unmatchedValue) == 0 {
+	if time.Since(m.lastPrewriteTime) > 5*time.Second && len(m.unmatchedValue) == 0 {
 		m.clearUnmatchedValue()
 	}
 }
