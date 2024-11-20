@@ -23,17 +23,12 @@ import (
 )
 
 const (
-	prewriteCacheSize = 16
+	prewriteCacheSize       = 16
+	clearCacheDelayInSecond = 5
 )
 
 var prewriteCacheRowNum = metrics.LogPullerPrewriteCacheRowNum
 var matcherCount = metrics.LogPullerMatcherCount
-
-// var mapPool = sync.Pool{
-// 	New: func() interface{} {
-// 		return make(map[matchKey]*cdcpb.Event_Row, prewriteCacheSize)
-// 	},
-// }
 
 type matchKey struct {
 	startTs uint64
@@ -141,7 +136,7 @@ func (m *matcher) cacheRollbackRow(row *cdcpb.Event_Row) {
 //nolint:unparam
 func (m *matcher) matchCachedRollbackRow(initialized bool) {
 	if !initialized {
-		log.Panic("must be initialized before match cahced rollback rows")
+		log.Panic("must be initialized before match cached rollback rows")
 	}
 	rollback := m.cachedRollback
 	m.cachedRollback = nil
@@ -157,7 +152,7 @@ func (m *matcher) tryCleanUnmatchedValue() {
 	}
 	// Only clear the unmatched value if it has been 10 seconds since the last prewrite event
 	// and there is no unmatched value left.
-	if time.Since(m.lastPrewriteTime) > 5*time.Second && len(m.unmatchedValue) == 0 {
+	if time.Since(m.lastPrewriteTime) > clearCacheDelayInSecond*time.Second && len(m.unmatchedValue) == 0 {
 		m.clearUnmatchedValue()
 	}
 }
