@@ -30,20 +30,11 @@ type Digest struct {
 
 func ToDigest(b []byte) Digest {
 	return Digest{
-		a:  binary.BigEndian.Uint64(b[0:8]),
-		b:  binary.BigEndian.Uint64(b[8:16]),
-		c:  binary.BigEndian.Uint64(b[16:24]),
-		d:  binary.BigEndian.Uint64(b[24:32]),
-		ok: true,
+		a: binary.BigEndian.Uint64(b[0:8]),
+		b: binary.BigEndian.Uint64(b[8:16]),
+		c: binary.BigEndian.Uint64(b[16:24]),
+		d: binary.BigEndian.Uint64(b[24:32]),
 	}
-}
-
-func (d Digest) Clear() {
-	d.ok = false
-}
-
-func (d Digest) valid() bool {
-	return d.ok
 }
 
 func boolToInt(b bool) int {
@@ -248,6 +239,7 @@ func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableI
 			// compare tableInfo to check whether the column schema is the same
 			if colSchemaWithCount.columnSchema.SameWithTableInfo(tableInfo) {
 				s.m[digest][idx].count++
+				log.Info("hyy into get or set column schema, find the column schema", zap.Any("count", colSchemaWithCount.count))
 				return colSchemaWithCount.columnSchema
 			}
 		}
@@ -282,7 +274,7 @@ func (s *SharedColumnSchemaStorage) getOrSetColumnSchemaByColumnSchema(columnSch
 	}
 }
 
-// we call this function when each TableInfo with valid digest is released.
+// we call this function when each TableInfo is released,
 // we decrease the reference count of the columnSchema object,
 // if the reference count is 0, we can release the columnSchema object.
 // the release of TableInfo will happens in the following scenarios:
@@ -293,9 +285,7 @@ func (s *SharedColumnSchemaStorage) getOrSetColumnSchemaByColumnSchema(columnSch
 //     However, the tableInfo is shared with dispatcher, and dispatcher always release later, so we don't need to deal here.
 //  4. versionedTableInfo gc will release some tableInfo.
 func (s *SharedColumnSchemaStorage) tryReleaseColumnSchema(columnSchema *columnSchema) {
-	if !columnSchema.Digest.valid() {
-		return
-	}
+	log.Info("hyy into try release column schema")
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	colSchemas, ok := s.m[columnSchema.Digest]
@@ -305,6 +295,7 @@ func (s *SharedColumnSchemaStorage) tryReleaseColumnSchema(columnSchema *columnS
 	}
 	for idx, colSchemaWithCount := range colSchemas {
 		if colSchemaWithCount.columnSchema == columnSchema {
+			log.Info("hyy into try release column schema, find the column schema", zap.Any("count", colSchemaWithCount.count))
 			s.m[columnSchema.Digest][idx].count--
 			if s.m[columnSchema.Digest][idx].count == 0 {
 				// release the columnSchema object
