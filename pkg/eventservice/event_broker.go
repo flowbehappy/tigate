@@ -141,7 +141,7 @@ func newEventBroker(
 
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
-	c.logUnresetDispatchers(ctx)
+	//c.logUnresetDispatchers(ctx)
 	for i := 0; i < messageWorkerCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
