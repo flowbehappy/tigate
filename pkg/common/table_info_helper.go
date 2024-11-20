@@ -326,6 +326,7 @@ type ColumnSchema struct {
 }
 
 func NewColumnSchema(tableInfo *model.TableInfo, digest Digest) *ColumnSchema {
+	log.Info("create new column schema", zap.Any("tableInfo", tableInfo))
 	colSchema := &ColumnSchema{
 		Digest:           digest,
 		HasUniqueColumn:  false,
