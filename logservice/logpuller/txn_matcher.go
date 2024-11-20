@@ -14,14 +14,27 @@
 package logpuller
 
 import (
+	"sync"
+	"time"
+
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"go.uber.org/zap"
 )
 
+const (
+	prewriteCacheSize = 64
+)
+
 var prewriteCacheRowNum = metrics.LogPullerPrewriteCacheRowNum
 var matcherCount = metrics.LogPullerMatcherCount
+
+var mapPool = sync.Pool{
+	New: func() interface{} {
+		return make(map[matchKey]*cdcpb.Event_Row, prewriteCacheSize)
+	},
+}
 
 type matchKey struct {
 	startTs uint64
@@ -33,16 +46,16 @@ func newMatchKey(row *cdcpb.Event_Row) matchKey {
 }
 
 type matcher struct {
-	// TODO : clear the single prewrite
-	unmatchedValue map[matchKey]*cdcpb.Event_Row
-	cachedCommit   []*cdcpb.Event_Row
-	cachedRollback []*cdcpb.Event_Row
+	unmatchedValue   map[matchKey]*cdcpb.Event_Row
+	cachedCommit     []*cdcpb.Event_Row
+	cachedRollback   []*cdcpb.Event_Row
+	lastPrewriteTime time.Time
 }
 
 func newMatcher() *matcher {
 	matcherCount.Inc()
 	return &matcher{
-		unmatchedValue: make(map[matchKey]*cdcpb.Event_Row),
+		unmatchedValue: mapPool.Get().(map[matchKey]*cdcpb.Event_Row),
 	}
 }
 
@@ -60,6 +73,7 @@ func (m *matcher) putPrewriteRow(row *cdcpb.Event_Row) {
 		return
 	}
 	m.unmatchedValue[key] = row
+	m.lastPrewriteTime = time.Now()
 	prewriteCacheRowNum.Inc()
 }
 
@@ -135,10 +149,30 @@ func (m *matcher) matchCachedRollbackRow(initialized bool) {
 	}
 }
 
+func (m *matcher) tryCleanUnmatchedValue() {
+	if len(m.unmatchedValue) == 0 {
+		return
+	}
+	// Only clear the unmatched value if it has been 10 seconds since the last prewrite event
+	// and there is no unmatched value left.
+	if time.Since(m.lastPrewriteTime) > 10*time.Second && len(m.unmatchedValue) == 0 {
+		m.clearUnmatchedValue()
+	}
+}
+
+func (m *matcher) clearUnmatchedValue() {
+	m.lastPrewriteTime = time.Time{}
+	for k := range m.unmatchedValue {
+		delete(m.unmatchedValue, k)
+	}
+	mapPool.Put(m.unmatchedValue)
+	m.unmatchedValue = nil
+}
+
 func (m *matcher) clear() {
 	matcherCount.Dec()
 	prewriteCacheRowNum.Sub(float64(len(m.unmatchedValue)))
+	m.clearUnmatchedValue()
 	m.cachedCommit = nil
-	m.unmatchedValue = nil
 	m.cachedRollback = nil
 }

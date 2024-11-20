@@ -302,7 +302,7 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 		if state.isStale() || !state.isInitialized() {
 			continue
 		}
-
+		state.matcher.tryCleanUnmatchedValue()
 		regionID := state.getRegionID()
 		lastResolvedTs := state.getLastResolvedTs()
 		if batch.ts < lastResolvedTs {
