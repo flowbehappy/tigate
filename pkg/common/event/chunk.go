@@ -65,10 +65,10 @@ func (m *mounter) rawKVToChunkV1(value []byte, tableInfo *common.TableInfo, chk 
 	if len(value) == 0 {
 		return nil
 	}
-	pkCols := common.TryGetCommonPkColumnIds(tableInfo.ColumnSchema)
-	prefixColIDs := common.PrimaryPrefixColumnIDs(tableInfo.ColumnSchema)
+	pkCols := common.TryGetCommonPkColumnIds(tableInfo)
+	prefixColIDs := common.PrimaryPrefixColumnIDs(tableInfo)
 	colID2CutPos := make(map[int64]int)
-	for _, col := range tableInfo.ColumnSchema.Columns {
+	for _, col := range tableInfo.GetColumns() {
 		if _, ok := colID2CutPos[col.ID]; !ok {
 			colID2CutPos[col.ID] = len(colID2CutPos)
 		}
@@ -82,12 +82,12 @@ func (m *mounter) rawKVToChunkV1(value []byte, tableInfo *common.TableInfo, chk 
 		cutVals = make([][]byte, len(colID2CutPos))
 	}
 	decoder := codec.NewDecoder(chk, m.tz)
-	for i, col := range tableInfo.ColumnSchema.Columns {
+	for i, col := range tableInfo.GetColumns() {
 		if col.IsVirtualGenerated() {
 			chk.AppendNull(i)
 			continue
 		}
-		ok, err := tryDecodeFromHandle(tableInfo.ColumnSchema, i, col, handle, chk, decoder, pkCols, prefixColIDs)
+		ok, err := tryDecodeFromHandle(tableInfo, i, col, handle, chk, decoder, pkCols, prefixColIDs)
 		if err != nil {
 			return err
 		}
@@ -96,7 +96,7 @@ func (m *mounter) rawKVToChunkV1(value []byte, tableInfo *common.TableInfo, chk 
 		}
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
-			colInfo := tableInfo.ColumnSchema.Columns[i]
+			colInfo := tableInfo.GetColumns()[i]
 			d, _, _, _, err1 := getDefaultOrZeroValue(colInfo, m.tz)
 			if err1 != nil {
 				return err1
@@ -112,9 +112,9 @@ func (m *mounter) rawKVToChunkV1(value []byte, tableInfo *common.TableInfo, chk 
 	return nil
 }
 
-func tryDecodeFromHandle(columnSchema *common.ColumnSchema, schemaColIdx int, col *model.ColumnInfo, handle kv.Handle, chk *chunk.Chunk,
+func tryDecodeFromHandle(tableInfo *common.TableInfo, schemaColIdx int, col *model.ColumnInfo, handle kv.Handle, chk *chunk.Chunk,
 	decoder *codec.Decoder, pkCols []int64, prefixColIDs []int64) (bool, error) {
-	if columnSchema.PKIsHandle && mysql.HasPriKeyFlag(col.FieldType.GetFlag()) {
+	if tableInfo.PKIsHandle() && mysql.HasPriKeyFlag(col.FieldType.GetFlag()) {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}

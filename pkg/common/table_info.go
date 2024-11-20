@@ -1,7 +1,10 @@
 package common
 
 import (
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/pingcap/log"
@@ -260,7 +263,7 @@ const (
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
-	SchemaID int64 `json:"schema_id"`
+	SchemaID int64 `json:"schema-id"`
 	// NOTICE: We probably store the logical ID inside TableName,
 	// not the physical ID.
 	// For normal table, there is only one ID, which is the physical ID.
@@ -271,20 +274,96 @@ type TableInfo struct {
 	// In general, we always use the physical ID to represent a table, but we
 	// record the logical ID from the DDL event(job.BinlogInfo.TableInfo).
 	// So be careful when using the TableInfo.
-	TableName TableName `json:"table_name"` // TODO: extract the field out
+	TableName TableName `json:"table-name"`
 
-	ColumnSchema *ColumnSchema `json:"column_schema"`
+	// we don't want user to get columnSchema directly, and do copy or other actions.
+	// So for each operation, we will provide a related function to get field you want.
+	columnSchema *columnSchema `json:"-"`
 
-	PreSQLs map[int]string `json:"pre_sqls"`
+	PreSQLs map[int]string `json:"pre-sqls"`
+}
+
+func (ti *TableInfo) MarshalJSON() ([]byte, error) {
+	// otherField | columnSchemaData | columnSchemaDataSize
+	data, err := json.Marshal(ti)
+	if err != nil {
+		return nil, err
+	}
+	columnSchemaData, err := ti.columnSchema.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	columnSchemaDataSize := len(columnSchemaData)
+	sizeByte := make([]byte, 8)
+	binary.BigEndian.PutUint64(sizeByte, uint64(columnSchemaDataSize))
+	data = append(data, columnSchemaData...)
+	data = append(data, sizeByte...)
+	return data, nil
+}
+
+func UnmarshalJSONToTableInfo(data []byte) (*TableInfo, error) {
+	// otherField | columnSchemaData | columnSchemaDataSize
+	ti := &TableInfo{}
+	var err error
+	var columnSchemaDataSize uint64
+	columnSchemaDataSizeValue := data[len(data)-8:]
+	columnSchemaDataSize = binary.BigEndian.Uint64(columnSchemaDataSizeValue)
+
+	columnSchemaData := data[len(data)-8-int(columnSchemaDataSize) : len(data)-8]
+	restData := data[:len(data)-8-int(columnSchemaDataSize)]
+
+	err = json.Unmarshal(restData, ti)
+	if err != nil {
+		return nil, err
+	}
+
+	ti.columnSchema, err = unmarshalJsonToColumnSchema(columnSchemaData)
+	if err != nil {
+		return nil, err
+	}
+	// when this tableInfo is released, we need to cut down the reference count of the columnSchema
+	// This function should be appear when tableInfo is created as a pair.
+	runtime.SetFinalizer(ti, func(ti *TableInfo) {
+		GetSharedColumnSchemaStorage().tryReleaseColumnSchema(ti.columnSchema)
+	})
+	return ti, nil
+}
+
+func (ti *TableInfo) ShadowCopyColumnSchema() *columnSchema {
+	return ti.columnSchema.Clone()
+}
+
+func (ti *TableInfo) GetColumns() []*model.ColumnInfo {
+	return ti.columnSchema.Columns
+}
+
+func (ti *TableInfo) GetIndices() []*model.IndexInfo {
+	return ti.columnSchema.Indices
 }
 
 func (ti *TableInfo) GetColumnsOffset() map[int64]int {
-	return ti.ColumnSchema.ColumnsOffset
+	return ti.columnSchema.ColumnsOffset
+}
+
+func (ti *TableInfo) PKIsHandle() bool {
+	return ti.columnSchema.PKIsHandle
+}
+
+func (ti *TableInfo) UpdateTS() uint64 {
+	return ti.columnSchema.UpdateTS
+}
+
+func (ti *TableInfo) GetColumnsFlag() map[int64]*ColumnFlagType {
+	return ti.columnSchema.ColumnsFlag
+}
+
+func (ti *TableInfo) Version() uint16 {
+	return ti.columnSchema.Version
 }
 
 func (ti *TableInfo) InitPreSQLs() {
 	// TODO: find better way to hold the preSQLs
-	if len(ti.ColumnSchema.Columns) == 0 {
+	if len(ti.columnSchema.Columns) == 0 {
 		log.Warn("table has no columns, should be in test mode", zap.String("table", ti.TableName.String()))
 		return
 	}
@@ -310,7 +389,7 @@ func (ti *TableInfo) genPreSQLInsert(isReplace bool, needPlaceHolder bool) strin
 
 	if needPlaceHolder {
 		builder.WriteString("(")
-		builder.WriteString(placeHolder(len(ti.ColumnSchema.Columns) - ti.ColumnSchema.VirtualColumnCount))
+		builder.WriteString(placeHolder(len(ti.columnSchema.Columns) - ti.columnSchema.VirtualColumnCount))
 		builder.WriteString(")")
 	}
 	return builder.String()
@@ -341,8 +420,8 @@ func placeHolder(n int) string {
 
 func (ti *TableInfo) getColumnList(isUpdate bool) string {
 	var b strings.Builder
-	for i, col := range ti.ColumnSchema.Columns {
-		if col == nil || ti.ColumnSchema.ColumnsFlag[col.ID].IsGeneratedColumn() {
+	for i, col := range ti.columnSchema.Columns {
+		if col == nil || ti.columnSchema.ColumnsFlag[col.ID].IsGeneratedColumn() {
 			continue
 		}
 		if i > 0 {
@@ -370,11 +449,11 @@ func (ti *TableInfo) GetPreUpdateSQL() string {
 
 // GetColumnInfo returns the column info by ID
 func (ti *TableInfo) GetColumnInfo(colID int64) (info *model.ColumnInfo, exist bool) {
-	colOffset, exist := ti.ColumnSchema.ColumnsOffset[colID]
+	colOffset, exist := ti.columnSchema.ColumnsOffset[colID]
 	if !exist {
 		return nil, false
 	}
-	return ti.ColumnSchema.Columns[colOffset], true
+	return ti.columnSchema.Columns[colOffset], true
 }
 
 // ForceGetColumnInfo return the column info by ID
@@ -390,7 +469,7 @@ func (ti *TableInfo) ForceGetColumnInfo(colID int64) *model.ColumnInfo {
 // ForceGetColumnFlagType return the column flag type by ID
 // Caller must ensure `colID` exists
 func (ti *TableInfo) ForceGetColumnFlagType(colID int64) *ColumnFlagType {
-	flag, ok := ti.ColumnSchema.ColumnsFlag[colID]
+	flag, ok := ti.columnSchema.ColumnsFlag[colID]
 	if !ok {
 		log.Panic("invalid column id", zap.Int64("columnID", colID))
 	}
@@ -406,7 +485,7 @@ func (ti *TableInfo) ForceGetColumnName(colID int64) string {
 // ForceGetColumnIDByName return column ID by column name
 // Caller must ensure `colID` exists
 func (ti *TableInfo) ForceGetColumnIDByName(name string) int64 {
-	colID, ok := ti.ColumnSchema.NameToColID[name]
+	colID, ok := ti.columnSchema.NameToColID[name]
 	if !ok {
 		log.Panic("invalid column name", zap.String("column", name))
 	}
@@ -440,22 +519,22 @@ func (ti *TableInfo) IsPartitionTable() bool {
 
 // GetRowColInfos returns all column infos for rowcodec
 func (ti *TableInfo) GetRowColInfos() ([]int64, map[int64]*datumTypes.FieldType, []rowcodec.ColInfo) {
-	return ti.ColumnSchema.HandleColID, ti.ColumnSchema.RowColFieldTps, ti.ColumnSchema.RowColInfos
+	return ti.columnSchema.HandleColID, ti.columnSchema.RowColFieldTps, ti.columnSchema.RowColInfos
 }
 
 // GetFieldSlice returns the field types of all columns
 func (ti *TableInfo) GetFieldSlice() []*datumTypes.FieldType {
-	return ti.ColumnSchema.RowColFieldTpsSlice
+	return ti.columnSchema.RowColFieldTpsSlice
 }
 
 // GetColInfosForRowChangedEvent return column infos for non-virtual columns
 // The column order in the result is the same as the order in its corresponding RowChangedEvent
 func (ti *TableInfo) GetColInfosForRowChangedEvent() []rowcodec.ColInfo {
-	return *ti.ColumnSchema.RowColInfosWithoutVirtualCols
+	return *ti.columnSchema.RowColInfosWithoutVirtualCols
 }
 
 func (ti *TableInfo) GetColumnFlags() map[int64]*ColumnFlagType {
-	return ti.ColumnSchema.ColumnsFlag
+	return ti.columnSchema.ColumnsFlag
 }
 
 // IsColCDCVisible returns whether the col is visible for CDC
@@ -469,12 +548,12 @@ func IsColCDCVisible(col *model.ColumnInfo) bool {
 
 // HasVirtualColumns returns whether the table has virtual columns
 func (ti *TableInfo) HasVirtualColumns() bool {
-	return ti.ColumnSchema.VirtualColumnCount > 0
+	return ti.columnSchema.VirtualColumnCount > 0
 }
 
 // GetIndex return the corresponding index by the given name.
 func (ti *TableInfo) GetIndex(name string) *model.IndexInfo {
-	for _, index := range ti.ColumnSchema.Indices {
+	for _, index := range ti.columnSchema.Indices {
 		if index != nil && index.Name.O == name {
 			return index
 		}
@@ -501,8 +580,8 @@ func (ti *TableInfo) IndexByName(name string) ([]string, []int, bool) {
 // If any column does not exist, return false
 func (ti *TableInfo) OffsetsByNames(names []string) ([]int, bool) {
 	// todo: optimize it
-	columnOffsets := make(map[string]int, len(ti.ColumnSchema.Columns))
-	for _, col := range ti.ColumnSchema.Columns {
+	columnOffsets := make(map[string]int, len(ti.columnSchema.Columns))
+	for _, col := range ti.columnSchema.Columns {
 		if col != nil {
 			columnOffsets[col.Name.O] = col.Offset
 		}
@@ -523,12 +602,12 @@ func (ti *TableInfo) OffsetsByNames(names []string) ([]int, bool) {
 // GetPrimaryKeyColumnNames returns the primary key column names
 func (ti *TableInfo) GetPrimaryKeyColumnNames() []string {
 	var result []string
-	if ti.ColumnSchema.PKIsHandle {
-		result = append(result, ti.ColumnSchema.GetPkColInfo().Name.O)
+	if ti.columnSchema.PKIsHandle {
+		result = append(result, ti.columnSchema.GetPkColInfo().Name.O)
 		return result
 	}
 
-	indexInfo := ti.ColumnSchema.GetPrimaryKey()
+	indexInfo := ti.columnSchema.GetPrimaryKey()
 	if indexInfo != nil {
 		for _, col := range indexInfo.Columns {
 			result = append(result, col.Name.O)
@@ -537,24 +616,34 @@ func (ti *TableInfo) GetPrimaryKeyColumnNames() []string {
 	return result
 }
 
+func NewTableInfo(schemaID int64, schemaName string, tableName string, tableID int64, isPartition bool, colcolumnSchema *columnSchema) *TableInfo {
+	ti := &TableInfo{
+		SchemaID: schemaID,
+		TableName: TableName{
+			Schema:      schemaName,
+			Table:       tableName,
+			TableID:     tableID,
+			IsPartition: isPartition,
+		},
+		columnSchema: colcolumnSchema,
+	}
+
+	// when this tableInfo is released, we need to cut down the reference count of the columnSchema
+	// This function should be appear when tableInfo is created as a pair.
+	runtime.SetFinalizer(ti, func(ti *TableInfo) {
+		GetSharedColumnSchemaStorage().tryReleaseColumnSchema(ti.columnSchema)
+	})
+
+	return ti
+}
+
 // WrapTableInfo creates a TableInfo from a model.TableInfo
 func WrapTableInfo(schemaID int64, schemaName string, info *model.TableInfo) *TableInfo {
 	// search column schema object
 	sharedColumnSchemaStorage := GetSharedColumnSchemaStorage()
 	columnSchema := sharedColumnSchemaStorage.GetOrSetColumnSchema(info)
 
-	ti := &TableInfo{
-		SchemaID: schemaID,
-		TableName: TableName{
-			Schema:      schemaName,
-			Table:       info.Name.O,
-			TableID:     info.ID,
-			IsPartition: info.GetPartitionInfo() != nil,
-		},
-		ColumnSchema: columnSchema,
-	}
-
-	return ti
+	return NewTableInfo(schemaID, schemaName, info.Name.O, info.ID, info.GetPartitionInfo() != nil, columnSchema)
 }
 
 // GetColumnDefaultValue returns the default definition of a column.

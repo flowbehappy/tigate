@@ -279,12 +279,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 			block = true
 			event := event.(*commonEvent.DDLEvent)
 			// Update the table info of the dispatcher, when it receive ddl event.
-			oldTableInfo := d.tableInfo
 			d.tableInfo = event.TableInfo
-			if oldTableInfo != nil {
-				// here the old table info is released, so we need to cut down the reference count of column schema
-				common.GetSharedColumnSchemaStorage().TryReleaseColumnSchema(oldTableInfo.ColumnSchema)
-			}
 			log.Info("dispatcher receive ddl event",
 				zap.Stringer("dispatcher", d.id),
 				zap.String("query", event.Query),

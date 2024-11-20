@@ -3,6 +3,7 @@ package common
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"sync"
 
 	"github.com/pingcap/log"
@@ -14,7 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// hash representation for ColumnSchema of TableInfo
+// hash representation for columnSchema of TableInfo
 // Considering sha-256 output is 32 bytes, we use 4 uint64 to represent the hash value.
 type Digest struct {
 	a uint64
@@ -22,7 +23,7 @@ type Digest struct {
 	c uint64
 	d uint64
 	// use ok to represent the digest is valid or not
-	// if valid, means the ColumnSchema with digest use the columnSchema in SharedColumnSchemaStorage
+	// if valid, means the columnSchema with digest use the columnSchema in SharedColumnSchemaStorage
 	// otherwise, verse versa.
 	ok bool
 }
@@ -127,32 +128,32 @@ func GetSharedColumnSchemaStorage() *SharedColumnSchemaStorage {
 }
 
 type ColumnSchemaWithCount struct {
-	*ColumnSchema
+	*columnSchema
 	count int // reference count
 }
 
-func NewColumnSchemaWithCount(columnSchema *ColumnSchema) *ColumnSchemaWithCount {
+func NewColumnSchemaWithCount(columnSchema *columnSchema) *ColumnSchemaWithCount {
 	return &ColumnSchemaWithCount{
-		ColumnSchema: columnSchema,
+		columnSchema: columnSchema,
 		count:        1,
 	}
 }
 
 type SharedColumnSchemaStorage struct {
-	// For the table have the same column schema, we will use the same ColumnSchema object to reduce memory usage.
-	// we use a map to store the ColumnSchema object(in ColumnSchemaWithTableInfo),
+	// For the table have the same column schema, we will use the same columnSchema object to reduce memory usage.
+	// we use a map to store the columnSchema object(in ColumnSchemaWithTableInfo),
 	// the key is the hash value of the Column Info of the table info.
 	// We use SHA-256 to calculate the hash value to reduce the collision probability.
 	// However, there may still have some collisions in some cases,
 	// so we use a list to store the ColumnSchemaWithCount object with the same hash value.
-	// ColumnSchemaWithCount contains the ColumnSchema and a reference count.
-	// The reference count is used to check whether the ColumnSchema object can be released.
-	// If the reference count is 0, we can release the ColumnSchema object.
+	// ColumnSchemaWithCount contains the columnSchema and a reference count.
+	// The reference count is used to check whether the columnSchema object can be released.
+	// If the reference count is 0, we can release the columnSchema object.
 	m     map[Digest][]ColumnSchemaWithCount
 	mutex sync.Mutex
 }
 
-func (s *ColumnSchema) sameColumnsAndIndices(columns []*model.ColumnInfo, indices []*model.IndexInfo) bool {
+func (s *columnSchema) sameColumnsAndIndices(columns []*model.ColumnInfo, indices []*model.IndexInfo) bool {
 	if len(s.Columns) != len(columns) {
 		return false
 	}
@@ -195,16 +196,16 @@ func (s *ColumnSchema) sameColumnsAndIndices(columns []*model.ColumnInfo, indice
 	return true
 }
 
-func (s *ColumnSchema) SameWithTableInfo(tableInfo *model.TableInfo) bool {
+func (s *columnSchema) SameWithTableInfo(tableInfo *model.TableInfo) bool {
 	return s.sameColumnsAndIndices(tableInfo.Columns, tableInfo.Indices)
 }
 
 // compare the item calculated in hashTableInfo
-func (s *ColumnSchema) Equal(columnSchema *ColumnSchema) bool {
+func (s *columnSchema) Equal(columnSchema *columnSchema) bool {
 	return s.sameColumnsAndIndices(columnSchema.Columns, columnSchema.Indices)
 }
 
-func (s *SharedColumnSchemaStorage) IncColumnSchemaCount(columnSchema *ColumnSchema) {
+func (s *SharedColumnSchemaStorage) incColumnSchemaCount(columnSchema *columnSchema) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -213,7 +214,7 @@ func (s *SharedColumnSchemaStorage) IncColumnSchemaCount(columnSchema *ColumnSch
 		log.Error("inc column schema count failed, column schema not found", zap.Any("columnSchema", columnSchema))
 	}
 	for idx, colSchemaWithCount := range colSchemas {
-		if colSchemaWithCount.ColumnSchema.Equal(columnSchema) {
+		if colSchemaWithCount.columnSchema.Equal(columnSchema) {
 			s.m[columnSchema.Digest][idx].count++
 			return
 		}
@@ -223,35 +224,67 @@ func (s *SharedColumnSchemaStorage) IncColumnSchemaCount(columnSchema *ColumnSch
 	}
 }
 
-func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableInfo) *ColumnSchema {
+// we only should get ColumnSchema By GetOrSetColumnSchema.
+// For the object which get columnSchema by this function, we need to set finalizer to ask
+// when the object is released, we should call tryReleaseColumnSchema to decrease the reference count of the columnSchema object
+// to ensure the gc for column schema.
+//
+//	eg. runtime.SetFinalizer(ti, func(ti *TableInfo) {
+//	    	GetSharedColumnSchemaStorage().tryReleaseColumnSchema(ti.ColumnSchema)
+//	   })
+func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableInfo) *columnSchema {
 	digest := hashTableInfo(tableInfo)
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	colSchemas, ok := s.m[digest]
 	if !ok {
 		// generate Column Schema
-		columnSchema := NewColumnSchema(tableInfo, digest)
+		columnSchema := newColumnSchema(tableInfo, digest)
 		s.m[digest] = make([]ColumnSchemaWithCount, 1)
 		s.m[digest][0] = *NewColumnSchemaWithCount(columnSchema)
 		return columnSchema
 	} else {
 		for idx, colSchemaWithCount := range colSchemas {
 			// compare tableInfo to check whether the column schema is the same
-			if colSchemaWithCount.ColumnSchema.SameWithTableInfo(tableInfo) {
+			if colSchemaWithCount.columnSchema.SameWithTableInfo(tableInfo) {
 				s.m[digest][idx].count++
-				return colSchemaWithCount.ColumnSchema
+				return colSchemaWithCount.columnSchema
 			}
 		}
 		// not found the same column info, create a new one
-		columnSchema := NewColumnSchema(tableInfo, digest)
+		columnSchema := newColumnSchema(tableInfo, digest)
+		s.m[digest] = append(s.m[digest], *NewColumnSchemaWithCount(columnSchema))
+		return columnSchema
+	}
+}
+
+// This function is used after unmarshal, we need to get shared column schema by the unmarshal result to avoid inused-object.
+func (s *SharedColumnSchemaStorage) getOrSetColumnSchemaByColumnSchema(columnSchema *columnSchema) *columnSchema {
+	digest := columnSchema.Digest
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	colSchemas, ok := s.m[digest]
+	if !ok {
+		s.m[digest] = make([]ColumnSchemaWithCount, 1)
+		s.m[digest][0] = *NewColumnSchemaWithCount(columnSchema)
+		return columnSchema
+	} else {
+		for idx, colSchemaWithCount := range colSchemas {
+			// compare tableInfo to check whether the column schema is the same
+			if colSchemaWithCount.columnSchema.Equal(columnSchema) {
+				s.m[digest][idx].count++
+				return colSchemaWithCount.columnSchema
+			}
+		}
+		// not found the same column info, add a new one
 		s.m[digest] = append(s.m[digest], *NewColumnSchemaWithCount(columnSchema))
 		return columnSchema
 	}
 }
 
 // we call this function when each TableInfo with valid digest is released.
-// we decrease the reference count of the ColumnSchema object,
-// if the reference count is 0, we can release the ColumnSchema object.
+// we decrease the reference count of the columnSchema object,
+// if the reference count is 0, we can release the columnSchema object.
 // the release of TableInfo will happens in the following scenarios:
 //  1. when the ddlEvent sent to event collector by event service, if they are not in the same node, mc will Marshal the ddlEvent to bytes and send to other node.
 //     Thus, after Marshal, this ddlEvent is released, the same as the TableInfo.
@@ -259,7 +292,7 @@ func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableI
 //  3. when the ddlEvent flushed successfully, the TableInfo is released.
 //     However, the tableInfo is shared with dispatcher, and dispatcher always release later, so we don't need to deal here.
 //  4. versionedTableInfo gc will release some tableInfo.
-func (s *SharedColumnSchemaStorage) TryReleaseColumnSchema(columnSchema *ColumnSchema) {
+func (s *SharedColumnSchemaStorage) tryReleaseColumnSchema(columnSchema *columnSchema) {
 	if !columnSchema.Digest.valid() {
 		return
 	}
@@ -271,10 +304,10 @@ func (s *SharedColumnSchemaStorage) TryReleaseColumnSchema(columnSchema *ColumnS
 		return
 	}
 	for idx, colSchemaWithCount := range colSchemas {
-		if colSchemaWithCount.ColumnSchema == columnSchema {
+		if colSchemaWithCount.columnSchema == columnSchema {
 			s.m[columnSchema.Digest][idx].count--
 			if s.m[columnSchema.Digest][idx].count == 0 {
-				// release the ColumnSchema object
+				// release the columnSchema object
 				SharedColumnSchemaCountGauge.Dec()
 				s.m[columnSchema.Digest] = append(s.m[columnSchema.Digest][:idx], s.m[columnSchema.Digest][idx+1:]...)
 				if len(s.m[columnSchema.Digest]) == 0 {
@@ -285,9 +318,11 @@ func (s *SharedColumnSchemaStorage) TryReleaseColumnSchema(columnSchema *ColumnS
 	}
 }
 
-// ColumnSchema is used to store the column schema information of tableInfo.
-// ColumnSchema is shared across multiple tableInfos with the same schema, in order to reduce memory usage.
-type ColumnSchema struct {
+// columnSchema is used to store the column schema information of tableInfo.
+// columnSchema is shared across multiple tableInfos with the same schema, in order to reduce memory usage.
+// we make columnSchema as a private struct, in order to avoid other method to directly create a columnSchema object.
+// we only want user to get columnSchema by GetOrSetColumnSchema or Clone method.
+type columnSchema struct {
 	// digest of the table info
 	Digest Digest `json:"digest"`
 
@@ -355,8 +390,33 @@ type ColumnSchema struct {
 	RowColInfosWithoutVirtualCols *[]rowcodec.ColInfo `json:"row_col_infos_without_virtual_cols"`
 }
 
-func NewColumnSchema(tableInfo *model.TableInfo, digest Digest) *ColumnSchema {
-	colSchema := &ColumnSchema{
+func (s *columnSchema) Marshal() ([]byte, error) {
+	return json.Marshal(s)
+}
+
+// If you want to copy columnSchema(shaddow copy), you should use Clone method.
+// This function will increase the reference count of the columnSchema object.
+func (s *columnSchema) Clone() *columnSchema {
+	GetSharedColumnSchemaStorage().incColumnSchemaCount(s)
+	return s
+}
+
+// TODO: we can optimize the method, to first unmarshal part of columnSchema to ensure whether there have a shared column schema.
+func unmarshalJsonToColumnSchema(data []byte) (*columnSchema, error) {
+	var colSchema columnSchema
+	err := json.Unmarshal(data, &colSchema)
+	if err != nil {
+		return nil, err
+	}
+
+	sharedColumnSchema := GetSharedColumnSchemaStorage().getOrSetColumnSchemaByColumnSchema(&colSchema)
+	return sharedColumnSchema, nil
+}
+
+// make newColumnSchema as a private method, in order to avoid other method to directly create a columnSchema object.
+// we only want user to get columnSchema by GetOrSetColumnSchema or Clone method.
+func newColumnSchema(tableInfo *model.TableInfo, digest Digest) *columnSchema {
+	colSchema := &columnSchema{
 		Digest:           digest,
 		Version:          tableInfo.Version,
 		Columns:          tableInfo.Columns,
@@ -441,7 +501,7 @@ func NewColumnSchema(tableInfo *model.TableInfo, digest Digest) *ColumnSchema {
 
 // GetPkColInfo gets the ColumnInfo of pk if exists.
 // Make sure PkIsHandle checked before call this method.
-func (s *ColumnSchema) GetPkColInfo() *model.ColumnInfo {
+func (s *columnSchema) GetPkColInfo() *model.ColumnInfo {
 	for _, colInfo := range s.Columns {
 		if mysql.HasPriKeyFlag(colInfo.GetFlag()) {
 			return colInfo
@@ -451,7 +511,7 @@ func (s *ColumnSchema) GetPkColInfo() *model.ColumnInfo {
 }
 
 // Cols returns the columns of the table in public state.
-func (s *ColumnSchema) Cols() []*model.ColumnInfo {
+func (s *columnSchema) Cols() []*model.ColumnInfo {
 	publicColumns := make([]*model.ColumnInfo, len(s.Columns))
 	maxOffset := -1
 	for _, col := range s.Columns {
@@ -472,7 +532,7 @@ func (s *ColumnSchema) Cols() []*model.ColumnInfo {
 // the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
 // For more information about implicit primary key, see
 // https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
-func (s *ColumnSchema) GetPrimaryKey() *model.IndexInfo {
+func (s *columnSchema) GetPrimaryKey() *model.IndexInfo {
 	var implicitPK *model.IndexInfo
 
 	for _, key := range s.Indices {
@@ -514,7 +574,7 @@ func (s *ColumnSchema) GetPrimaryKey() *model.IndexInfo {
 	return implicitPK
 }
 
-func (s *ColumnSchema) initRowColInfosWithoutVirtualCols() {
+func (s *columnSchema) initRowColInfosWithoutVirtualCols() {
 	if s.VirtualColumnCount == 0 {
 		s.RowColInfosWithoutVirtualCols = &s.RowColInfos
 		return
@@ -534,7 +594,7 @@ func (s *ColumnSchema) initRowColInfosWithoutVirtualCols() {
 	s.RowColInfosWithoutVirtualCols = &colInfos
 }
 
-func (s *ColumnSchema) findHandleIndex(tableName string) {
+func (s *columnSchema) findHandleIndex(tableName string) {
 	if s.HandleIndexID == HandleIndexPKIsHandle {
 		// pk is handle
 		return
@@ -564,7 +624,7 @@ func (s *ColumnSchema) findHandleIndex(tableName string) {
 	}
 }
 
-func (s *ColumnSchema) initColumnsFlag() {
+func (s *columnSchema) initColumnsFlag() {
 	for _, colInfo := range s.Columns {
 		var flag ColumnFlagType
 		if colInfo.GetCharset() == "binary" {
@@ -622,7 +682,7 @@ func (s *ColumnSchema) initColumnsFlag() {
 }
 
 // IsIndexUnique returns whether the index is unique and all columns are not null
-func (s *ColumnSchema) IsIndexUniqueAndNotNull(indexInfo *model.IndexInfo) bool {
+func (s *columnSchema) IsIndexUniqueAndNotNull(indexInfo *model.IndexInfo) bool {
 	if indexInfo.Primary {
 		return true
 	}
@@ -643,20 +703,20 @@ func (s *ColumnSchema) IsIndexUniqueAndNotNull(indexInfo *model.IndexInfo) bool 
 }
 
 // TryGetCommonPkColumnIds get the IDs of primary key column if the table has common handle.
-func TryGetCommonPkColumnIds(columnSchema *ColumnSchema) []int64 {
-	if !columnSchema.IsCommonHandle {
+func TryGetCommonPkColumnIds(tableInfo *TableInfo) []int64 {
+	if !tableInfo.columnSchema.IsCommonHandle {
 		return nil
 	}
-	pkIdx := FindPrimaryIndex(columnSchema)
+	pkIdx := FindPrimaryIndex(tableInfo.columnSchema)
 	pkColIDs := make([]int64, 0, len(pkIdx.Columns))
 	for _, idxCol := range pkIdx.Columns {
-		pkColIDs = append(pkColIDs, columnSchema.Columns[idxCol.Offset].ID)
+		pkColIDs = append(pkColIDs, tableInfo.columnSchema.Columns[idxCol.Offset].ID)
 	}
 	return pkColIDs
 }
 
-// FindPrimaryIndex uses to find primary index in ColumnSchema.
-func FindPrimaryIndex(columnSchema *ColumnSchema) *model.IndexInfo {
+// FindPrimaryIndex uses to find primary index in columnSchema.
+func FindPrimaryIndex(columnSchema *columnSchema) *model.IndexInfo {
 	var pkIdx *model.IndexInfo
 	for _, idx := range columnSchema.Indices {
 		if idx.Primary {
@@ -668,14 +728,14 @@ func FindPrimaryIndex(columnSchema *ColumnSchema) *model.IndexInfo {
 }
 
 // PrimaryPrefixColumnIDs get prefix column ids in primary key.
-func PrimaryPrefixColumnIDs(columnSchema *ColumnSchema) (prefixCols []int64) {
-	for _, idx := range columnSchema.Indices {
+func PrimaryPrefixColumnIDs(tableInfo *TableInfo) (prefixCols []int64) {
+	for _, idx := range tableInfo.columnSchema.Indices {
 		if !idx.Primary {
 			continue
 		}
 		for _, col := range idx.Columns {
-			if col.Length > 0 && columnSchema.Columns[col.Offset].GetFlen() > col.Length {
-				prefixCols = append(prefixCols, columnSchema.Columns[col.Offset].ID)
+			if col.Length > 0 && tableInfo.columnSchema.Columns[col.Offset].GetFlen() > col.Length {
+				prefixCols = append(prefixCols, tableInfo.columnSchema.Columns[col.Offset].ID)
 			}
 		}
 	}

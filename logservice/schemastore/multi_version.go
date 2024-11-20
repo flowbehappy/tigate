@@ -67,7 +67,7 @@ func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
 	defer v.mu.Unlock()
 	// assertEmpty(v.infos)
 	// log.Info("addInitialTableInfo", zap.Int64("tableID", int64(v.tableID)), zap.Uint64("version", info.Version))
-	v.infos = append(v.infos, &tableInfoItem{version: uint64(info.ColumnSchema.Version), info: info})
+	v.infos = append(v.infos, &tableInfoItem{version: uint64(info.Version()), info: info})
 }
 
 func (v *versionedTableInfoStore) getTableID() int64 {
@@ -149,11 +149,6 @@ func (v *versionedTableInfoStore) gc(gcTs uint64) bool {
 		return false
 	}
 
-	// cut down the reference count of column schema when the item is not be used
-	for _, item := range v.infos[:target-1] {
-		common.GetSharedColumnSchemaStorage().TryReleaseColumnSchema(item.info.ColumnSchema)
-	}
-
 	v.infos = v.infos[target-1:]
 	if len(v.infos) == 0 {
 		log.Panic("should not happen")
@@ -166,7 +161,7 @@ func assertEmpty(infos []*tableInfoItem, event *PersistedDDLEvent) {
 		log.Panic("shouldn't happen",
 			zap.Any("infosLen", len(infos)),
 			zap.Any("lastVersion", infos[len(infos)-1].version),
-			zap.Any("lastTableInfoVersion", infos[len(infos)-1].info.ColumnSchema.Version),
+			zap.Any("lastTableInfoVersion", infos[len(infos)-1].info.Version()),
 			zap.String("query", event.Query),
 			zap.Int64("tableID", event.CurrentTableID),
 			zap.Uint64("finishedTs", event.FinishedTs),
@@ -318,33 +313,28 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 		}
 	case model.ActionExchangeTablePartition:
 		assertNonEmpty(v.infos, event)
-		lastRawColumnSchema := v.infos[len(v.infos)-1].info.ColumnSchema
-		common.GetSharedColumnSchemaStorage().IncColumnSchemaCount(lastRawColumnSchema)
+		columnSchema := v.infos[len(v.infos)-1].info.ShadowCopyColumnSchema()
 		// the previous normal table
 		if v.tableID == event.PrevTableID {
-			tableInfo := &common.TableInfo{
-				SchemaID: event.CurrentSchemaID,
-				TableName: common.TableName{
-					Schema:      event.CurrentSchemaName,
-					Table:       pmodel.NewCIStr(event.CurrentTableName).O,
-					TableID:     v.infos[len(v.infos)-1].info.TableName.TableID,
-					IsPartition: v.infos[len(v.infos)-1].info.TableName.IsPartition,
-				},
-				ColumnSchema: lastRawColumnSchema,
-			}
+			tableInfo := common.NewTableInfo(
+				event.CurrentSchemaID,
+				event.CurrentSchemaName,
+				pmodel.NewCIStr(event.CurrentTableName).O,
+				v.infos[len(v.infos)-1].info.TableName.TableID,
+				v.infos[len(v.infos)-1].info.TableName.IsPartition,
+				columnSchema,
+			)
 			tableInfo.InitPreSQLs()
 			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: tableInfo})
 		} else {
-			tableInfo := &common.TableInfo{
-				SchemaID: event.CurrentSchemaID,
-				TableName: common.TableName{
-					Schema:      event.CurrentSchemaName,
-					Table:       pmodel.NewCIStr(event.PrevTableName).O,
-					TableID:     v.infos[len(v.infos)-1].info.TableName.TableID,
-					IsPartition: v.infos[len(v.infos)-1].info.TableName.IsPartition,
-				},
-				ColumnSchema: lastRawColumnSchema,
-			}
+			tableInfo := common.NewTableInfo(
+				event.CurrentSchemaID,
+				event.CurrentSchemaName,
+				pmodel.NewCIStr(event.PrevTableName).O,
+				v.infos[len(v.infos)-1].info.TableName.TableID,
+				v.infos[len(v.infos)-1].info.TableName.IsPartition,
+				columnSchema,
+			)
 			tableInfo.InitPreSQLs()
 			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: tableInfo})
 		}

@@ -240,7 +240,7 @@ func newTableStatistic(key model.TopicPartitionKey, row *commonEvent.RowChangedE
 	res.counter.Add(1)
 	res.lastMsgReceivedTime.Store(time.Now())
 	res.lastSendTime.Store(time.Unix(0, 0))
-	res.version.Store(row.TableInfo.ColumnSchema.UpdateTS)
+	res.version.Store(row.TableInfo.UpdateTS())
 	res.tableInfo.Store(row.TableInfo)
 	return res
 }
@@ -260,9 +260,9 @@ func (t *tableStatistic) update(row *commonEvent.RowChangedEvent, totalPartition
 
 	// Note(dongmen): Rename Table DDL is a special case,
 	// the TableInfo.Name is changed but the TableInfo.UpdateTs is not changed.
-	if t.version.Load() != row.TableInfo.ColumnSchema.UpdateTS ||
+	if t.version.Load() != row.TableInfo.UpdateTS() ||
 		t.tableInfo.Load().(*common.TableInfo).TableName.Table != row.TableInfo.TableName.Table {
-		t.version.Store(row.TableInfo.ColumnSchema.UpdateTS)
+		t.version.Store(row.TableInfo.UpdateTS())
 		t.tableInfo.Store(row.TableInfo)
 	}
 	if t.totalPartition.Load() != totalPartition {
