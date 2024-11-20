@@ -270,8 +270,8 @@ func (s *SharedColumnSchemaStorage) TryReleaseColumnSchema(columnSchema *ColumnS
 		log.Warn("try release column schema failed, column schema not found", zap.Any("columnSchema", columnSchema))
 		return
 	}
-	for idx, colSchemaWithTableInfo := range colSchemas {
-		if colSchemaWithTableInfo.ColumnSchema == columnSchema {
+	for idx, colSchemaWithCount := range colSchemas {
+		if colSchemaWithCount.ColumnSchema == columnSchema {
 			s.m[columnSchema.Digest][idx].count--
 			if s.m[columnSchema.Digest][idx].count == 0 {
 				// release the ColumnSchema object
@@ -356,7 +356,6 @@ type ColumnSchema struct {
 }
 
 func NewColumnSchema(tableInfo *model.TableInfo, digest Digest) *ColumnSchema {
-	log.Info("create new column schema", zap.Any("tableInfo", tableInfo))
 	colSchema := &ColumnSchema{
 		Digest:           digest,
 		Version:          tableInfo.Version,
@@ -416,13 +415,13 @@ func NewColumnSchema(tableInfo *model.TableInfo, digest Digest) *ColumnSchema {
 	}
 
 	for _, idx := range colSchema.Indices {
-		if IsIndexUniqueAndNotNull(tableInfo, idx) {
+		if colSchema.IsIndexUniqueAndNotNull(idx) {
 			colSchema.HasUniqueColumn = true
 		}
 		if idx.Primary || idx.Unique {
 			indexColOffset := make([]int, 0, len(idx.Columns))
 			for _, idxCol := range idx.Columns {
-				colInfo := tableInfo.Columns[idxCol.Offset]
+				colInfo := colSchema.Columns[idxCol.Offset]
 				if IsColCDCVisible(colInfo) {
 					indexColOffset = append(indexColOffset, colSchema.RowColumnsOffset[colInfo.ID])
 				}
@@ -433,7 +432,7 @@ func NewColumnSchema(tableInfo *model.TableInfo, digest Digest) *ColumnSchema {
 		}
 	}
 	colSchema.initRowColInfosWithoutVirtualCols()
-	colSchema.findHandleIndex(tableInfo)
+	colSchema.findHandleIndex(tableInfo.Name.O)
 	colSchema.initColumnsFlag()
 
 	SharedColumnSchemaCountGauge.Inc()
@@ -535,14 +534,14 @@ func (s *ColumnSchema) initRowColInfosWithoutVirtualCols() {
 	s.RowColInfosWithoutVirtualCols = &colInfos
 }
 
-func (s *ColumnSchema) findHandleIndex(tableInfo *model.TableInfo) {
+func (s *ColumnSchema) findHandleIndex(tableName string) {
 	if s.HandleIndexID == HandleIndexPKIsHandle {
 		// pk is handle
 		return
 	}
 	handleIndexOffset := -1
 	for i, idx := range s.Indices {
-		if !IsIndexUniqueAndNotNull(tableInfo, idx) {
+		if !s.IsIndexUniqueAndNotNull(idx) {
 			continue
 		}
 		if idx.Primary {
@@ -560,7 +559,7 @@ func (s *ColumnSchema) findHandleIndex(tableInfo *model.TableInfo) {
 		}
 	}
 	if handleIndexOffset >= 0 {
-		log.Info("find handle index", zap.String("table", tableInfo.Name.O), zap.String("index", s.Indices[handleIndexOffset].Name.O))
+		log.Info("find handle index", zap.String("table", tableName), zap.String("index", s.Indices[handleIndexOffset].Name.O))
 		s.HandleIndexID = s.Indices[handleIndexOffset].ID
 	}
 }
@@ -623,13 +622,13 @@ func (s *ColumnSchema) initColumnsFlag() {
 }
 
 // IsIndexUnique returns whether the index is unique and all columns are not null
-func IsIndexUniqueAndNotNull(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) bool {
+func (s *ColumnSchema) IsIndexUniqueAndNotNull(indexInfo *model.IndexInfo) bool {
 	if indexInfo.Primary {
 		return true
 	}
 	if indexInfo.Unique {
 		for _, col := range indexInfo.Columns {
-			colInfo := tableInfo.Columns[col.Offset]
+			colInfo := s.Columns[col.Offset]
 			if !mysql.HasNotNullFlag(colInfo.GetFlag()) {
 				return false
 			}
@@ -656,7 +655,7 @@ func TryGetCommonPkColumnIds(columnSchema *ColumnSchema) []int64 {
 	return pkColIDs
 }
 
-// FindPrimaryIndex uses to find primary index in tableInfo.
+// FindPrimaryIndex uses to find primary index in ColumnSchema.
 func FindPrimaryIndex(columnSchema *ColumnSchema) *model.IndexInfo {
 	var pkIdx *model.IndexInfo
 	for _, idx := range columnSchema.Indices {
