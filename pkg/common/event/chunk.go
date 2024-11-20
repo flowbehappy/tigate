@@ -13,7 +13,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -66,10 +65,10 @@ func (m *mounter) rawKVToChunkV1(value []byte, tableInfo *common.TableInfo, chk 
 	if len(value) == 0 {
 		return nil
 	}
-	pkCols := tables.TryGetCommonPkColumnIds(tableInfo.TableInfo)
-	prefixColIDs := tables.PrimaryPrefixColumnIDs(tableInfo.TableInfo)
+	pkCols := common.TryGetCommonPkColumnIds(tableInfo.ColumnSchema)
+	prefixColIDs := common.PrimaryPrefixColumnIDs(tableInfo.ColumnSchema)
 	colID2CutPos := make(map[int64]int)
-	for _, col := range tableInfo.TableInfo.Columns {
+	for _, col := range tableInfo.ColumnSchema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {
 			colID2CutPos[col.ID] = len(colID2CutPos)
 		}
@@ -83,12 +82,12 @@ func (m *mounter) rawKVToChunkV1(value []byte, tableInfo *common.TableInfo, chk 
 		cutVals = make([][]byte, len(colID2CutPos))
 	}
 	decoder := codec.NewDecoder(chk, m.tz)
-	for i, col := range tableInfo.TableInfo.Columns {
+	for i, col := range tableInfo.ColumnSchema.Columns {
 		if col.IsVirtualGenerated() {
 			chk.AppendNull(i)
 			continue
 		}
-		ok, err := tryDecodeFromHandle(tableInfo.TableInfo, i, col, handle, chk, decoder, pkCols, prefixColIDs)
+		ok, err := tryDecodeFromHandle(tableInfo.ColumnSchema, i, col, handle, chk, decoder, pkCols, prefixColIDs)
 		if err != nil {
 			return err
 		}
@@ -97,7 +96,7 @@ func (m *mounter) rawKVToChunkV1(value []byte, tableInfo *common.TableInfo, chk 
 		}
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
-			colInfo := tableInfo.TableInfo.Columns[i]
+			colInfo := tableInfo.ColumnSchema.Columns[i]
 			d, _, _, _, err1 := getDefaultOrZeroValue(colInfo, m.tz)
 			if err1 != nil {
 				return err1
@@ -113,9 +112,9 @@ func (m *mounter) rawKVToChunkV1(value []byte, tableInfo *common.TableInfo, chk 
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *model.ColumnInfo, handle kv.Handle, chk *chunk.Chunk,
+func tryDecodeFromHandle(columnSchema *common.ColumnSchema, schemaColIdx int, col *model.ColumnInfo, handle kv.Handle, chk *chunk.Chunk,
 	decoder *codec.Decoder, pkCols []int64, prefixColIDs []int64) (bool, error) {
-	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.FieldType.GetFlag()) {
+	if columnSchema.PKIsHandle && mysql.HasPriKeyFlag(col.FieldType.GetFlag()) {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}

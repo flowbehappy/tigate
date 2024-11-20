@@ -176,6 +176,8 @@ func compareSchemaInfoOfTableInfo(originTableInfo *model.TableInfo, newTableInfo
 	return true
 }
 
+func (s *SharedColumnSchemaStorage) IncColumnSchemaCount(tableInfo *TableInfo)
+
 func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableInfo) *ColumnSchema {
 	digest := hashTableInfo(tableInfo)
 	s.mutex.Lock()
@@ -204,6 +206,22 @@ func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableI
 // ColumnSchema is used to store the column schema information of tableInfo.
 // ColumnSchema is shared across multiple tableInfos with the same schema, in order to reduce memory usage.
 type ColumnSchema struct {
+	// These fields are copied from model.TableInfo.
+	// Version means the version of the table info.
+	Version uint16 `json:"version"`
+	// Columns are listed in the order in which they appear in the schema
+	Columns []*model.ColumnInfo `json:"cols"`
+	Indices []*model.IndexInfo  `json:"index_info"`
+	// PKIsHandle is true when primary key is a single integer column.
+	PKIsHandle bool `json:"pk_is_handle"`
+	// IsCommonHandle is true when clustered index feature is
+	// enabled and the primary key is not a single integer column.
+	IsCommonHandle bool `json:"is_common_handle"`
+	// UpdateTS is used to record the timestamp of updating the table's schema information.
+	// These changing schema operations don't include 'truncate table' and 'rename table'.
+	UpdateTS uint64 `json:"update_timestamp"`
+
+	// rest fields are generated
 	// ColumnID -> offset in model.TableInfo.Columns
 	ColumnsOffset map[int64]int `json:"columns_offset"`
 	// Column name -> ColumnID
@@ -254,6 +272,12 @@ type ColumnSchema struct {
 
 func NewColumnSchema(tableInfo *model.TableInfo) *ColumnSchema {
 	colSchema := &ColumnSchema{
+		Version:          tableInfo.Version,
+		Columns:          tableInfo.Columns,
+		Indices:          tableInfo.Indices,
+		PKIsHandle:       tableInfo.PKIsHandle,
+		IsCommonHandle:   tableInfo.IsCommonHandle,
+		UpdateTS:         tableInfo.UpdateTS,
 		HasUniqueColumn:  false,
 		ColumnsOffset:    make(map[int64]int, len(tableInfo.Columns)),
 		NameToColID:      make(map[string]int64, len(tableInfo.Columns)),
@@ -268,7 +292,7 @@ func NewColumnSchema(tableInfo *model.TableInfo) *ColumnSchema {
 	rowColumnsCurrentOffset := 0
 
 	colSchema.VirtualColumnCount = 0
-	for i, col := range tableInfo.Columns {
+	for i, col := range colSchema.Columns {
 		colSchema.ColumnsOffset[col.ID] = i
 		pkIsHandle := false
 		if IsColCDCVisible(col) {
@@ -304,7 +328,7 @@ func NewColumnSchema(tableInfo *model.TableInfo) *ColumnSchema {
 		colSchema.RowColFieldTpsSlice = append(colSchema.RowColFieldTpsSlice, colSchema.RowColInfos[i].Ft)
 	}
 
-	for _, idx := range tableInfo.Indices {
+	for _, idx := range colSchema.Indices {
 		if IsIndexUniqueAndNotNull(tableInfo, idx) {
 			colSchema.HasUniqueColumn = true
 		}
@@ -321,20 +345,95 @@ func NewColumnSchema(tableInfo *model.TableInfo) *ColumnSchema {
 			}
 		}
 	}
-	colSchema.initRowColInfosWithoutVirtualCols(tableInfo)
+	colSchema.initRowColInfosWithoutVirtualCols()
 	colSchema.findHandleIndex(tableInfo)
-	colSchema.initColumnsFlag(tableInfo)
+	colSchema.initColumnsFlag()
 
 	return colSchema
 }
 
-func (s *ColumnSchema) initRowColInfosWithoutVirtualCols(tableInfo *model.TableInfo) {
+// GetPkColInfo gets the ColumnInfo of pk if exists.
+// Make sure PkIsHandle checked before call this method.
+func (s *ColumnSchema) GetPkColInfo() *model.ColumnInfo {
+	for _, colInfo := range s.Columns {
+		if mysql.HasPriKeyFlag(colInfo.GetFlag()) {
+			return colInfo
+		}
+	}
+	return nil
+}
+
+// Cols returns the columns of the table in public state.
+func (s *ColumnSchema) Cols() []*model.ColumnInfo {
+	publicColumns := make([]*model.ColumnInfo, len(s.Columns))
+	maxOffset := -1
+	for _, col := range s.Columns {
+		if col.State != model.StatePublic {
+			continue
+		}
+		publicColumns[col.Offset] = col
+		if maxOffset < col.Offset {
+			maxOffset = col.Offset
+		}
+	}
+	return publicColumns[0 : maxOffset+1]
+}
+
+// GetPrimaryKey extract the primary key in a table and return `IndexInfo`
+// The returned primary key could be explicit or implicit.
+// If there is no explicit primary key in table,
+// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
+// For more information about implicit primary key, see
+// https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
+func (s *ColumnSchema) GetPrimaryKey() *model.IndexInfo {
+	var implicitPK *model.IndexInfo
+
+	for _, key := range s.Indices {
+		if key.Primary {
+			// table has explicit primary key
+			return key
+		}
+		// The case index without any columns should never happen, but still do a check here
+		if len(key.Columns) == 0 {
+			continue
+		}
+		// find the first unique key with NOT NULL columns
+		if implicitPK == nil && key.Unique {
+			// ensure all columns in unique key have NOT NULL flag
+			allColNotNull := true
+			skip := false
+			for _, idxCol := range key.Columns {
+				col := model.FindColumnInfo(s.Cols(), idxCol.Name.L)
+				// This index has a column in DeleteOnly state,
+				// or it is expression index (it defined on a hidden column),
+				// it can not be implicit PK, go to next index iterator
+				if col == nil || col.Hidden {
+					skip = true
+					break
+				}
+				if !mysql.HasNotNullFlag(col.GetFlag()) {
+					allColNotNull = false
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+			if allColNotNull {
+				implicitPK = key
+			}
+		}
+	}
+	return implicitPK
+}
+
+func (s *ColumnSchema) initRowColInfosWithoutVirtualCols() {
 	if s.VirtualColumnCount == 0 {
 		s.RowColInfosWithoutVirtualCols = &s.RowColInfos
 		return
 	}
 	colInfos := make([]rowcodec.ColInfo, 0, len(s.RowColInfos)-s.VirtualColumnCount)
-	for i, col := range tableInfo.Columns {
+	for i, col := range s.Columns {
 		if IsColCDCVisible(col) {
 			colInfos = append(colInfos, s.RowColInfos[i])
 		}
@@ -354,7 +453,7 @@ func (s *ColumnSchema) findHandleIndex(tableInfo *model.TableInfo) {
 		return
 	}
 	handleIndexOffset := -1
-	for i, idx := range tableInfo.Indices {
+	for i, idx := range s.Indices {
 		if !IsIndexUniqueAndNotNull(tableInfo, idx) {
 			continue
 		}
@@ -365,21 +464,21 @@ func (s *ColumnSchema) findHandleIndex(tableInfo *model.TableInfo) {
 		if handleIndexOffset < 0 {
 			handleIndexOffset = i
 		} else {
-			if len(tableInfo.Indices[handleIndexOffset].Columns) > len(tableInfo.Indices[i].Columns) ||
-				(len(tableInfo.Indices[handleIndexOffset].Columns) == len(tableInfo.Indices[i].Columns) &&
-					tableInfo.Indices[handleIndexOffset].ID > tableInfo.Indices[i].ID) {
+			if len(s.Indices[handleIndexOffset].Columns) > len(s.Indices[i].Columns) ||
+				(len(s.Indices[handleIndexOffset].Columns) == len(s.Indices[i].Columns) &&
+					s.Indices[handleIndexOffset].ID > s.Indices[i].ID) {
 				handleIndexOffset = i
 			}
 		}
 	}
 	if handleIndexOffset >= 0 {
-		log.Info("find handle index", zap.String("table", tableInfo.Name.O), zap.String("index", tableInfo.Indices[handleIndexOffset].Name.O))
-		s.HandleIndexID = tableInfo.Indices[handleIndexOffset].ID
+		log.Info("find handle index", zap.String("table", tableInfo.Name.O), zap.String("index", s.Indices[handleIndexOffset].Name.O))
+		s.HandleIndexID = s.Indices[handleIndexOffset].ID
 	}
 }
 
-func (s *ColumnSchema) initColumnsFlag(tableInfo *model.TableInfo) {
-	for _, colInfo := range tableInfo.Columns {
+func (s *ColumnSchema) initColumnsFlag() {
+	for _, colInfo := range s.Columns {
 		var flag ColumnFlagType
 		if colInfo.GetCharset() == "binary" {
 			flag.SetIsBinary()
@@ -415,9 +514,9 @@ func (s *ColumnSchema) initColumnsFlag(tableInfo *model.TableInfo) {
 	// which is crucial for the completeness of the information we pass to the downstream.
 	// Therefore, instead of using the MySQL standard,
 	// we made our own decision to mark all columns in an index with the appropriate flag(s).
-	for _, idxInfo := range tableInfo.Indices {
+	for _, idxInfo := range s.Indices {
 		for _, idxCol := range idxInfo.Columns {
-			colInfo := tableInfo.Columns[idxCol.Offset]
+			colInfo := s.Columns[idxCol.Offset]
 			flag := s.ColumnsFlag[colInfo.ID]
 			if idxInfo.Primary {
 				flag.SetIsPrimaryKey()
@@ -454,4 +553,44 @@ func IsIndexUniqueAndNotNull(tableInfo *model.TableInfo, indexInfo *model.IndexI
 		return true
 	}
 	return false
+}
+
+// TryGetCommonPkColumnIds get the IDs of primary key column if the table has common handle.
+func TryGetCommonPkColumnIds(columnSchema *ColumnSchema) []int64 {
+	if !columnSchema.IsCommonHandle {
+		return nil
+	}
+	pkIdx := FindPrimaryIndex(columnSchema)
+	pkColIDs := make([]int64, 0, len(pkIdx.Columns))
+	for _, idxCol := range pkIdx.Columns {
+		pkColIDs = append(pkColIDs, columnSchema.Columns[idxCol.Offset].ID)
+	}
+	return pkColIDs
+}
+
+// FindPrimaryIndex uses to find primary index in tableInfo.
+func FindPrimaryIndex(columnSchema *ColumnSchema) *model.IndexInfo {
+	var pkIdx *model.IndexInfo
+	for _, idx := range columnSchema.Indices {
+		if idx.Primary {
+			pkIdx = idx
+			break
+		}
+	}
+	return pkIdx
+}
+
+// PrimaryPrefixColumnIDs get prefix column ids in primary key.
+func PrimaryPrefixColumnIDs(columnSchema *ColumnSchema) (prefixCols []int64) {
+	for _, idx := range columnSchema.Indices {
+		if !idx.Primary {
+			continue
+		}
+		for _, col := range idx.Columns {
+			if col.Length > 0 && columnSchema.Columns[col.Offset].GetFlen() > col.Length {
+				prefixCols = append(prefixCols, columnSchema.Columns[col.Offset].ID)
+			}
+		}
+	}
+	return
 }

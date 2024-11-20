@@ -119,7 +119,7 @@ func columnData2Column(col *timodel.ColumnData, tableInfo *common.TableInfo) *co
 			zap.Int64("columnID", colID),
 			zap.Any("tableInfo", tableInfo))
 	}
-	colInfo := tableInfo.Columns[offset]
+	colInfo := tableInfo.ColumnSchema.Columns[offset]
 	return &common.Column{
 		Name:      colInfo.Name.O,
 		Type:      colInfo.GetType(),
@@ -253,7 +253,7 @@ func (e *RowEvent) PrimaryKeyColumnNames() []string {
 
 	result = make([]string, 0)
 	tableInfo := e.TableInfo
-	columns := e.TableInfo.Columns
+	columns := e.TableInfo.ColumnSchema.Columns
 	for _, col := range columns {
 		if col != nil && tableInfo.ForceGetColumnFlagType(col.ID).IsPrimaryKey() {
 			result = append(result, tableInfo.ForceGetColumnName(col.ID))
