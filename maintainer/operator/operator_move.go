@@ -74,6 +74,7 @@ func (m *MoveDispatcherOperator) Schedule() *messaging.TargetMessage {
 
 	if m.originNodeStopped {
 		if !m.bind {
+			// only bind the span to the dest node after the origin node is stopped.
 			m.db.BindSpanToNode(m.origin, m.dest, m.replicaSet)
 			m.bind = true
 		}

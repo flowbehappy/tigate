@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
+	"github.com/pingcap/ticdc/maintainer/scheduler"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
@@ -60,7 +61,7 @@ func TestSchedule(t *testing.T) {
 			TableID:  int64(i),
 		}, 1)
 	}
-	controller.spanScheduler.Execute()
+	controller.schedulerController.GetScheduler(scheduler.BasicScheduler).Execute()
 	require.Equal(t, 9, controller.operatorController.OperatorSize())
 	for _, span := range controller.replicationDB.GetTasksBySchemaID(1) {
 		if op := controller.operatorController.GetOperator(span.ID); op != nil {
@@ -117,14 +118,14 @@ func TestBalance(t *testing.T) {
 		spanReplica.SetNodeID("node1")
 		s.replicationDB.AddReplicatingSpan(spanReplica)
 	}
-	s.spanScheduler.Execute()
+	s.schedulerController.GetScheduler(scheduler.BalanceScheduler).Execute()
 	require.Equal(t, 0, s.operatorController.OperatorSize())
 	require.Equal(t, 100, s.replicationDB.GetReplicatingSize())
 	require.Equal(t, 100, s.replicationDB.GetTaskSizeByNodeID("node1"))
 
 	// add new node
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
-	s.spanScheduler.Execute()
+	s.schedulerController.GetScheduler(scheduler.BalanceScheduler).Execute()
 	require.Equal(t, 50, s.operatorController.OperatorSize())
 	require.Equal(t, 50, s.replicationDB.GetSchedulingSize())
 	require.Equal(t, 50, s.replicationDB.GetReplicatingSize())
@@ -188,7 +189,8 @@ func TestStoppedWhenMoving(t *testing.T) {
 	require.Equal(t, 2, s.replicationDB.GetTaskSizeByNodeID("node1"))
 	// add new node
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
-	s.spanScheduler.Execute()
+	require.Equal(t, 0, s.replicationDB.GetAbsentSize())
+	s.schedulerController.GetScheduler(scheduler.BalanceScheduler).Execute()
 	require.Equal(t, 1, s.operatorController.OperatorSize())
 	require.Equal(t, 1, s.replicationDB.GetSchedulingSize())
 	require.Equal(t, 1, s.replicationDB.GetReplicatingSize())
@@ -275,7 +277,9 @@ func TestBalanceUnEvenTask(t *testing.T) {
 		spanReplica := replica.NewReplicaSet(cfID, dispatcherID, tsoClient, 1, span, 1)
 		s.replicationDB.AddAbsentReplicaSet(spanReplica)
 	}
-	s.spanScheduler.Execute()
+	for _, s := range s.schedulerController.GetSchedulers() {
+		s.Execute()
+	}
 
 	for _, span := range s.replicationDB.GetTasksBySchemaID(1) {
 		if op := s.operatorController.GetOperator(span.ID); op != nil {
@@ -299,7 +303,7 @@ func TestBalanceUnEvenTask(t *testing.T) {
 
 	// add new node
 	nodeManager.GetAliveNodes()["node3"] = &node.Info{ID: "node3"}
-	s.spanScheduler.Execute()
+	s.schedulerController.GetScheduler(scheduler.BalanceScheduler).Execute()
 	require.Equal(t, 4, s.replicationDB.GetReplicatingSize())
 	require.Equal(t, 0, s.operatorController.OperatorSize())
 	//still on the primary node
@@ -433,7 +437,18 @@ func TestDynamicSplitTableBasic(t *testing.T) {
 	}
 	replicas := s.replicationDB.GetReplicating()
 	require.Equal(t, 2, s.replicationDB.GetReplicatingSize())
-	s.checkController.Execute()
+
+	for _, task := range replicas {
+		for cnt := 0; cnt < replica.HotSpanScoreThreshold; cnt++ {
+			s.schedulerController.UpdateStatus(task, &heartbeatpb.TableSpanStatus{
+				ID:                 task.ID.ToPB(),
+				ComponentStatus:    heartbeatpb.ComponentState_Working,
+				CheckpointTs:       10,
+				EventSizePerSecond: replica.HotSpanWriteThreshold,
+			})
+		}
+	}
+	s.schedulerController.GetScheduler(scheduler.SplitScheduler).Execute()
 	require.Equal(t, 2, s.replicationDB.GetSchedulingSize())
 	require.Equal(t, 2, s.operatorController.OperatorSize())
 	for _, task := range replicas {
