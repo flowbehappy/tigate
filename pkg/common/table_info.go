@@ -570,7 +570,6 @@ func WrapTableInfo(schemaID int64, schemaName string, info *model.TableInfo) *Ta
 	// search column schema object
 	sharedColumnSchemaStorage := GetSharedColumnSchemaStorage()
 	columnSchema := sharedColumnSchemaStorage.GetOrSetColumnSchema(info)
-	log.Info("hyy column schema count", zap.Any("count", sharedColumnSchemaStorage.Len()))
 
 	ti := &TableInfo{
 		TableInfo: info,
