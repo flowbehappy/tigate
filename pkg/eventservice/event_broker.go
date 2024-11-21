@@ -146,7 +146,7 @@ func newEventBroker(
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
-	c.updateDispatcherSendTs(ctx)
+	//c.updateDispatcherSendTs(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
 }
@@ -163,7 +163,6 @@ func (c *eventBroker) sendWatermark(
 		server,
 		re,
 		d.getEventSenderState())
-
 	c.getMessageCh(d.workerIndex) <- resolvedEvent
 	// select {
 	// case c.getMessageCh(d.workerIndex) <- resolvedEvent:
@@ -676,16 +675,16 @@ func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// c.dispatchers.Range(func(key, value interface{}) bool {
-				// 	dispatcher := value.(*dispatcherStat)
-				// 	// FIXME: use checkpointTs instead after checkpointTs is correctly updated
-				// 	checkpointTs := dispatcher.watermark.Load()
-				// 	// TODO: when use checkpointTs, this check can be removed
-				// 	if checkpointTs > 0 {
-				// 		c.eventStore.UpdateDispatcherCheckpointTs(dispatcher.id, checkpointTs)
-				// 	}
-				// 	return true
-				// })
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
+					// FIXME: use checkpointTs instead after checkpointTs is correctly updated
+					checkpointTs := dispatcher.watermark.Load()
+					// TODO: when use checkpointTs, this check can be removed
+					if checkpointTs > 0 {
+						c.eventStore.UpdateDispatcherCheckpointTs(dispatcher.id, checkpointTs)
+					}
+					return true
+				})
 			}
 		}
 	}()
