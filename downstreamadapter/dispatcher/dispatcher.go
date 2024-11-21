@@ -218,6 +218,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 			}
 		}
 
+		log.Info("hyy report dispatcher status done", zap.Any("BlockTs", dispatcherStatus.GetAction().CommitTs), zap.Any("dispatcher", d.id))
 		// whether the outdate message or not, we need to return message show we have finished the event.
 		d.blockStatusesChan <- &heartbeatpb.TableSpanBlockStatus{
 			ID: d.id.ToPB(),
