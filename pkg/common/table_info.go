@@ -273,6 +273,8 @@ type TableInfo struct {
 	// So be careful when using the TableInfo.
 	TableName TableName `json:"table_name"` // TODO: extract the field out
 
+	// Version means the version of the table info.
+	Version      uint16        `json:"version"`
 	ColumnSchema *ColumnSchema `json:"column_schema"`
 }
 
@@ -475,6 +477,7 @@ func WrapTableInfo(schemaID int64, schemaName string, info *model.TableInfo) *Ta
 			TableID:     info.ID,
 			IsPartition: info.GetPartitionInfo() != nil,
 		},
+		Version:      info.Version,
 		ColumnSchema: columnSchema,
 	}
 

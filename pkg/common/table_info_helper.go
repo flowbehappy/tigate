@@ -293,8 +293,6 @@ type ColumnSchema struct {
 	Digest Digest `json:"digest"`
 
 	// These fields are copied from model.TableInfo.
-	// Version means the version of the table info.
-	Version uint16 `json:"version"`
 	// Columns are listed in the order in which they appear in the schema
 	Columns []*model.ColumnInfo `json:"cols"`
 	Indices []*model.IndexInfo  `json:"index_info"`
@@ -362,7 +360,6 @@ type ColumnSchema struct {
 func NewColumnSchema(tableInfo *model.TableInfo, digest Digest) *ColumnSchema {
 	colSchema := &ColumnSchema{
 		Digest:           digest,
-		Version:          tableInfo.Version,
 		Columns:          tableInfo.Columns,
 		Indices:          tableInfo.Indices,
 		PKIsHandle:       tableInfo.PKIsHandle,
