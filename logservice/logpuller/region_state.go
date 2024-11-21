@@ -176,6 +176,7 @@ func (s *regionFeedState) updateResolvedTs(resolvedTs uint64) {
 			break
 		}
 	}
+	s.region.subscribedSpan.resolvedTs.Store(resolvedTs)
 }
 
 func (s *regionFeedState) getRegionInfo() regionInfo {

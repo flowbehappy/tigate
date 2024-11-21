@@ -64,7 +64,6 @@ var (
 	metricFeedRPCCtxUnavailable       = metrics.EventFeedErrorCounter.WithLabelValues("RPCCtxUnavailable")
 	metricStoreSendRequestErr         = metrics.EventFeedErrorCounter.WithLabelValues("SendRequestToStore")
 	metricKvIsBusyCounter             = metrics.EventFeedErrorCounter.WithLabelValues("KvIsBusy")
-	metricLogPullerResolvedTsLag      = metrics.LogPullerResolvedTsLag
 )
 
 // To generate an ID for a new subscription.
@@ -845,7 +844,7 @@ func (s *SubscriptionClient) GetResolvedTsLag() float64 {
 	}
 	s.totalSpans.RUnlock()
 	if pullerMinResolvedTs == 0 {
-		return 0
+
 	}
 	phyResolvedTs := oracle.ExtractPhysical(pullerMinResolvedTs)
 	lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
