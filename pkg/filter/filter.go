@@ -255,17 +255,16 @@ func GetSharedFilterStorage() *SharedFilterStorage {
 	return storage
 }
 
-func (s *SharedFilterStorage) GetOrSetFilter(changeFeedID common.ChangeFeedID, filterConfig *config.FilterConfig, tz string, caseSensitive bool) Filter {
+func (s *SharedFilterStorage) GetOrSetFilter(changeFeedID common.ChangeFeedID, filterConfig *config.FilterConfig, tz string, caseSensitive bool) (Filter, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	if f, ok := s.m[changeFeedID]; ok {
-		return f
+		return f, nil
 	}
 	f, err := NewFilter(filterConfig, tz, caseSensitive)
 	if err != nil {
-		log.Error("Failed to create filter", zap.Error(err))
-		return nil
+		return nil, err
 	}
 	s.m[changeFeedID] = f
-	return f
+	return f, nil
 }

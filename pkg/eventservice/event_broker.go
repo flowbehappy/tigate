@@ -721,7 +721,10 @@ func (c *eventBroker) getDispatcher(id common.DispatcherID) (*dispatcherStat, bo
 
 func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	filterConfig := info.GetFilterConfig()
-	filter := filter.GetSharedFilterStorage().GetOrSetFilter(info.GetChangefeedID(), filterConfig, "", false)
+	filter, err := filter.GetSharedFilterStorage().GetOrSetFilter(info.GetChangefeedID(), filterConfig, "", false)
+	if err != nil {
+		log.Panic("create filter failed", zap.Error(err), zap.Any("filterConfig", filterConfig))
+	}
 
 	defer c.metricDispatcherCount.Inc()
 	start := time.Now()
