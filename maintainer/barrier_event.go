@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/maintainer/range_checker"
-	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/messaging"
@@ -41,7 +40,6 @@ type BarrierEvent struct {
 
 	blockedDispatchers *heartbeatpb.InfluencedTables
 	dropDispatchers    *heartbeatpb.InfluencedTables
-	blockedTasks       []*replica.SpanReplication
 	newTables          []*heartbeatpb.Table
 	schemaIDChange     []*heartbeatpb.SchemaIDChange
 	isSyncPoint        bool
@@ -79,7 +77,6 @@ func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
 			} else {
 				event.rangeChecker = range_checker.NewTableCountChecker(len(status.BlockTables.TableIDs))
 			}
-			event.blockedTasks = controller.GetTasksByTableIDs(status.BlockTables.TableIDs...)
 		case heartbeatpb.InfluenceType_DB:
 			// add table trigger event dispatcher for InfluenceType_DB:
 			if dynamicSplitEnabled {
@@ -245,7 +242,7 @@ func (be *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 		}
 	case heartbeatpb.InfluenceType_Normal:
 		// send pass action
-		for _, stm := range be.blockedTasks {
+		for _, stm := range be.controller.GetTasksByTableIDs(be.blockedDispatchers.TableIDs...) {
 			if stm == nil {
 				log.Warn("nil span replication, ignore",
 					zap.String("changefeed", be.cfID.Name()),
