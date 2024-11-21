@@ -183,13 +183,15 @@ func newPersistentStorage(
 		dataStorage.initializeFromKVStorage(dbPath, storage, gcSafePoint)
 	}
 
-	go func() {
-		dataStorage.gc(ctx)
-	}()
+	// FIZZ: restore me
+	//go func() {
+	//	dataStorage.gc(ctx)
+	//}()
 
-	go func() {
-		dataStorage.persistUpperBoundPeriodically(ctx)
-	}()
+	// FIZZ: restore me
+	//go func() {
+	//	dataStorage.persistUpperBoundPeriodically(ctx)
+	//}()
 
 	return dataStorage
 }

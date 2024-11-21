@@ -339,7 +339,8 @@ func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.C
 	g.Go(func() error { return s.handleRegions(ctx, g) })
 	g.Go(func() error { return s.handleErrors(ctx) })
 	g.Go(func() error { return s.handleResolveLockTasks(ctx) })
-	g.Go(func() error { return s.logSlowRegions(ctx) })
+	// FIZZ: restore me
+	//g.Go(func() error { return s.logSlowRegions(ctx) })
 	g.Go(func() error { return s.errCache.dispatch(ctx) })
 
 	log.Info("subscription client starts", zap.Int("subscriptionClientID", int(s.id)))
