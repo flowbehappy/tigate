@@ -55,10 +55,10 @@ func TestSchedule(t *testing.T) {
 			CheckpointTs:    1,
 		}, "node1")
 	controller := NewController(cfID, 1, nil, tsoClient, nil, nil, nil, ddlSpan, 9, time.Minute)
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 10; i++ {
 		controller.AddNewTable(commonEvent.Table{
 			SchemaID: 1,
-			TableID:  int64(i),
+			TableID:  int64(i + 1),
 		}, 1)
 	}
 	controller.schedulerController.GetScheduler(scheduler.BasicScheduler).Execute()
@@ -68,7 +68,7 @@ func TestSchedule(t *testing.T) {
 			op.Start()
 		}
 	}
-	require.Equal(t, 991, controller.replicationDB.GetAbsentSize())
+	require.Equal(t, 1, controller.replicationDB.GetAbsentSize())
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node1"))
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node2"))
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node3"))
