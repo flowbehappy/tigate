@@ -116,10 +116,10 @@ func (ch *Chann[T]) Close() {
 // channel semantics.
 func (ch *Chann[T]) unboundedProcessing() {
 	for {
-		e, ok := ch.queue.Front()
+		e, ok := ch.queue.FrontRef()
 		if ok {
 			select {
-			case ch.out <- e:
+			case ch.out <- *e:
 				atomic.AddInt64(&ch.cfg.len, -1)
 				ch.queue.PopFront()
 			case e, ok := <-ch.in:

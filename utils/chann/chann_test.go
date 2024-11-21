@@ -10,6 +10,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestChanBasic(t *testing.T) {
+	ch := NewAutoDrainChann[int]()
+	defer ch.CloseAndDrain()
+
+	ch.In() <- 1
+	ch.In() <- 2
+	ch.In() <- 3
+
+	require.Equal(t, 1, <-ch.Out())
+	require.Equal(t, 2, <-ch.Out())
+	require.Equal(t, 3, <-ch.Out())
+}
+
 func TestChan(t *testing.T) {
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(4))
 	N := 200
