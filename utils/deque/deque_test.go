@@ -7,7 +7,8 @@ import (
 )
 
 func TestDeque(t *testing.T) {
-	deque := NewDeque[int](2, 5)
+	allocator := NewBlockAllocator[int](2, 1)
+	deque := NewDeque[int](2, 5, &allocator)
 
 	// Test empty deque
 	assert.Equal(t, 0, deque.Length())

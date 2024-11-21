@@ -14,6 +14,8 @@ import (
 
 var nextReportRound = atomic.Int64{}
 
+const BlockLenInPendingQueue = 32
+
 // ====== internal types ======
 
 type pathStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
@@ -90,10 +92,18 @@ func newPathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](area A,
 		area:         area,
 		path:         path,
 		dest:         dest,
-		pendingQueue: deque.NewDeque[eventWrap[A, P, T, D, H]](32, 0),
+		pendingQueue: deque.NewDeque[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 0 /*unlimited*/),
 		pathStat:     &pathStat[A, P, T, D, H]{},
 	}
 	return pi
+}
+
+func (pi *pathInfo[A, P, T, D, H]) setStream(stream *stream[A, P, T, D, H]) {
+	pi.stream = stream
+}
+
+func (pi *pathInfo[A, P, T, D, H]) setEventBlockAllocator(eventBlockAllocator *deque.BlockAllocator[eventWrap[A, P, T, D, H]]) {
+	pi.pendingQueue.SetBlockAllocator(eventBlockAllocator)
 }
 
 func (pi *pathInfo[A, P, T, D, H]) resetStat() {
@@ -162,6 +172,8 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	handler Handler[A, P, T, D]
 
+	eventBlockAllocator *deque.BlockAllocator[eventWrap[A, P, T, D, H]] // The allocator for blocks to store eventWraps in the pendingQueue.
+
 	inChan     chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
 	eventQueue eventQueue[A, P, T, D, H]     // The queue to store the pending events.
 	doneChan   chan doneInfo[A, P, T, D, H]  // The channel to receive the done events.
@@ -196,6 +208,8 @@ func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 		maxBusyPathsToTrack: maxBusyPathsToTrack,
 		option:              option,
 	}
+	a := deque.NewBlockAllocator[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 64)
+	s.eventBlockAllocator = &a
 	return s
 }
 
@@ -266,6 +280,7 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 	// We initialize the pathMap here to avoid blocking the main goroutine.
 	// As there could be many paths, and the initialization could be time-consuming.
 	for _, p := range acceptedPaths {
+		p.setEventBlockAllocator(s.eventBlockAllocator)
 		s.eventQueue.addPath(p)
 	}
 

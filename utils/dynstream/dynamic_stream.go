@@ -648,7 +648,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 					area := d.handler.GetArea(path, add.path.Dest)
 					pi := newPathInfo[A, P, T, D, H](area, path, add.path.Dest)
 					si := nextStream()
-					pi.stream = si.stream
+					pi.setStream(si.stream)
 					si.pathMap[pi] = struct{}{}
 					globalPathMap[path] = pi
 					add.pi = pi
@@ -801,7 +801,9 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 							if _, ok := pathMap[pi.path]; !ok {
 								panic(fmt.Sprintf("Path %v doesn't exist in distributor", pi.path))
 							}
-							pi.stream = newStream
+							// We must set the stream of this path here immediately.
+							// Because we might send the event to the path shortly, before the asynchronous initialization of the stream finish.
+							pi.setStream(newStream)
 						}
 						// Streams must be started and closed in the distributor.
 						// Otherwise, the distributor will send the events to the closed streams.

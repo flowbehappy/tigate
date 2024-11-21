@@ -2,15 +2,45 @@ package deque
 
 import (
 	"github.com/pingcap/ticdc/utils/list"
+	"github.com/pingcap/ticdc/utils/ringbuffer"
 )
+
+type BlockAllocator[T any] struct {
+	blockLen int
+	cache    ringbuffer.RingBuffer[[]T]
+}
+
+func NewBlockAllocator[T any](blockLen int, maxBlocks int) BlockAllocator[T] {
+	return BlockAllocator[T]{
+		blockLen: blockLen,
+		cache:    ringbuffer.NewRingBuffer[[]T](maxBlocks),
+	}
+}
+
+func (a BlockAllocator[T]) NewBlock() []T {
+	b, ok := a.cache.PopFront()
+	if ok {
+		return b
+	} else {
+		return make([]T, a.blockLen)
+	}
+}
+
+func (a BlockAllocator[T]) FreeBlock(block []T) {
+	if len(block) != a.blockLen {
+		panic("block length mismatch")
+	}
+	a.cache.PushBack(block)
+}
 
 // A deque implemented by a doubly linked list of fixed-size blocks.
 type Deque[T any] struct {
 	blockWidth int
 	maxLen     int
 
-	blocks *list.List[[]T]
-	length int
+	allocator *BlockAllocator[T]
+	blocks    *list.List[[]T]
+	length    int
 
 	// Those indexes point to the first and last available value of the deque.
 	front int
@@ -36,6 +66,24 @@ func NewDeque[T any](blockWidth int, maxLen int) *Deque[T] {
 		back:       -1,
 	}
 	return d
+}
+
+func (d *Deque[T]) SetBlockAllocator(allocator *BlockAllocator[T]) {
+	d.allocator = allocator
+}
+
+func (d *Deque[T]) allocate() []T {
+	if d.allocator != nil {
+		return d.allocator.NewBlock()
+	} else {
+		return make([]T, d.blockWidth)
+	}
+}
+
+func (d *Deque[T]) free(block []T) {
+	if d.allocator != nil {
+		d.allocator.FreeBlock(block)
+	}
 }
 
 func (d *Deque[T]) Length() int {
@@ -81,7 +129,7 @@ func (d *Deque[T]) Front() (T, bool) {
 func (d *Deque[T]) PushBack(item T) {
 	if d.back == -1 || d.back == d.blockWidth-1 {
 		// there is no block or the last block is full
-		block := make([]T, d.blockWidth)
+		block := d.allocate()
 		d.blocks.PushBack(block)
 		d.back = -1
 	}
@@ -115,6 +163,7 @@ func (d *Deque[T]) PopBack() (T, bool) {
 			d.resetEmpty()
 		} else {
 			d.blocks.Remove(le)
+			d.free(block)
 			d.back = d.blockWidth - 1
 		}
 	}
@@ -125,7 +174,7 @@ func (d *Deque[T]) PopBack() (T, bool) {
 func (d *Deque[T]) PushFront(item T) {
 	if d.front == 0 {
 		// the first block is full
-		block := make([]T, d.blockWidth)
+		block := d.allocate()
 		d.blocks.PushFront(block)
 		d.front = d.blockWidth
 		if d.back == -1 {
@@ -165,6 +214,7 @@ func (d *Deque[T]) PopFront() (T, bool) {
 			d.resetEmpty()
 		} else {
 			d.blocks.Remove(le)
+			d.free(block)
 			d.front = 0
 		}
 	}
