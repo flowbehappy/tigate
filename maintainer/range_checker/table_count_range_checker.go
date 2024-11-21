@@ -13,6 +13,8 @@
 
 package range_checker
 
+import "fmt"
+
 // TableIDRangeChecker is used to check if all table IDs are covered.
 type TableIDRangeChecker struct {
 	needCount   int
@@ -41,4 +43,8 @@ func (rc *TableIDRangeChecker) IsFullyCovered() bool {
 // Reset resets the reported tables.
 func (rc *TableIDRangeChecker) Reset() {
 	rc.reportedMap = make(map[int64]struct{}, rc.needCount)
+}
+
+func (rc *TableIDRangeChecker) Detail() string {
+	return fmt.Sprintf("reported count: %d, require count: %d", len(rc.reportedMap), rc.needCount)
 }

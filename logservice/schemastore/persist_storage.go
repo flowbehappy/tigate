@@ -504,7 +504,6 @@ func addTableInfoFromKVSnap(
 ) error {
 	tableInfo := readTableInfoInKVSnap(snap, store.getTableID(), kvSnapVersion)
 	if tableInfo != nil {
-		tableInfo.InitPreSQLs()
 		store.addInitialTableInfo(tableInfo)
 	}
 	return nil
