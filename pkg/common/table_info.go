@@ -260,8 +260,7 @@ const (
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
-	*model.TableInfo `json:"table_info"`
-	SchemaID         int64 `json:"schema_id"`
+	SchemaID int64 `json:"schema_id"`
 	// NOTICE: We probably store the logical ID inside TableName,
 	// not the physical ID.
 	// For normal table, there is only one ID, which is the physical ID.
@@ -272,101 +271,25 @@ type TableInfo struct {
 	// In general, we always use the physical ID to represent a table, but we
 	// record the logical ID from the DDL event(job.BinlogInfo.TableInfo).
 	// So be careful when using the TableInfo.
-	TableName TableName `json:"table_name"`
+	TableName TableName `json:"table_name"` // TODO: extract the field out
 
 	ColumnSchema *ColumnSchema `json:"column_schema"`
-
-	PreSQLs map[int]string `json:"pre_sqls"`
 }
 
 func (ti *TableInfo) GetColumnsOffset() map[int64]int {
 	return ti.ColumnSchema.ColumnsOffset
 }
 
-func (ti *TableInfo) InitPreSQLs() {
-	// TODO: find better way to hold the preSQLs
-	if len(ti.Columns) == 0 {
-		log.Warn("table has no columns, should be in test mode", zap.String("table", ti.TableName.String()))
-		return
-	}
-	ti.PreSQLs = make(map[int]string)
-	ti.PreSQLs[preSQLInsert] = ti.genPreSQLInsert(false, true)
-	ti.PreSQLs[preSQLReplace] = ti.genPreSQLInsert(true, true)
-	ti.PreSQLs[preSQLUpdate] = ti.genPreSQLUpdate()
-}
-
-func (ti *TableInfo) genPreSQLInsert(isReplace bool, needPlaceHolder bool) string {
-	var builder strings.Builder
-
-	if isReplace {
-		builder.WriteString("REPLACE INTO ")
-	} else {
-		builder.WriteString("INSERT INTO ")
-	}
-	quoteTable := ti.TableName.QuoteString()
-	builder.WriteString(quoteTable)
-	builder.WriteString(" (")
-	builder.WriteString(ti.getColumnList(false))
-	builder.WriteString(") VALUES ")
-
-	if needPlaceHolder {
-		builder.WriteString("(")
-		builder.WriteString(placeHolder(len(ti.Columns) - ti.ColumnSchema.VirtualColumnCount))
-		builder.WriteString(")")
-	}
-	return builder.String()
-}
-
-func (ti *TableInfo) genPreSQLUpdate() string {
-	var builder strings.Builder
-	builder.WriteString("UPDATE ")
-	builder.WriteString(ti.TableName.QuoteString())
-	builder.WriteString(" SET ")
-	builder.WriteString(ti.getColumnList(true))
-	return builder.String()
-}
-
-// placeHolder returns a string with n placeholders separated by commas
-// n must be greater or equal than 1, or the function will panic
-func placeHolder(n int) string {
-	var builder strings.Builder
-	builder.Grow((n-1)*2 + 1)
-	for i := 0; i < n; i++ {
-		if i > 0 {
-			builder.WriteString(",")
-		}
-		builder.WriteString("?")
-	}
-	return builder.String()
-}
-
-func (ti *TableInfo) getColumnList(isUpdate bool) string {
-	var b strings.Builder
-	for i, col := range ti.Columns {
-		if col == nil || ti.ColumnSchema.ColumnsFlag[col.ID].IsGeneratedColumn() {
-			continue
-		}
-		if i > 0 {
-			b.WriteString(",")
-		}
-		b.WriteString(QuoteName(col.Name.O))
-		if isUpdate {
-			b.WriteString(" = ?")
-		}
-	}
-	return b.String()
-}
-
 func (ti *TableInfo) GetPreInsertSQL() string {
-	return ti.PreSQLs[preSQLInsert]
+	return fmt.Sprintf(ti.ColumnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
 }
 
 func (ti *TableInfo) GetPreReplaceSQL() string {
-	return ti.PreSQLs[preSQLReplace]
+	return fmt.Sprintf(ti.ColumnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
 }
 
 func (ti *TableInfo) GetPreUpdateSQL() string {
-	return ti.PreSQLs[preSQLUpdate]
+	return fmt.Sprintf(ti.ColumnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
 }
 
 // GetColumnInfo returns the column info by ID
@@ -375,7 +298,7 @@ func (ti *TableInfo) GetColumnInfo(colID int64) (info *model.ColumnInfo, exist b
 	if !exist {
 		return nil, false
 	}
-	return ti.Columns[colOffset], true
+	return ti.ColumnSchema.Columns[colOffset], true
 }
 
 // ForceGetColumnInfo return the column info by ID
@@ -439,11 +362,6 @@ func (ti *TableInfo) IsPartitionTable() bool {
 	return ti.TableName.IsPartition
 }
 
-func (ti *TableInfo) String() string {
-	return fmt.Sprintf("TableInfo, ID: %d, Name:%s, ColNum: %d, IdxNum: %d, PKIsHandle: %t",
-		ti.ID, ti.TableName, len(ti.Columns), len(ti.Indices), ti.PKIsHandle)
-}
-
 // GetRowColInfos returns all column infos for rowcodec
 func (ti *TableInfo) GetRowColInfos() ([]int64, map[int64]*datumTypes.FieldType, []rowcodec.ColInfo) {
 	return ti.ColumnSchema.HandleColID, ti.ColumnSchema.RowColFieldTps, ti.ColumnSchema.RowColInfos
@@ -478,25 +396,9 @@ func (ti *TableInfo) HasVirtualColumns() bool {
 	return ti.ColumnSchema.VirtualColumnCount > 0
 }
 
-// IsEligible returns whether the table is a eligible table
-func (ti *TableInfo) IsEligible(forceReplicate bool) bool {
-	// Sequence is not supported yet, TiCDC needs to filter all sequence tables.
-	// See https://github.com/pingcap/tiflow/issues/4559
-	if ti.IsSequence() {
-		return false
-	}
-	if forceReplicate {
-		return true
-	}
-	if ti.IsView() {
-		return true
-	}
-	return ti.ColumnSchema.HasUniqueColumn
-}
-
 // GetIndex return the corresponding index by the given name.
 func (ti *TableInfo) GetIndex(name string) *model.IndexInfo {
-	for _, index := range ti.Indices {
+	for _, index := range ti.ColumnSchema.Indices {
 		if index != nil && index.Name.O == name {
 			return index
 		}
@@ -523,8 +425,8 @@ func (ti *TableInfo) IndexByName(name string) ([]string, []int, bool) {
 // If any column does not exist, return false
 func (ti *TableInfo) OffsetsByNames(names []string) ([]int, bool) {
 	// todo: optimize it
-	columnOffsets := make(map[string]int, len(ti.Columns))
-	for _, col := range ti.Columns {
+	columnOffsets := make(map[string]int, len(ti.ColumnSchema.Columns))
+	for _, col := range ti.ColumnSchema.Columns {
 		if col != nil {
 			columnOffsets[col.Name.O] = col.Offset
 		}
@@ -545,24 +447,18 @@ func (ti *TableInfo) OffsetsByNames(names []string) ([]int, bool) {
 // GetPrimaryKeyColumnNames returns the primary key column names
 func (ti *TableInfo) GetPrimaryKeyColumnNames() []string {
 	var result []string
-	if ti.PKIsHandle {
-		result = append(result, ti.GetPkColInfo().Name.O)
+	if ti.ColumnSchema.PKIsHandle {
+		result = append(result, ti.ColumnSchema.GetPkColInfo().Name.O)
 		return result
 	}
 
-	indexInfo := ti.GetPrimaryKey()
+	indexInfo := ti.ColumnSchema.GetPrimaryKey()
 	if indexInfo != nil {
 		for _, col := range indexInfo.Columns {
 			result = append(result, col.Name.O)
 		}
 	}
 	return result
-}
-
-// GetVersion returns the version of the table info
-// It is the last TSO when the table schema was changed
-func (ti *TableInfo) GetVersion() uint64 {
-	return ti.TableInfo.UpdateTS
 }
 
 // WrapTableInfo creates a TableInfo from a model.TableInfo
@@ -572,8 +468,7 @@ func WrapTableInfo(schemaID int64, schemaName string, info *model.TableInfo) *Ta
 	columnSchema := sharedColumnSchemaStorage.GetOrSetColumnSchema(info)
 
 	ti := &TableInfo{
-		TableInfo: info,
-		SchemaID:  schemaID,
+		SchemaID: schemaID,
 		TableName: TableName{
 			Schema:      schemaName,
 			Table:       info.Name.O,

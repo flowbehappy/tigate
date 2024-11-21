@@ -15,9 +15,11 @@ package filter
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/apperror"
+	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
 	timodel "github.com/pingcap/tidb/pkg/meta/model"
@@ -116,7 +118,7 @@ func (f *filter) FilterDDLEvent(ddl *commonEvent.DDLEvent) error {
 	for i, query := range queryList {
 		tableInfo := multiTableInfos[i]
 		// 只需要 判断 table name 需不需要过滤就行，如果 schema name 要过滤的话，整个 query 就不会给 dispatcher 了
-		tableName := tableInfo.Name.O
+		tableName := tableInfo.TableName.Table
 		if !f.ShouldIgnoreTable(schemaName, tableName) {
 			finalQuery = append(finalQuery, query)
 		}
@@ -233,4 +235,36 @@ func IsSchemaDDL(actionType timodel.ActionType) bool {
 	default:
 		return false
 	}
+}
+
+var once sync.Once
+var storage *SharedFilterStorage
+
+type SharedFilterStorage struct {
+	// Each dispatcher in the same changefeed will share the same filter storage.
+	m     map[common.ChangeFeedID]Filter
+	mutex sync.Mutex
+}
+
+func GetSharedFilterStorage() *SharedFilterStorage {
+	once.Do(func() {
+		storage = &SharedFilterStorage{
+			m: make(map[common.ChangeFeedID]Filter),
+		}
+	})
+	return storage
+}
+
+func (s *SharedFilterStorage) GetOrSetFilter(changeFeedID common.ChangeFeedID, filterConfig *config.FilterConfig, tz string, caseSensitive bool) (Filter, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if f, ok := s.m[changeFeedID]; ok {
+		return f, nil
+	}
+	f, err := NewFilter(filterConfig, tz, caseSensitive)
+	if err != nil {
+		return nil, err
+	}
+	s.m[changeFeedID] = f
+	return f, nil
 }
