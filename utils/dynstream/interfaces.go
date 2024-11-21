@@ -159,6 +159,8 @@ type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] inter
 	// SetAreaSettings sets the settings of the area. An area uses the default settings if it is not set.
 	// This method can be called at any time. But to avoid the memory leak, setting on a area without existing paths is a no-op.
 	SetAreaSettings(area A, settings AreaSettings)
+
+	GetMetrics() Metrics
 }
 
 type PathHasher[P Path] interface {
@@ -253,4 +255,9 @@ func NewParallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T
 		opt = option[0]
 	}
 	return newParallelDynamicStream(streamCount, hasher, handler, opt)
+}
+
+type Metrics struct {
+	EventChanSize   int
+	PendingQueueLen int
 }

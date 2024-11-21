@@ -37,8 +37,10 @@ var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.
 var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
 var metricEventBrokerDropResolvedTsCount = metrics.EventServiceDropResolvedTsCount
 var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
-var metricEventBrokerHandleDuration = metrics.EventServiceHandleDuration
+var metricEventBrokerTaskHandleDuration = metrics.EventServiceTaskHandleDuration
 var metricEventBrokerDropNotificationCount = metrics.EventServiceDropNotificationCount
+var metricEventBrokerDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-broker")
+var metricEventBrokerDSChannelSize = metrics.DynamicStreamEventChanSize.WithLabelValues("event-broker")
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -77,11 +79,11 @@ type eventBroker struct {
 	// cancel is used to cancel the goroutines spawned by the eventBroker.
 	cancel context.CancelFunc
 
-	metricDispatcherCount                  prometheus.Gauge
-	metricEventServicePullerResolvedTs     prometheus.Gauge
-	metricEventServiceDispatcherResolvedTs prometheus.Gauge
-	metricEventServiceResolvedTsLag        prometheus.Gauge
-	metricScanEventDuration                prometheus.Observer
+	metricDispatcherCount                prometheus.Gauge
+	metricEventServiceReceivedResolvedTs prometheus.Gauge
+	metricEventServiceSentResolvedTs     prometheus.Gauge
+	metricEventServiceResolvedTsLag      prometheus.Gauge
+	metricScanEventDuration              prometheus.Observer
 }
 
 type pathHasher struct {
@@ -128,11 +130,11 @@ func newEventBroker(
 		cancel:                  cancel,
 		wg:                      wg,
 
-		metricDispatcherCount:                  metrics.EventServiceDispatcherGauge.WithLabelValues(strconv.FormatUint(id, 10)),
-		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
-		metricEventServiceResolvedTsLag:        metrics.EventServiceResolvedTsLagGauge.WithLabelValues("puller"),
-		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
-		metricScanEventDuration:                metrics.EventServiceScanDuration,
+		metricDispatcherCount:                metrics.EventServiceDispatcherGauge.WithLabelValues(strconv.FormatUint(id, 10)),
+		metricEventServiceReceivedResolvedTs: metrics.EventServiceResolvedTsGauge,
+		metricEventServiceResolvedTsLag:      metrics.EventServiceResolvedTsLagGauge.WithLabelValues("received"),
+		metricEventServiceSentResolvedTs:     metrics.EventServiceResolvedTsLagGauge.WithLabelValues("sent"),
+		metricScanEventDuration:              metrics.EventServiceScanDuration,
 	}
 
 	for i := 0; i < messageWorkerCount; i++ {
@@ -636,29 +638,32 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				log.Info("update metrics goroutine is closing")
 				return
 			case <-ticker.C:
-				pullerMinResolvedTs := uint64(0)
-				dispatcherMinWaterMark := uint64(0)
+				receivedMinResolvedTs := uint64(0)
+				sentMinWaterMark := uint64(0)
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
 					resolvedTs := dispatcher.resolvedTs.Load()
-					if pullerMinResolvedTs == 0 || resolvedTs < pullerMinResolvedTs {
-						pullerMinResolvedTs = resolvedTs
+					if receivedMinResolvedTs == 0 || resolvedTs < receivedMinResolvedTs {
+						receivedMinResolvedTs = resolvedTs
 					}
 					watermark := dispatcher.watermark.Load()
-					if dispatcherMinWaterMark == 0 || watermark < dispatcherMinWaterMark {
-						dispatcherMinWaterMark = watermark
+					if sentMinWaterMark == 0 || watermark < sentMinWaterMark {
+						sentMinWaterMark = watermark
 					}
 					return true
 				})
-				if pullerMinResolvedTs == 0 {
+				if receivedMinResolvedTs == 0 {
 					continue
 				}
-				phyResolvedTs := oracle.ExtractPhysical(pullerMinResolvedTs)
+				phyResolvedTs := oracle.ExtractPhysical(receivedMinResolvedTs)
 				lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
-				c.metricEventServicePullerResolvedTs.Set(float64(phyResolvedTs))
+				c.metricEventServiceReceivedResolvedTs.Set(float64(phyResolvedTs))
 				c.metricEventServiceResolvedTsLag.Set(lag)
-				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
-				c.metricEventServiceDispatcherResolvedTs.Set(lag)
+				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(sentMinWaterMark)) / 1e3
+				c.metricEventServiceSentResolvedTs.Set(lag)
+				dsMetrics := c.ds.GetMetrics()
+				metricEventBrokerDSChannelSize.Set(float64(dsMetrics.EventChanSize))
+				metricEventBrokerDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 			}
 		}
 	}()

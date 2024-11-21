@@ -104,6 +104,13 @@ func NewLogPuller(
 	return puller
 }
 
+func (p *LogPuller) UpdateMetrics() {
+	resolvedTsLag := p.client.GetResolvedTsLag()
+	if resolvedTsLag > 0 {
+		metrics.LogPullerResolvedTsLag.Set(resolvedTsLag)
+	}
+}
+
 func (p *LogPuller) Run(ctx context.Context) (err error) {
 	// TODO: distiguish event between event store and schema store
 	p.CounterKv = metrics.EventStoreReceivedEventCount.WithLabelValues("kv")

@@ -22,14 +22,12 @@ var (
 			Subsystem: "dynamic_stream",
 			Name:      "memory_usage",
 		}, []string{"type"})
-
 	DynamicStreamEventChanSize = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "dynamic_stream",
 			Name:      "event_chan_size",
 		}, []string{"component"})
-
 	DynamicStreamPendingQueueLen = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
@@ -40,5 +38,6 @@ var (
 
 func InitDynamicStreamMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(DynamicStreamMemoryUsage)
-
+	registry.MustRegister(DynamicStreamEventChanSize)
+	registry.MustRegister(DynamicStreamPendingQueueLen)
 }

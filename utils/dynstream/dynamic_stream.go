@@ -137,6 +137,8 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	eventExtraSize int
 	startTime      time.Time
+
+	allStreamPendingLen atomic.Int64
 }
 
 func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
@@ -264,6 +266,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) RemovePath(path P) error {
 func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings AreaSettings) {
 	if d.memControl != nil {
 		d.memControl.setAreaSettings(area, settings)
+	}
+}
+
+func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
+	return Metrics{
+		EventChanSize:   len(d.eventChan),
+		PendingQueueLen: int(d.allStreamPendingLen.Load()),
 	}
 }
 
@@ -712,9 +721,16 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			si.streamStat = stat
 		case <-ticker.C:
 			doSchedule(ruleType(scheduleRule.Next()), 0, nil)
+
+			// Update the metrics
 			if d.memControl != nil {
 				d.memControl.updateMetrics()
 			}
+			allStreamPendingLen := 0
+			for _, si := range d.streamInfos {
+				allStreamPendingLen += si.streamStat.pendingLen
+			}
+			d.allStreamPendingLen.Store(int64(allStreamPendingLen))
 		}
 	}
 }
