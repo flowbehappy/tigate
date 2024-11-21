@@ -25,7 +25,7 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 	}
 	startTime := time.Now()
 	defer func() {
-		metricEventBrokerHandleDuration.Observe(float64(time.Since(startTime).Milliseconds()))
+		metricEventBrokerTaskHandleDuration.Observe(float64(time.Since(startTime).Milliseconds()))
 	}()
 	task := tasks[0]
 	needScan, _ := broker.checkNeedScan(task)
