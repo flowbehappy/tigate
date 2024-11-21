@@ -67,7 +67,7 @@ func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
 	defer v.mu.Unlock()
 	// assertEmpty(v.infos)
 	// log.Info("addInitialTableInfo", zap.Int64("tableID", int64(v.tableID)), zap.Uint64("version", info.Version))
-	v.infos = append(v.infos, &tableInfoItem{version: uint64(info.ColumnSchema.Version), info: info})
+	v.infos = append(v.infos, &tableInfoItem{version: uint64(info.Version), info: info})
 }
 
 func (v *versionedTableInfoStore) getTableID() int64 {
@@ -166,7 +166,7 @@ func assertEmpty(infos []*tableInfoItem, event *PersistedDDLEvent) {
 		log.Panic("shouldn't happen",
 			zap.Any("infosLen", len(infos)),
 			zap.Any("lastVersion", infos[len(infos)-1].version),
-			zap.Any("lastTableInfoVersion", infos[len(infos)-1].info.ColumnSchema.Version),
+			zap.Any("lastTableInfoVersion", infos[len(infos)-1].info.Version),
 			zap.String("query", event.Query),
 			zap.Int64("tableID", event.CurrentTableID),
 			zap.Uint64("finishedTs", event.FinishedTs),

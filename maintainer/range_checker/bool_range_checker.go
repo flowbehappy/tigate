@@ -13,6 +13,8 @@
 
 package range_checker
 
+import "fmt"
+
 // BoolRangeChecker is a range checker that always returns the same value.
 type BoolRangeChecker struct {
 	covered bool
@@ -37,4 +39,8 @@ func (f *BoolRangeChecker) IsFullyCovered() bool {
 // Reset resets the range checker reported sub spans
 func (f *BoolRangeChecker) Reset() {
 
+}
+
+func (f *BoolRangeChecker) Detail() string {
+	return fmt.Sprintf("covered: %v", f.covered)
 }

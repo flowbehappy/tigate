@@ -15,6 +15,8 @@ package range_checker
 
 import (
 	"bytes"
+	"fmt"
+	"strings"
 
 	"github.com/google/btree"
 	"github.com/pingcap/tiflow/pkg/spanz"
@@ -59,6 +61,17 @@ func (rc *TableSpanRangeChecker) Reset() {
 	for _, span := range rc.tableSpans {
 		span.Reset()
 	}
+}
+
+func (rc *TableSpanRangeChecker) Detail() string {
+	var buf = &strings.Builder{}
+	buf.WriteString("uncovered tables: ")
+	for id, span := range rc.tableSpans {
+		if !span.IsFullyCovered() {
+			buf.WriteString(fmt.Sprintf("%d,\n", id))
+		}
+	}
+	return buf.String()
 }
 
 // SpanCoverageChecker use the span coverage checker to check if the entire range from start to end is covered.

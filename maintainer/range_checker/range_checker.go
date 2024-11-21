@@ -21,4 +21,6 @@ type RangeChecker interface {
 	IsFullyCovered() bool
 	// Reset resets the range checker reported sub spans
 	Reset()
+	// Detail returns the detail status of the range checker, it used for debugging.
+	Detail() string
 }
