@@ -566,6 +566,7 @@ func (e *EventDispatcherManager) aggregateDispatcherHeartbeats(needCompleteStatu
 }
 
 func (e *EventDispatcherManager) removeDispatcher(id common.DispatcherID) {
+	log.Info("hyy remove Dispatcher", zap.Any("dispatcher id", id))
 	dispatcher, ok := e.dispatcherMap.Get(id)
 	if ok {
 		if dispatcher.GetRemovingStatus() {
