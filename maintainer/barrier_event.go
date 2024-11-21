@@ -49,6 +49,8 @@ type BarrierEvent struct {
 	// rangeChecker is used to check if all the dispatchers reported the block events
 	rangeChecker   range_checker.RangeChecker
 	lastResendTime time.Time
+
+	lastWarningLogTime time.Time
 }
 
 func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
@@ -65,6 +67,7 @@ func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
 		lastResendTime:      time.Time{},
 		isSyncPoint:         status.IsSyncPoint,
 		dynamicSplitEnabled: dynamicSplitEnabled,
+		lastWarningLogTime:  time.Now(),
 	}
 	if status.BlockTables != nil {
 		switch status.BlockTables.InfluenceType {
@@ -273,6 +276,17 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 	if time.Since(be.lastResendTime) < time.Second {
 		return nil
 	}
+	if time.Since(be.lastWarningLogTime) > time.Second*10 {
+		log.Warn("barrier event is not resolved",
+			zap.String("changefeed", be.cfID.Name()),
+			zap.Uint64("commitTs", be.commitTs),
+			zap.Bool("isSyncPoint", be.isSyncPoint),
+			zap.Bool("selected", be.selected),
+			zap.Bool("writerDispatcherAdvanced", be.writerDispatcherAdvanced),
+			zap.String("coverage", be.rangeChecker.Detail()),
+		)
+		be.lastWarningLogTime = time.Now()
+	}
 	// still waiting for all dispatcher to reach the block commit ts
 	if !be.selected {
 		return nil
@@ -283,6 +297,10 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 		//resend write action
 		stm := be.controller.GetTask(be.writerDispatcher)
 		if stm == nil || stm.GetNodeID() == "" {
+			log.Warn("writer dispatcher not found",
+				zap.String("changefeed", be.cfID.Name()),
+				zap.Uint64("commitTs", be.commitTs),
+				zap.Bool("isSyncPoint", be.isSyncPoint))
 			// todo: select a new writer
 			return nil
 		}
