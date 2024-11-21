@@ -131,15 +131,15 @@ func (be *BarrierEvent) onAllDispatcherReportedBlockEvent(dispatchers []*heartbe
 		dispatcher = be.controller.ddlDispatcherID
 	default:
 		selected := dispatchers[len(dispatchers)-1]
-		if be.tableTriggerDispatcherRelated {
-			// select the last one as the writer
-			// or the table trigger event dispatcher if it's one of the blocked dispatcher
-			selected = be.controller.ddlDispatcherID.ToPB()
-			log.Info("use table trigger event as the writer dispatcher",
-				zap.String("changefeed", be.cfID.Name()),
-				zap.String("dispatcher", selected.String()),
-				zap.Uint64("commitTs", be.commitTs))
-		}
+		//if be.tableTriggerDispatcherRelated {
+		//	// select the last one as the writer
+		//	// or the table trigger event dispatcher if it's one of the blocked dispatcher
+		//	selected = be.controller.ddlDispatcherID.ToPB()
+		//	log.Info("use table trigger event as the writer dispatcher",
+		//		zap.String("changefeed", be.cfID.Name()),
+		//		zap.String("dispatcher", selected.String()),
+		//		zap.Uint64("commitTs", be.commitTs))
+		//}
 		dispatcher = common.NewDispatcherIDFromPB(selected)
 	}
 
