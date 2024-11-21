@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/ticdc/pkg/node"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 
@@ -88,9 +87,6 @@ type EventDispatcherManager struct {
 	// sink is used to send all the events to the downstream.
 	sink sink.Sink
 
-	// filter is used to filter the dml and ddl events.
-	filter filter.Filter
-
 	// collect the error in all the dispatchers and sink module
 	// when we get the error, we will report the error to the maintainer
 	errCh chan error
@@ -144,16 +140,7 @@ func NewEventDispatcherManager(
 		}
 	}
 
-	// Set Filter
-	// FIXME: finally update the internal NewFilter function of filter, now it is just a shell adapter
-	replicaConfig := config.ReplicaConfig{Filter: cfConfig.Filter}
-	filter, err := filter.NewFilter(replicaConfig.Filter, cfConfig.TimeZone, replicaConfig.CaseSensitive)
-	if err != nil {
-		return nil, 0, errors.Trace(err)
-	}
-	manager.filter = filter
-
-	err = manager.initSink(ctx)
+	err := manager.initSink(ctx)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
