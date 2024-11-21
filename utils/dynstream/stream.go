@@ -174,9 +174,10 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	eventBlockAllocator *deque.BlockAllocator[eventWrap[A, P, T, D, H]] // The allocator for blocks to store eventWraps in the pendingQueue.
 
-	inChan     chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
-	eventQueue eventQueue[A, P, T, D, H]     // The queue to store the pending events.
-	doneChan   chan doneInfo[A, P, T, D, H]  // The channel to receive the done events.
+	inChan chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
+
+	eventQueue eventQueue[A, P, T, D, H]    // The queue to store the pending events.
+	doneChan   chan doneInfo[A, P, T, D, H] // The channel to receive the done events.
 
 	reportNow chan struct{} // For test, make the reportStatLoop to report immediately.
 

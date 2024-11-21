@@ -37,7 +37,7 @@ func (h pathHasher) HashPath(path common.DispatcherID) int {
 func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
-	option.InputBufferSize = 1000000 / streamCount
+	// option.InputBufferSize = 1000000 / streamCount
 	// Enable memory control for dispatcher events dynamic stream.
 	log.Info("New EventDynamicStream, memory control is enabled")
 	option.EnableMemoryControl = true
