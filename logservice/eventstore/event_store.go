@@ -355,9 +355,9 @@ func (e *eventStore) Run(ctx context.Context) error {
 		return e.updateMetrics(ctx)
 	})
 
-	// eg.Go(func() error {
-	// 	return e.uploadStatePeriodically(ctx)
-	// })
+	eg.Go(func() error {
+		return e.uploadStatePeriodically(ctx)
+	})
 
 	return eg.Wait()
 }

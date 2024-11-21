@@ -143,12 +143,12 @@ func newEventBroker(
 
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
-	//c.logUnresetDispatchers(ctx)
+	c.logUnresetDispatchers(ctx)
 	for i := 0; i < messageWorkerCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
-	//c.updateDispatcherSendTs(ctx)
+	c.updateDispatcherSendTs(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
 }
