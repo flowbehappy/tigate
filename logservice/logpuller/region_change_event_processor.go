@@ -189,7 +189,7 @@ func (w *changeEventProcessor) doHandle(
 				zap.Any("tableID", tableID),
 				zap.Uint64("regionID", regionID),
 				zap.Uint64("requestID", state.requestID),
-				zap.Stringer("span", &state.region.span))
+				zap.Stringer("span", state.region.span))
 
 			for _, cachedEvent := range state.matcher.matchCachedRow(true) {
 				revent, err := w.assembleRowEvent(regionID, cachedEvent)

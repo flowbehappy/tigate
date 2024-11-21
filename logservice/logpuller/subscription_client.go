@@ -105,7 +105,7 @@ type resolveLockTask struct {
 // rangeTask represents a task to subscribe a range span of a table.
 // It can be a part of a table or a whole table, it also can be a part of a region.
 type rangeTask struct {
-	span           heartbeatpb.TableSpan
+	span           *heartbeatpb.TableSpan
 	subscribedSpan *subscribedSpan
 }
 
@@ -117,7 +117,7 @@ type subscribedSpan struct {
 	startTs tablepb.Ts
 
 	// The target span
-	span heartbeatpb.TableSpan
+	span *heartbeatpb.TableSpan
 	// The range lock of the span,
 	// it is used to prevent duplicate requests to the same region range,
 	// and it also used to calculate this table's resolvedTs.
@@ -264,7 +264,7 @@ func (s *SubscriptionClient) initMetrics() {
 // It new a subscribedSpan and store it in `s.totalSpans`,
 // and send a rangeTask to `s.rangeTaskCh`.
 // The rangeTask will be handled in `handleRangeTasks` goroutine.
-func (s *SubscriptionClient) Subscribe(subID SubscriptionID, span heartbeatpb.TableSpan, startTs uint64) {
+func (s *SubscriptionClient) Subscribe(subID SubscriptionID, span *heartbeatpb.TableSpan, startTs uint64) {
 	if span.TableID == 0 {
 		log.Panic("subscription client subscribe with zero TableID")
 	}
@@ -502,7 +502,7 @@ func (s *SubscriptionClient) handleRangeTasks(ctx context.Context) error {
 // 3. Schedule a region request to subscribe the region.
 func (s *SubscriptionClient) divideSpanAndScheduleRegionRequests(
 	ctx context.Context,
-	span heartbeatpb.TableSpan,
+	span *heartbeatpb.TableSpan,
 	subscribedSpan *subscribedSpan,
 ) error {
 	// Limit the number of regions loaded at a time to make the load more stable.
@@ -550,7 +550,7 @@ func (s *SubscriptionClient) divideSpanAndScheduleRegionRequests(
 		}
 
 		for _, regionMeta := range regionMetas {
-			regionSpan := heartbeatpb.TableSpan{
+			regionSpan := &heartbeatpb.TableSpan{
 				StartKey: regionMeta.StartKey,
 				EndKey:   regionMeta.EndKey,
 			}
@@ -610,7 +610,7 @@ func (s *SubscriptionClient) scheduleRegionRequest(ctx context.Context, region r
 }
 
 func (s *SubscriptionClient) scheduleRangeRequest(
-	ctx context.Context, span heartbeatpb.TableSpan,
+	ctx context.Context, span *heartbeatpb.TableSpan,
 	subscribedSpan *subscribedSpan,
 ) {
 	select {
@@ -806,10 +806,10 @@ func (s *SubscriptionClient) logSlowRegions(ctx context.Context) error {
 
 func (s *SubscriptionClient) newSubscribedSpan(
 	subID SubscriptionID,
-	span heartbeatpb.TableSpan,
+	span *heartbeatpb.TableSpan,
 	startTs uint64,
 ) *subscribedSpan {
-	rangeLock := regionlock.NewRangeLock(uint64(subID), span.StartKey, span.EndKey, startTs)
+	rangeLock := regionlock.NewRangeLock(uint64(subID), span, startTs)
 
 	rt := &subscribedSpan{
 		subID:     subID,

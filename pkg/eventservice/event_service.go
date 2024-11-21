@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/ticdc/logservice/schemastore"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
-	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"go.uber.org/zap"
 )
@@ -33,7 +33,7 @@ type DispatcherInfo interface {
 	GetStartTs() uint64
 	GetActionType() eventpb.ActionType
 	GetChangefeedID() common.ChangeFeedID
-	GetFilterConfig() *config.FilterConfig
+	GetFilter() filter.Filter
 
 	// sync point related
 	SyncPointEnabled() bool
