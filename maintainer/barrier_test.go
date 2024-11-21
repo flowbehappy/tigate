@@ -389,29 +389,14 @@ func TestNormalBlockWithTableTrigger(t *testing.T) {
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
 			},
-			{
-				ID: blockedDispatcherIDS[1],
-				State: &heartbeatpb.State{
-					IsBlocked: true,
-					BlockTs:   10,
-					BlockTables: &heartbeatpb.InfluencedTables{
-						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						TableIDs:      []int64{0, 2, 3},
-					},
-					NeedDroppedTables: &heartbeatpb.InfluencedTables{
-						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						TableIDs:      []int64{2},
-					},
-					NeedAddedTables: []*heartbeatpb.Table{newSpan},
-				},
-			},
 		},
 	})
 	require.NotNil(t, msg)
 	resp := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 	require.Len(t, resp.DispatcherStatuses, 1)
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
-	require.Len(t, resp.DispatcherStatuses[0].InfluencedDispatchers.DispatcherIDs, 2)
+	require.Len(t, resp.DispatcherStatuses[0].InfluencedDispatchers.DispatcherIDs, 1)
+	require.False(t, barrier.blockedTs[eventKey{blockTs: 10, isSyncPoint: false}].tableTriggerDispatcherRelated)
 
 	// table trigger  block request
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
@@ -433,6 +418,22 @@ func TestNormalBlockWithTableTrigger(t *testing.T) {
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
 			},
+			{
+				ID: blockedDispatcherIDS[1],
+				State: &heartbeatpb.State{
+					IsBlocked: true,
+					BlockTs:   10,
+					BlockTables: &heartbeatpb.InfluencedTables{
+						InfluenceType: heartbeatpb.InfluenceType_Normal,
+						TableIDs:      []int64{0, 2, 3},
+					},
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
+						InfluenceType: heartbeatpb.InfluenceType_Normal,
+						TableIDs:      []int64{2},
+					},
+					NeedAddedTables: []*heartbeatpb.Table{newSpan},
+				},
+			},
 		},
 	})
 	require.NotNil(t, msg)
@@ -445,6 +446,7 @@ func TestNormalBlockWithTableTrigger(t *testing.T) {
 	require.True(t, event.writerDispatcher == tableTriggerEventDispatcherID)
 	// all dispatcher reported, the reported status is reset
 	require.False(t, event.rangeChecker.IsFullyCovered())
+	require.True(t, event.tableTriggerDispatcherRelated)
 
 	// table trigger write done
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
