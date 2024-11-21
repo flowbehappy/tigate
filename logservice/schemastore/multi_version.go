@@ -226,7 +226,6 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 	}
 	appendTableInfo := func() {
 		info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.TableInfo)
-		info.InitPreSQLs()
 		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 	}
 
@@ -332,7 +331,6 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 				},
 				ColumnSchema: lastRawColumnSchema,
 			}
-			tableInfo.InitPreSQLs()
 			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: tableInfo})
 		} else {
 			tableInfo := &common.TableInfo{
@@ -345,7 +343,6 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 				},
 				ColumnSchema: lastRawColumnSchema,
 			}
-			tableInfo.InitPreSQLs()
 			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: tableInfo})
 		}
 	case model.ActionCreateTables:
@@ -355,7 +352,6 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 				for _, partitionID := range getAllPartitionIDs(tableInfo) {
 					if v.tableID == partitionID {
 						info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, tableInfo)
-						info.InitPreSQLs()
 						v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 						break
 					}
@@ -363,7 +359,6 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 			} else {
 				if v.tableID == tableInfo.ID {
 					info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, tableInfo)
-					info.InitPreSQLs()
 					v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 					break
 				}
