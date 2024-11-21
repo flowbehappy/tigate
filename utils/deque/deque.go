@@ -48,12 +48,13 @@ type Deque[T any] struct {
 }
 
 func NewDequeDefault[T any]() *Deque[T] {
-	return NewDeque[T](32, 0)
+	a := NewBlockAllocator[T](32, 1)
+	return NewDeque[T](32, 0, &a)
 }
 
 // blockWidth is the size of each block.
 // maxLen is the maximum length of the deque. If the length exceeds maxLen, the oldest values will be removed. Zero means no limit.
-func NewDeque[T any](blockWidth int, maxLen int) *Deque[T] {
+func NewDeque[T any](blockWidth int, maxLen int, allocator ...*BlockAllocator[T]) *Deque[T] {
 	if blockWidth < 2 {
 		panic("blockWidth must be at least 2")
 	}
@@ -64,6 +65,9 @@ func NewDeque[T any](blockWidth int, maxLen int) *Deque[T] {
 		length:     0,
 		front:      0,
 		back:       -1,
+	}
+	if len(allocator) > 0 {
+		d.SetBlockAllocator(allocator[0])
 	}
 	return d
 }

@@ -573,12 +573,14 @@ func (e *eventStore) UpdateDispatcherCheckpointTs(
 				subscriptionStat.checkpointTs,
 				newCheckpointTs,
 			)
-			log.Debug("update checkpoint ts",
-				zap.Any("dispatcherID", dispatcherID),
-				zap.Uint64("subID", uint64(stat.subID)),
-				zap.Uint64("newCheckpointTs", newCheckpointTs),
-				zap.Uint64("oldCheckpointTs", subscriptionStat.checkpointTs))
-			subscriptionStat.checkpointTs = newCheckpointTs
+			if log.GetLevel() <= zap.DebugLevel {
+				log.Debug("update checkpoint ts",
+					zap.Any("dispatcherID", dispatcherID),
+					zap.Uint64("subID", uint64(stat.subID)),
+					zap.Uint64("newCheckpointTs", newCheckpointTs),
+					zap.Uint64("oldCheckpointTs", subscriptionStat.checkpointTs))
+				subscriptionStat.checkpointTs = newCheckpointTs
+			}
 		}
 	}
 	return nil
