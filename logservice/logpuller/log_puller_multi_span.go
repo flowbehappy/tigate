@@ -55,7 +55,7 @@ type LogPullerMultiSpan struct {
 func NewLogPullerMultiSpan(
 	client *SubscriptionClient,
 	pdClock pdutil.Clock,
-	spans []heartbeatpb.TableSpan,
+	spans []*heartbeatpb.TableSpan,
 	startTs uint64,
 	consume func(context.Context, *common.RawKVEntry) error,
 ) *LogPullerMultiSpan {

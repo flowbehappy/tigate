@@ -472,7 +472,7 @@ func (e *eventStore) RegisterDispatcher(
 	// maxEventCommitTs may not be updated correctly and cause data loss.(lost resolved ts is harmless)
 	// To fix it, we need to alloc subID and initialize dispatcherStat before puller may send events.
 	// That is allocate subID in a separate method.
-	stat.subID = e.puller.Subscribe(*tableSpan, startTs, subscriptionTag{
+	stat.subID = e.puller.Subscribe(tableSpan, startTs, subscriptionTag{
 		chIndex:     chIndex,
 		tableID:     tableSpan.TableID,
 		uniqueKeyID: uniqueKeyID,

@@ -26,7 +26,7 @@ import (
 var UpperBoundKey = []byte{255, 255, 255, 255, 255}
 
 // HackTableSpan will set End as UpperBoundKey if End is Nil.
-func HackTableSpan(span heartbeatpb.TableSpan) heartbeatpb.TableSpan {
+func HackTableSpan(span *heartbeatpb.TableSpan) *heartbeatpb.TableSpan {
 	if span.StartKey == nil {
 		span.StartKey = []byte{}
 	}
@@ -92,10 +92,10 @@ func EndCompare(lhs []byte, rhs []byte) int {
 }
 
 // GetIntersectSpan return the intersect part of lhs and rhs span
-func GetIntersectSpan(lhs heartbeatpb.TableSpan, rhs heartbeatpb.TableSpan) heartbeatpb.TableSpan {
+func GetIntersectSpan(lhs *heartbeatpb.TableSpan, rhs *heartbeatpb.TableSpan) *heartbeatpb.TableSpan {
 	if len(lhs.StartKey) != 0 && EndCompare(lhs.StartKey, rhs.EndKey) >= 0 ||
 		len(rhs.StartKey) != 0 && EndCompare(rhs.StartKey, lhs.EndKey) >= 0 {
-		return heartbeatpb.TableSpan{
+		return &heartbeatpb.TableSpan{
 			StartKey: nil,
 			EndKey:   nil,
 		}
@@ -113,7 +113,7 @@ func GetIntersectSpan(lhs heartbeatpb.TableSpan, rhs heartbeatpb.TableSpan) hear
 		end = rhs.EndKey
 	}
 
-	return heartbeatpb.TableSpan{
+	return &heartbeatpb.TableSpan{
 		StartKey: start,
 		EndKey:   end,
 	}
@@ -121,7 +121,7 @@ func GetIntersectSpan(lhs heartbeatpb.TableSpan, rhs heartbeatpb.TableSpan) hear
 
 // IsEmptySpan returns true if the span is empty.
 // TODO: check whether need span.StartKey >= span.EndKey
-func IsEmptySpan(span heartbeatpb.TableSpan) bool {
+func IsEmptySpan(span *heartbeatpb.TableSpan) bool {
 	return len(span.StartKey) == 0 && len(span.EndKey) == 0
 }
 

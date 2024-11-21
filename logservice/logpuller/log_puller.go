@@ -39,7 +39,7 @@ const (
 type spanProgress struct {
 	client *SubscriptionClient
 
-	span heartbeatpb.TableSpan
+	span *heartbeatpb.TableSpan
 
 	subID SubscriptionID
 
@@ -157,7 +157,7 @@ func (p *LogPuller) Close(ctx context.Context) error {
 }
 
 func (p *LogPuller) Subscribe(
-	span heartbeatpb.TableSpan,
+	span *heartbeatpb.TableSpan,
 	startTs uint64,
 	tag interface{},
 ) SubscriptionID {

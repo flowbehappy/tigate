@@ -58,7 +58,7 @@ type LockRangeResult struct {
 
 	// RetryRanges is only used when Status is LockRangeStatusStale.
 	// It contains the ranges that should be retried to lock.
-	RetryRanges []heartbeatpb.TableSpan
+	RetryRanges []*heartbeatpb.TableSpan
 }
 
 // LockedRangeState is used to access the real-time state changes of a locked range.
@@ -109,7 +109,7 @@ type RangeLock struct {
 	// ID to identify different RangeLock instances, so logs of different instances can be distinguished.
 	id uint64
 	// totalSpan is the total range of the table, totalSpan = unlockedRanges + lockedRanges
-	totalSpan heartbeatpb.TableSpan
+	totalSpan *heartbeatpb.TableSpan
 
 	mu sync.RWMutex
 	// unlockedRanges is used to store the resolvedTs of unlocked ranges.
@@ -124,12 +124,13 @@ type RangeLock struct {
 // NewRangeLock creates a new RangeLock.
 func NewRangeLock(
 	id uint64,
-	startKey, endKey []byte, startTs uint64,
+	span *heartbeatpb.TableSpan,
+	startTs uint64,
 ) *RangeLock {
 	return &RangeLock{
 		id:                     id,
-		totalSpan:              heartbeatpb.TableSpan{StartKey: startKey, EndKey: endKey},
-		unlockedRanges:         newRangeTsMap(startKey, endKey, startTs),
+		totalSpan:              span,
+		unlockedRanges:         newRangeTsMap(span.StartKey, span.EndKey, startTs),
 		lockedRanges:           btree.NewG(16, rangeLockEntryLess),
 		regionIDToLockedRanges: make(map[uint64]*rangeLockEntry),
 	}
@@ -456,7 +457,7 @@ func (l *RangeLock) tryLockRange(startKey, endKey []byte, regionID, regionVersio
 	// If the range is stale, we should return the overlapping ranges to the caller,
 	// so that the caller can retry to lock the rest of the range.
 	if isStale {
-		retryRanges := make([]heartbeatpb.TableSpan, 0)
+		retryRanges := make([]*heartbeatpb.TableSpan, 0)
 		currentRangeStartKey := startKey
 
 		log.Info("try lock range staled",
@@ -474,13 +475,13 @@ func (l *RangeLock) tryLockRange(startKey, endKey []byte, regionID, regionVersio
 			// The rest should come from range searching and is sorted in increasing order, and they
 			// must intersect with the current given range.
 			if bytes.Compare(currentRangeStartKey, r.startKey) < 0 {
-				retryRanges = append(retryRanges, heartbeatpb.TableSpan{StartKey: currentRangeStartKey, EndKey: r.startKey})
+				retryRanges = append(retryRanges, &heartbeatpb.TableSpan{StartKey: currentRangeStartKey, EndKey: r.startKey})
 			}
 			currentRangeStartKey = r.endKey
 		}
 
 		if bytes.Compare(currentRangeStartKey, endKey) < 0 {
-			retryRanges = append(retryRanges, heartbeatpb.TableSpan{StartKey: currentRangeStartKey, EndKey: endKey})
+			retryRanges = append(retryRanges, &heartbeatpb.TableSpan{StartKey: currentRangeStartKey, EndKey: endKey})
 		}
 
 		return LockRangeResult{
