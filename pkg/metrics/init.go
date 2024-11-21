@@ -33,4 +33,5 @@ func InitMetrics(registry *prometheus.Registry) {
 	InitCoordinatorMetrics(registry)
 	InitLogPullerMetrics(registry)
 	common.InitCommonMetrics(registry)
+	InitDynamicStreamMetrics(registry)
 }

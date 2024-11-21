@@ -110,7 +110,6 @@ func InitPullerMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(RegionWorkerTotalDuration)
 	registry.MustRegister(EventFeedErrorCounter)
 	registry.MustRegister(BatchResolvedEventSize)
-
 	registry.MustRegister(eventSize)
 	registry.MustRegister(pullEventCounter)
 	registry.MustRegister(clientChannelSize)

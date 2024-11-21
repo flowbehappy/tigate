@@ -17,9 +17,17 @@ var (
 			Name:      "matcher_count",
 			Help:      "The number of matchers",
 		})
+	LogPullerResolvedTsLag = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "log_puller",
+			Name:      "resolved_ts_lag",
+			Help:      "The lag of resolved ts",
+		})
 )
 
 func InitLogPullerMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(LogPullerPrewriteCacheRowNum)
 	registry.MustRegister(LogPullerMatcherCount)
+	registry.MustRegister(LogPullerResolvedTsLag)
 }
