@@ -292,6 +292,9 @@ func New(
 	store.dispatcherMeta.tableToDispatchers = make(map[int64]map[common.DispatcherID]bool)
 
 	consume := func(ctx context.Context, raw *common.RawKVEntry, subID logpuller.SubscriptionID) error {
+		if raw == nil {
+			log.Panic("should not happen: meet nil event")
+		}
 		store.ds.In(subID) <- eventWithSubID{
 			subID: subID,
 			raw:   raw,
