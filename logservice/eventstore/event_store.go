@@ -174,11 +174,10 @@ const (
 )
 
 type pathHasher struct {
-	streamCount int
 }
 
-func (h pathHasher) HashPath(subID logpuller.SubscriptionID) int {
-	return int((uint64)(subID) % (uint64)(h.streamCount))
+func (h pathHasher) HashPath(subID logpuller.SubscriptionID) uint64 {
+	return uint64(subID)
 }
 
 func New(
@@ -224,7 +223,7 @@ func New(
 
 	option := dynstream.NewOption()
 	option.InputBufferSize = 10240
-	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, &eventsHandler{}, option)
+	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
 	store := &eventStore{
