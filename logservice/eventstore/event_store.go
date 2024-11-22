@@ -273,6 +273,7 @@ func New(
 		if raw == nil {
 			log.Panic("should not happen: meet nil event")
 		}
+		log.Info("consume event", zap.Uint64("subID", uint64(subID)), zap.Any("event", raw))
 		store.ds.In(subID) <- eventWithSubID{
 			subID: subID,
 			raw:   raw,
