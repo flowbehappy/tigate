@@ -605,6 +605,9 @@ func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID
 }
 
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error) {
+	// FIZZ: restore me
+	return nil, nil
+
 	e.dispatcherMeta.RLock()
 	stat, ok := e.dispatcherMeta.dispatcherStats[dispatcherID]
 	if !ok {

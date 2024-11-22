@@ -446,10 +446,6 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	if err != nil {
 		log.Panic("read events failed", zap.Error(err))
 	}
-	// TODO: use error to indicate the dispatcher is removed
-	if iter == nil {
-		return
-	}
 
 	// After all the events are sent, we need to
 	// drain the ddlEvents and wake up the dispatcher.
@@ -464,6 +460,11 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			dataRange.EndTs,
 			task.metricEventServiceSendResolvedTsCount)
 	}()
+
+	// TODO: use error to indicate the dispatcher is removed
+	if iter == nil {
+		return
+	}
 
 	defer func() {
 		eventCount, _ := iter.Close()
