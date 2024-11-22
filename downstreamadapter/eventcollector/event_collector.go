@@ -375,9 +375,6 @@ func (c *EventCollector) updateResolvedTsMetric() {
 	if minResolvedTs > 0 {
 		phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 		lagMs := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
-		log.Info("EventCollector resolved ts lag",
-			zap.Uint64("resolvedTs", minResolvedTs),
-			zap.Float64("lagMs", lagMs))
 		metrics.EventCollectorResolvedTsLagGauge.Set(lagMs)
 	}
 }
