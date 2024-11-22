@@ -327,20 +327,20 @@ func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
 // If the dispatcher needs to scan the event store, it returns true.
 // If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
 func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
-	if task.dispatcherStat.resetTs.Load() == 0 {
-		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
-		c.sendReadyEvent(remoteID, task.dispatcherStat)
-		log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.dispatcherStat.id))
+	if task.resetTs.Load() == 0 {
+		remoteID := node.ID(task.info.GetServerID())
+		c.sendReadyEvent(remoteID, task)
+		log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.id))
 		return false, common.DataRange{}
 	}
 
 	c.checkAndInitDispatcher(task)
 
-	dataRange, needScan := task.dispatcherStat.getDataRange()
+	dataRange, needScan := task.getDataRange()
 	if !needScan {
 		return false, dataRange
 	}
-	ddlState := c.schemaStore.GetTableDDLEventState(task.dispatcherStat.info.GetTableSpan().TableID)
+	ddlState := c.schemaStore.GetTableDDLEventState(task.info.GetTableSpan().TableID)
 	if ddlState.ResolvedTs < dataRange.EndTs {
 		dataRange.EndTs = ddlState.ResolvedTs
 	}
@@ -350,26 +350,26 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	}
 
 	// target ts range: (dataRange.StartTs, dataRange.EndTs]
-	ok, dmlState := c.eventStore.GetDispatcherDMLEventState(task.dispatcherStat.id)
+	ok, dmlState := c.eventStore.GetDispatcherDMLEventState(task.id)
 	if !ok {
 		return false, dataRange
 	}
 	if dataRange.StartTs >= dmlState.MaxEventCommitTs && dataRange.StartTs >= ddlState.MaxEventCommitTs {
 		// The dispatcher has no new events. In such case, we don't need to scan the event store.
 		// We just send the watermark to the dispatcher.
-		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
-		c.sendWatermark(remoteID, task.dispatcherStat, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
-		task.dispatcherStat.watermark.Store(dataRange.EndTs)
+		remoteID := node.ID(task.info.GetServerID())
+		c.sendWatermark(remoteID, task, dataRange.EndTs, task.metricEventServiceSendResolvedTsCount)
+		task.watermark.Store(dataRange.EndTs)
 		return false, dataRange
 	}
 
 	// Only scan when the dispatcher is running.
-	if !task.dispatcherStat.isRunning.Load() {
+	if !task.isRunning.Load() {
 		// If the dispatcher is not running, we also need to send the watermark to the dispatcher.
 		// And the resolvedTs should be the last sent watermark.
-		resolvedTs := task.dispatcherStat.watermark.Load()
-		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
-		c.sendWatermark(remoteID, task.dispatcherStat, resolvedTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+		resolvedTs := task.watermark.Load()
+		remoteID := node.ID(task.info.GetServerID())
+		c.sendWatermark(remoteID, task, resolvedTs, task.metricEventServiceSendResolvedTsCount)
 		return false, dataRange
 	}
 
@@ -377,25 +377,25 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 }
 
 func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
-	if task.dispatcherStat.isInitialized.Load() {
+	if task.isInitialized.Load() {
 		return
 	}
 	// Always reset the seq of the dispatcher to 0 before sending a handshake event.
-	task.dispatcherStat.seq.Store(0)
+	task.seq.Store(0)
 	wrapE := wrapEvent{
-		serverID: node.ID(task.dispatcherStat.info.GetServerID()),
+		serverID: node.ID(task.info.GetServerID()),
 		e: pevent.NewHandshakeEvent(
-			task.dispatcherStat.id,
-			task.dispatcherStat.watermark.Load(),
-			task.dispatcherStat.seq.Add(1),
-			task.dispatcherStat.startTableInfo.Load()),
+			task.id,
+			task.watermark.Load(),
+			task.seq.Add(1),
+			task.startTableInfo.Load()),
 		msgType: pevent.TypeHandshakeEvent,
 		postSendFunc: func() {
-			task.dispatcherStat.isInitialized.Store(true)
+			task.isInitialized.Store(true)
 		},
 	}
-	log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.dispatcherStat.id))
-	c.getMessageCh(task.dispatcherStat.workerIndex) <- wrapE
+	log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.id))
+	c.getMessageCh(task.workerIndex) <- wrapE
 }
 
 // emitSyncPointEventIfNeeded emits a sync point event if the current ts is greater than the next sync point, and updates the next sync point.
@@ -419,14 +419,14 @@ func (c *eventBroker) emitSyncPointEventIfNeeded(ts uint64, d *dispatcherStat, r
 func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	task.handle()
 	start := time.Now()
-	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
-	dispatcherID := task.dispatcherStat.id
+	remoteID := node.ID(task.info.GetServerID())
+	dispatcherID := task.id
 
 	defer c.wakeDispatcher(dispatcherID)
 	// If the target is not ready to send, we don't need to scan the event store.
 	// To avoid the useless scan task.
 	if !c.msgSender.IsReadyToSend(remoteID) {
-		log.Info("The remote target is not ready, skip scan", zap.Stringer("dispatcher", task.dispatcherStat.id), zap.Stringer("remote", remoteID))
+		log.Info("The remote target is not ready, skip scan", zap.Stringer("dispatcher", task.id), zap.Stringer("remote", remoteID))
 		return
 	}
 
@@ -436,7 +436,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	}
 
 	// TODO: distinguish only dml or only ddl scenario
-	ddlEvents, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, task.dispatcherStat.filter, dataRange.StartTs, dataRange.EndTs)
+	ddlEvents, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, task.filter, dataRange.StartTs, dataRange.EndTs)
 	if err != nil {
 		log.Panic("get ddl events failed", zap.Error(err))
 	}
@@ -455,20 +455,20 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	// drain the ddlEvents and wake up the dispatcher.
 	defer func() {
 		for _, e := range ddlEvents {
-			c.sendDDL(ctx, remoteID, e, task.dispatcherStat)
+			c.sendDDL(ctx, remoteID, e, task)
 		}
-		task.dispatcherStat.watermark.Store(dataRange.EndTs)
+		task.watermark.Store(dataRange.EndTs)
 		// After all the events are sent, we send the watermark to the dispatcher.
 		c.sendWatermark(remoteID,
-			task.dispatcherStat,
+			task,
 			dataRange.EndTs,
-			task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+			task.metricEventServiceSendResolvedTsCount)
 	}()
 
 	defer func() {
 		eventCount, _ := iter.Close()
 		if eventCount != 0 {
-			task.dispatcherStat.metricSorterOutputEventCountKV.Add(float64(eventCount))
+			task.metricSorterOutputEventCountKV.Add(float64(eventCount))
 		}
 	}()
 
@@ -478,13 +478,13 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		}
 
 		for len(ddlEvents) > 0 && dml.CommitTs > ddlEvents[0].FinishedTs {
-			c.sendDDL(ctx, remoteID, ddlEvents[0], task.dispatcherStat)
+			c.sendDDL(ctx, remoteID, ddlEvents[0], task)
 			ddlEvents = ddlEvents[1:]
 		}
-		dml.Seq = task.dispatcherStat.seq.Add(1)
-		c.emitSyncPointEventIfNeeded(dml.CommitTs, task.dispatcherStat, remoteID)
-		c.getMessageCh(task.dispatcherStat.workerIndex) <- newWrapDMLEvent(remoteID, dml, task.dispatcherStat.getEventSenderState())
-		task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(dml.Len()))
+		dml.Seq = task.seq.Add(1)
+		c.emitSyncPointEventIfNeeded(dml.CommitTs, task, remoteID)
+		c.getMessageCh(task.workerIndex) <- newWrapDMLEvent(remoteID, dml, task.getEventSenderState())
+		task.metricEventServiceSendKvCount.Add(float64(dml.Len()))
 	}
 
 	// 3. Send the events to the dispatcher.
@@ -501,14 +501,14 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			c.metricScanEventDuration.Observe(time.Since(start).Seconds())
 			return
 		}
-		if e.CRTs < task.dispatcherStat.watermark.Load() {
+		if e.CRTs < task.watermark.Load() {
 			// If the commitTs of the event is less than the watermark of the dispatcher,
 			// there are some bugs in the eventStore.
-			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("watermark", task.watermark.Load()))
 		}
 		if isNewTxn {
 			sendDML(dml)
-			tableID := task.dispatcherStat.info.GetTableSpan().TableID
+			tableID := task.info.GetTableSpan().TableID
 			tableInfo, err := c.schemaStore.GetTableInfo(tableID, e.CRTs-1)
 			if err != nil {
 				// FIXME handle the error
@@ -709,8 +709,7 @@ func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
 		// default:
 		// 	metricEventBrokerDropNotificationCount.Inc()
 		// }
-
-		c.ds.In(d.id) <- newScanTask(d)
+		c.ds.In(d.id) <- d
 	}
 }
 
@@ -946,24 +945,10 @@ func (a *dispatcherStat) getDataRange() (common.DataRange, bool) {
 	return r, true
 }
 
-type scanTask struct {
-	dispatcherStat *dispatcherStat
-	//createTime     time.Time
-}
+type scanTask = *dispatcherStat
 
-func newScanTask(dispatcherStat *dispatcherStat) scanTask {
-	return scanTask{
-		dispatcherStat: dispatcherStat,
-		//createTime:     time.Now(),
-	}
-}
-
-func (t *scanTask) handle() {
+func (t scanTask) handle() {
 	//metricScanTaskQueueDuration.Observe(float64(time.Since(t.createTime).Milliseconds()))
-}
-
-func (t scanTask) IsBatchable() bool {
-	return true
 }
 
 type scanTaskPool struct {
