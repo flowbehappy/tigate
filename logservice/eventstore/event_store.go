@@ -318,7 +318,6 @@ func (p *writeTaskPool) run(_ context.Context) {
 				if !ok {
 					return
 				}
-				// TODO: batch it
 				p.store.writeEvents(p.db, events)
 				for _, event := range events {
 					p.store.wakeSubscription(event.subID)
