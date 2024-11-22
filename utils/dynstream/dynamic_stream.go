@@ -739,7 +739,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			}
 			allStreamPendingLen := 0
 			for _, si := range d.streamInfos {
-				allStreamPendingLen += si.streamStat.pendingLen
+				allStreamPendingLen += si.stream.getPendingSize()
 			}
 			d.allStreamPendingLen.Store(int64(allStreamPendingLen))
 		}

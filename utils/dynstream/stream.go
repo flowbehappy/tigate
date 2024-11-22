@@ -174,8 +174,9 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	eventBlockAllocator *deque.BlockAllocator[eventWrap[A, P, T, D, H]] // The allocator for blocks to store eventWraps in the pendingQueue.
 
-	inChan  chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
-	outChan chan eventWrap[A, P, T, D, H] // The buffer channel to send the events.
+	inChan      chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
+	bufferCount atomic.Int64
+	outChan     chan eventWrap[A, P, T, D, H] // The buffer channel to send the events.
 
 	eventQueue eventQueue[A, P, T, D, H]    // The queue to store the pending events.
 	doneChan   chan doneInfo[A, P, T, D, H] // The channel to receive the done events.
@@ -214,6 +215,10 @@ func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 	a := deque.NewBlockAllocator[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 64)
 	s.eventBlockAllocator = &a
 	return s
+}
+
+func (s *stream[A, P, T, D, H]) getPendingSize() int {
+	return len(s.inChan) + int(s.bufferCount.Load()) + len(s.outChan) + int(s.eventQueue.totalPendingLength.Load())
 }
 
 func (s *stream[A, P, T, D, H]) in() chan eventWrap[A, P, T, D, H] {
@@ -256,6 +261,7 @@ func (s *stream[A, P, T, D, H]) reciever() {
 			} else {
 				s.outChan <- *event
 				buffer.PopFront()
+				s.bufferCount.Add(-1)
 			}
 		}
 		close(s.outChan)
@@ -268,6 +274,7 @@ func (s *stream[A, P, T, D, H]) reciever() {
 				return
 			}
 			buffer.PushBack(e)
+			s.bufferCount.Add(1)
 		} else {
 			select {
 			case e, ok := <-s.inChan:
@@ -275,8 +282,10 @@ func (s *stream[A, P, T, D, H]) reciever() {
 					return
 				}
 				buffer.PushBack(e)
+				s.bufferCount.Add(1)
 			case s.outChan <- *event:
 				buffer.PopFront()
+				s.bufferCount.Add(-1)
 			}
 		}
 	}
