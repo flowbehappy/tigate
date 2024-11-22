@@ -170,9 +170,9 @@ type eventStore struct {
 
 const (
 	dataDir             = "event_store"
-	dbCount             = 8
-	writeWorkerNumPerDB = 100
-	streamCount         = 4
+	dbCount             = 16
+	writeWorkerNumPerDB = 64
+	streamCount         = 16
 )
 
 type pathHasher struct {
@@ -224,7 +224,8 @@ func New(
 	}
 
 	option := dynstream.NewOption()
-	option.InputBufferSize = 102400
+	option.InputBufferSize = 80000
+	option.BatchCount = 4096
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
@@ -312,7 +313,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			batch := make([]kvEvents, 0, 100)
+			batch := make([]kvEvents, 0, 4096)
 			for {
 				events, ok := p.dataCh.GetMultiple(batch)
 				if !ok {
