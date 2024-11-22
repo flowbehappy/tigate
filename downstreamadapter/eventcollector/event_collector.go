@@ -84,7 +84,7 @@ type EventCollector struct {
 	// ds is the dynamicStream for dispatcher events.
 	// All the events from event service will be sent to ds to handle.
 	// ds will dispatch the events to different dispatchers according to the dispatcherID.
-	ds dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler]
+	ds dynstream.DynamicStream[common.GID, common.DispatcherID, *dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler]
 
 	coordinatorInfo struct {
 		sync.RWMutex
@@ -331,11 +331,11 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 			case commonEvent.TypeBatchResolvedEvent:
 				for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 					c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-					c.ds.In(e.DispatcherID) <- dispatcher.NewDispatcherEvent(targetMessage.From, e)
+					c.ds.In(e.DispatcherID) <- dispatcher.NewDispatcherEventTest(targetMessage.From, e)
 				}
 			default:
 				c.metricDispatcherReceivedKVEventCount.Inc()
-				c.ds.In(event.GetDispatcherID()) <- dispatcher.NewDispatcherEvent(targetMessage.From, event)
+				c.ds.In(event.GetDispatcherID()) <- dispatcher.NewDispatcherEventTest(targetMessage.From, event)
 			}
 		default:
 			log.Panic("invalid message type", zap.Any("msg", msg))
@@ -417,7 +417,7 @@ func (d *DispatcherStat) reset() {
 	d.waitHandshake.Store(true)
 }
 
-func (d *DispatcherStat) checkEventSeq(event dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
+func (d *DispatcherStat) checkEventSeq(event *dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
 	switch event.GetType() {
 	case commonEvent.TypeDMLEvent,
 		commonEvent.TypeDDLEvent,
@@ -448,7 +448,7 @@ func (d *DispatcherStat) checkEventSeq(event dispatcher.DispatcherEvent, eventCo
 	}
 }
 
-func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
+func (d *DispatcherStat) shouldIgnoreDataEvent(event *dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
 	if d.eventServiceInfo.serverID != event.From {
 		// TODO: unregister from this invalid event service if it send events for a long time
 		return true
@@ -478,7 +478,7 @@ func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent,
 	return false
 }
 
-func (d *DispatcherStat) handleHandshakeEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) {
+func (d *DispatcherStat) handleHandshakeEvent(event *dispatcher.DispatcherEvent, eventCollector *EventCollector) {
 	d.eventServiceInfo.Lock()
 	defer d.eventServiceInfo.Unlock()
 	if event.GetType() != commonEvent.TypeHandshakeEvent {
@@ -504,7 +504,7 @@ func (d *DispatcherStat) handleHandshakeEvent(event dispatcher.DispatcherEvent, 
 	d.target.SetInitialTableInfo(event.Event.(*commonEvent.HandshakeEvent).TableInfo)
 }
 
-func (d *DispatcherStat) handleReadyEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) {
+func (d *DispatcherStat) handleReadyEvent(event *dispatcher.DispatcherEvent, eventCollector *EventCollector) {
 	d.eventServiceInfo.Lock()
 	defer d.eventServiceInfo.Unlock()
 	if event.GetType() != commonEvent.TypeReadyEvent {
@@ -562,7 +562,7 @@ func (d *DispatcherStat) handleReadyEvent(event dispatcher.DispatcherEvent, even
 	}
 }
 
-func (d *DispatcherStat) handleNotReusableEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) {
+func (d *DispatcherStat) handleNotReusableEvent(event *dispatcher.DispatcherEvent, eventCollector *EventCollector) {
 	d.eventServiceInfo.Lock()
 	defer d.eventServiceInfo.Unlock()
 	if event.GetType() != commonEvent.TypeNotReusableEvent {

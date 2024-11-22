@@ -275,6 +275,13 @@ func NewDispatcherEvent(from node.ID, event commonEvent.Event) DispatcherEvent {
 	}
 }
 
+func NewDispatcherEventTest(from node.ID, event commonEvent.Event) *DispatcherEvent {
+	return &DispatcherEvent{
+		From:  from,
+		Event: event,
+	}
+}
+
 type DispatcherStatusWithID struct {
 	id     common.DispatcherID
 	status *heartbeatpb.DispatcherStatus
