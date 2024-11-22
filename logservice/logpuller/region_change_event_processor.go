@@ -161,8 +161,10 @@ func (w *changeEventProcessor) handleEventEntry(ctx context.Context, x *cdcpb.Ev
 	startTs := state.region.subscribedSpan.startTs
 	emit := func(val *common.RawKVEntry) error {
 		// TODO: add a metric to indicate whether the event is sent successfully.
-		e := newLogEvent(val, state.region.subscribedSpan)
-		return w.client.consume(ctx, e)
+		//e := newLogEvent(val, state.region.subscribedSpan)
+		//return w.client.consume(ctx, e)
+		// FIXME: restore me after testing
+		return nil
 	}
 	tableID := state.region.subscribedSpan.span.TableID
 	log.Debug("region change event processor get an Event",
