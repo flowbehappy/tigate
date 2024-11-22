@@ -88,28 +88,6 @@ type EventIterator interface {
 	Close() (eventCnt int64, err error)
 }
 
-type eventType int
-
-// TODO: better name
-const (
-	eventTypeBatchSignal eventType = iota
-	eventTypeNormal
-)
-
-type eventWithState struct {
-	eventType
-	raw      *common.RawKVEntry
-	subID    logpuller.SubscriptionID
-	tableID  int64
-	uniqueID uint64
-}
-
-var uniqueIDGen uint64 = 0
-
-func genUniqueID() uint64 {
-	return atomic.AddUint64(&uniqueIDGen, 1)
-}
-
 type dispatcherStat struct {
 	dispatcherID common.DispatcherID
 
