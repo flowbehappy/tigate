@@ -14,6 +14,8 @@
 package eventstore
 
 import (
+	"fmt"
+
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/utils/dynstream"
@@ -52,7 +54,7 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...eventWithSub
 		zap.Uint64("subID", uint64(subStat.subID)),
 		zap.Uint64("resolvedTs", events[0].raw.CRTs),
 		zap.Any("events[0]", events[0].raw),
-		zap.Any("events", events))
+		zap.Any("events", fmt.Sprintf("%+v", events)))
 	subStat.maxEventCommitTs.Store(events[len(events)-1].raw.CRTs)
 	subStat.eventCh <- dataEvents{
 		events:  events,
