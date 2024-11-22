@@ -276,11 +276,9 @@ type TableInfo struct {
 	// So be careful when using the TableInfo.
 	TableName TableName `json:"table-name"`
 
-	// we don't want user to get columnSchema directly, and do copy or other actions.
-	// So for each operation, we will provide a related function to get field you want.
+	// Version means the version of the table info.
+	Version      uint16        `json:"version"`
 	columnSchema *columnSchema `json:"-"`
-
-	PreSQLs map[int]string `json:"pre-sqls"`
 }
 
 func (ti *TableInfo) MarshalJSON() ([]byte, error) {
@@ -357,94 +355,16 @@ func (ti *TableInfo) GetColumnsFlag() map[int64]*ColumnFlagType {
 	return ti.columnSchema.ColumnsFlag
 }
 
-func (ti *TableInfo) Version() uint16 {
-	return ti.columnSchema.Version
-}
-
-func (ti *TableInfo) InitPreSQLs() {
-	// TODO: find better way to hold the preSQLs
-	if len(ti.columnSchema.Columns) == 0 {
-		log.Warn("table has no columns, should be in test mode", zap.String("table", ti.TableName.String()))
-		return
-	}
-	ti.PreSQLs = make(map[int]string)
-	ti.PreSQLs[preSQLInsert] = ti.genPreSQLInsert(false, true)
-	ti.PreSQLs[preSQLReplace] = ti.genPreSQLInsert(true, true)
-	ti.PreSQLs[preSQLUpdate] = ti.genPreSQLUpdate()
-}
-
-func (ti *TableInfo) genPreSQLInsert(isReplace bool, needPlaceHolder bool) string {
-	var builder strings.Builder
-
-	if isReplace {
-		builder.WriteString("REPLACE INTO ")
-	} else {
-		builder.WriteString("INSERT INTO ")
-	}
-	quoteTable := ti.TableName.QuoteString()
-	builder.WriteString(quoteTable)
-	builder.WriteString(" (")
-	builder.WriteString(ti.getColumnList(false))
-	builder.WriteString(") VALUES ")
-
-	if needPlaceHolder {
-		builder.WriteString("(")
-		builder.WriteString(placeHolder(len(ti.columnSchema.Columns) - ti.columnSchema.VirtualColumnCount))
-		builder.WriteString(")")
-	}
-	return builder.String()
-}
-
-func (ti *TableInfo) genPreSQLUpdate() string {
-	var builder strings.Builder
-	builder.WriteString("UPDATE ")
-	builder.WriteString(ti.TableName.QuoteString())
-	builder.WriteString(" SET ")
-	builder.WriteString(ti.getColumnList(true))
-	return builder.String()
-}
-
-// placeHolder returns a string with n placeholders separated by commas
-// n must be greater or equal than 1, or the function will panic
-func placeHolder(n int) string {
-	var builder strings.Builder
-	builder.Grow((n-1)*2 + 1)
-	for i := 0; i < n; i++ {
-		if i > 0 {
-			builder.WriteString(",")
-		}
-		builder.WriteString("?")
-	}
-	return builder.String()
-}
-
-func (ti *TableInfo) getColumnList(isUpdate bool) string {
-	var b strings.Builder
-	for i, col := range ti.columnSchema.Columns {
-		if col == nil || ti.columnSchema.ColumnsFlag[col.ID].IsGeneratedColumn() {
-			continue
-		}
-		if i > 0 {
-			b.WriteString(",")
-		}
-		b.WriteString(QuoteName(col.Name.O))
-		if isUpdate {
-			b.WriteString(" = ?")
-		}
-	}
-	return b.String()
-}
-
 func (ti *TableInfo) GetPreInsertSQL() string {
-	return ti.PreSQLs[preSQLInsert]
+	return fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
 }
 
 func (ti *TableInfo) GetPreReplaceSQL() string {
-	return ti.PreSQLs[preSQLReplace]
+	return fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
 }
 
 func (ti *TableInfo) GetPreUpdateSQL() string {
-	return ti.PreSQLs[preSQLUpdate]
+	return fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
 }
 
 // GetColumnInfo returns the column info by ID
@@ -616,7 +536,7 @@ func (ti *TableInfo) GetPrimaryKeyColumnNames() []string {
 	return result
 }
 
-func NewTableInfo(schemaID int64, schemaName string, tableName string, tableID int64, isPartition bool, colcolumnSchema *columnSchema) *TableInfo {
+func NewTableInfo(schemaID int64, schemaName string, tableName string, tableID int64, isPartition bool, version uint16, columnSchema *columnSchema) *TableInfo {
 	ti := &TableInfo{
 		SchemaID: schemaID,
 		TableName: TableName{
@@ -625,7 +545,8 @@ func NewTableInfo(schemaID int64, schemaName string, tableName string, tableID i
 			TableID:     tableID,
 			IsPartition: isPartition,
 		},
-		columnSchema: colcolumnSchema,
+		Version:      version,
+		columnSchema: columnSchema,
 	}
 
 	// when this tableInfo is released, we need to cut down the reference count of the columnSchema
@@ -643,7 +564,7 @@ func WrapTableInfo(schemaID int64, schemaName string, info *model.TableInfo) *Ta
 	sharedColumnSchemaStorage := GetSharedColumnSchemaStorage()
 	columnSchema := sharedColumnSchemaStorage.GetOrSetColumnSchema(info)
 
-	return NewTableInfo(schemaID, schemaName, info.Name.O, info.ID, info.GetPartitionInfo() != nil, columnSchema)
+	return NewTableInfo(schemaID, schemaName, info.Name.O, info.ID, info.GetPartitionInfo() != nil, info.Version, columnSchema)
 }
 
 // GetColumnDefaultValue returns the default definition of a column.

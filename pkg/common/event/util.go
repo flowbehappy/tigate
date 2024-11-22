@@ -82,7 +82,6 @@ func (s *EventTestHelper) ApplyJob(job *timodel.Job) {
 		job.SchemaID,
 		job.SchemaName,
 		job.BinlogInfo.TableInfo)
-	info.InitPreSQLs()
 	s.tableInfos[key] = info
 }
 

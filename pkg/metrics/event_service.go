@@ -93,11 +93,11 @@ var (
 			Help:      "The duration of a scan task being queued",
 			Buckets:   prometheus.DefBuckets,
 		})
-	EventServiceHandleDuration = prometheus.NewHistogram(
+	EventServiceTaskHandleDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
-			Name:      "handle_duration",
+			Name:      "task_handle_duration",
 			Help:      "The duration of handling a scan task",
 			Buckets:   prometheus.DefBuckets,
 		})
@@ -122,6 +122,6 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceDropScanTaskCount)
 	registry.MustRegister(EventServiceDropResolvedTsCount)
 	registry.MustRegister(EventServiceScanTaskQueueDuration)
-	registry.MustRegister(EventServiceHandleDuration)
+	registry.MustRegister(EventServiceTaskHandleDuration)
 	registry.MustRegister(EventServiceDropNotificationCount)
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/log"
@@ -318,8 +319,6 @@ type columnSchema struct {
 	Digest Digest `json:"digest"`
 
 	// These fields are copied from model.TableInfo.
-	// Version means the version of the table info.
-	Version uint16 `json:"version"`
 	// Columns are listed in the order in which they appear in the schema
 	Columns []*model.ColumnInfo `json:"cols"`
 	Indices []*model.IndexInfo  `json:"index_info"`
@@ -379,6 +378,9 @@ type columnSchema struct {
 	VirtualColumnCount int `json:"virtual_column_count"`
 	// RowColInfosWithoutVirtualCols is the same as rowColInfos, but without virtual columns
 	RowColInfosWithoutVirtualCols *[]rowcodec.ColInfo `json:"row_col_infos_without_virtual_cols"`
+	// PreSQL is used to restore pre-calculated sqls for insert/update/delete.
+	// When use, we just need to fmt.Sprintf(sql, QuotatableName) to get final SQL.
+	PreSQLs map[int]string `json:"pre_sqls"`
 }
 
 func (s *columnSchema) Marshal() ([]byte, error) {
@@ -409,7 +411,6 @@ func unmarshalJsonToColumnSchema(data []byte) (*columnSchema, error) {
 func newColumnSchema(tableInfo *model.TableInfo, digest Digest) *columnSchema {
 	colSchema := &columnSchema{
 		Digest:           digest,
-		Version:          tableInfo.Version,
 		Columns:          tableInfo.Columns,
 		Indices:          tableInfo.Indices,
 		PKIsHandle:       tableInfo.PKIsHandle,
@@ -485,6 +486,8 @@ func newColumnSchema(tableInfo *model.TableInfo, digest Digest) *columnSchema {
 	colSchema.initRowColInfosWithoutVirtualCols()
 	colSchema.findHandleIndex(tableInfo.Name.O)
 	colSchema.initColumnsFlag()
+
+	colSchema.InitPreSQLs(tableInfo.Name.O)
 
 	SharedColumnSchemaCountGauge.Inc()
 	return colSchema
@@ -731,4 +734,75 @@ func PrimaryPrefixColumnIDs(tableInfo *TableInfo) (prefixCols []int64) {
 		}
 	}
 	return
+}
+
+func (s *columnSchema) InitPreSQLs(tableName string) {
+	// TODO: find better way to hold the preSQLs
+	if len(s.Columns) == 0 {
+		log.Warn("table has no columns, should be in test mode", zap.String("table", tableName))
+		return
+	}
+	s.PreSQLs = make(map[int]string)
+	s.PreSQLs[preSQLInsert] = s.genPreSQLInsert(false, true)
+	s.PreSQLs[preSQLReplace] = s.genPreSQLInsert(true, true)
+	s.PreSQLs[preSQLUpdate] = s.genPreSQLUpdate()
+}
+
+func (s *columnSchema) genPreSQLInsert(isReplace bool, needPlaceHolder bool) string {
+	var builder strings.Builder
+
+	if isReplace {
+		builder.WriteString("REPLACE INTO %s")
+	} else {
+		builder.WriteString("INSERT INTO %s")
+	}
+	builder.WriteString(" (")
+	builder.WriteString(s.getColumnList(false))
+	builder.WriteString(") VALUES ")
+
+	if needPlaceHolder {
+		builder.WriteString("(")
+		builder.WriteString(placeHolder(len(s.Columns) - s.VirtualColumnCount))
+		builder.WriteString(")")
+	}
+	return builder.String()
+}
+
+func (s *columnSchema) genPreSQLUpdate() string {
+	var builder strings.Builder
+	builder.WriteString("UPDATE %s")
+	builder.WriteString(" SET ")
+	builder.WriteString(s.getColumnList(true))
+	return builder.String()
+}
+
+// placeHolder returns a string with n placeholders separated by commas
+// n must be greater or equal than 1, or the function will panic
+func placeHolder(n int) string {
+	var builder strings.Builder
+	builder.Grow((n-1)*2 + 1)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			builder.WriteString(",")
+		}
+		builder.WriteString("?")
+	}
+	return builder.String()
+}
+
+func (s *columnSchema) getColumnList(isUpdate bool) string {
+	var b strings.Builder
+	for i, col := range s.Columns {
+		if col == nil || s.ColumnsFlag[col.ID].IsGeneratedColumn() {
+			continue
+		}
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(QuoteName(col.Name.O))
+		if isUpdate {
+			b.WriteString(" = ?")
+		}
+	}
+	return b.String()
 }

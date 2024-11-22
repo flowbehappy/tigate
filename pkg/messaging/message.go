@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/pingcap/ticdc/logservice/logservicepb"
-	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/node"
 
 	"github.com/pingcap/log"
@@ -14,7 +14,6 @@ import (
 	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
-	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
 	"go.uber.org/zap"
 )
 
@@ -161,31 +160,13 @@ func (r RegisterDispatcherRequest) GetChangefeedID() common.ChangeFeedID {
 	return common.NewChangefeedIDFromPB(r.ChangefeedId)
 }
 
-func (r RegisterDispatcherRequest) GetFilterConfig() *config.FilterConfig {
-	cfg := r.RegisterDispatcherRequest.FilterConfig
-	if cfg == nil {
-		return nil
+func (r RegisterDispatcherRequest) GetFilter() filter.Filter {
+	changefeedID := r.GetChangefeedID()
+	filter, err := filter.GetSharedFilterStorage().GetOrSetFilter(changefeedID, r.RegisterDispatcherRequest.FilterConfig, "", false)
+	if err != nil {
+		log.Panic("create filter failed", zap.Error(err), zap.Any("filterConfig", r.RegisterDispatcherRequest.FilterConfig))
 	}
-	filterCfg := &config.FilterConfig{
-		Rules:            cfg.Rules,
-		IgnoreTxnStartTs: cfg.IgnoreTxnStartTs,
-	}
-	for _, rule := range cfg.EventFilters {
-		f := &config.EventFilterRule{
-			Matcher:                  rule.Matcher,
-			IgnoreSQL:                rule.IgnoreSql,
-			IgnoreInsertValueExpr:    rule.IgnoreInsertValueExpr,
-			IgnoreUpdateNewValueExpr: rule.IgnoreUpdateNewValueExpr,
-			IgnoreUpdateOldValueExpr: rule.IgnoreUpdateOldValueExpr,
-			IgnoreDeleteValueExpr:    rule.IgnoreDeleteValueExpr,
-		}
-		for _, e := range rule.IgnoreEvent {
-			f.IgnoreEvent = append(f.IgnoreEvent, bf.EventType(e))
-		}
-
-		filterCfg.EventFilters = append(filterCfg.EventFilters, f)
-	}
-	return filterCfg
+	return filter
 }
 
 func (r RegisterDispatcherRequest) SyncPointEnabled() bool {

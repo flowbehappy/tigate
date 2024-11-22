@@ -44,8 +44,8 @@ func (it *BackwardIter[T]) Next() (T, bool) {
 	return item, true
 }
 
-func NewRingBuffer[T any](capacity int) *RingBuffer[T] {
-	return &RingBuffer[T]{
+func NewRingBuffer[T any](capacity int) RingBuffer[T] {
+	return RingBuffer[T]{
 		buffer:   make([]T, capacity+1),
 		capacity: capacity,
 	}

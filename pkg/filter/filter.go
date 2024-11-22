@@ -15,14 +15,18 @@ package filter
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/eventpb"
 	"github.com/pingcap/ticdc/pkg/apperror"
+	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
 	timodel "github.com/pingcap/tidb/pkg/meta/model"
 	tfilter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/pingcap/tiflow/cdc/model"
+	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
 	"go.uber.org/zap"
 )
 
@@ -233,4 +237,62 @@ func IsSchemaDDL(actionType timodel.ActionType) bool {
 	default:
 		return false
 	}
+}
+
+var once sync.Once
+var storage *SharedFilterStorage
+
+type SharedFilterStorage struct {
+	// Each dispatcher in the same changefeed will share the same filter storage.
+	m     map[common.ChangeFeedID]Filter
+	mutex sync.Mutex
+}
+
+func GetSharedFilterStorage() *SharedFilterStorage {
+	once.Do(func() {
+		storage = &SharedFilterStorage{
+			m: make(map[common.ChangeFeedID]Filter),
+		}
+	})
+	return storage
+}
+
+func (s *SharedFilterStorage) GetOrSetFilter(
+	changeFeedID common.ChangeFeedID,
+	cfg *eventpb.FilterConfig,
+	tz string,
+	caseSensitive bool,
+) (Filter, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if f, ok := s.m[changeFeedID]; ok {
+		return f, nil
+	}
+	// convert eventpb.FilterConfig to config.FilterConfig
+	filterCfg := &config.FilterConfig{
+		Rules:            cfg.Rules,
+		IgnoreTxnStartTs: cfg.IgnoreTxnStartTs,
+	}
+	for _, rule := range cfg.EventFilters {
+		f := &config.EventFilterRule{
+			Matcher:                  rule.Matcher,
+			IgnoreSQL:                rule.IgnoreSql,
+			IgnoreInsertValueExpr:    rule.IgnoreInsertValueExpr,
+			IgnoreUpdateNewValueExpr: rule.IgnoreUpdateNewValueExpr,
+			IgnoreUpdateOldValueExpr: rule.IgnoreUpdateOldValueExpr,
+			IgnoreDeleteValueExpr:    rule.IgnoreDeleteValueExpr,
+		}
+		for _, e := range rule.IgnoreEvent {
+			f.IgnoreEvent = append(f.IgnoreEvent, bf.EventType(e))
+		}
+
+		filterCfg.EventFilters = append(filterCfg.EventFilters, f)
+	}
+	//generate table filter
+	f, err := NewFilter(filterCfg, tz, caseSensitive)
+	if err != nil {
+		return nil, err
+	}
+	s.m[changeFeedID] = f
+	return f, nil
 }

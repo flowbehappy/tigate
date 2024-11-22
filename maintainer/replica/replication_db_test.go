@@ -88,8 +88,9 @@ func TestBasicFunction(t *testing.T) {
 	require.Len(t, db.absent, 0)
 	require.Len(t, db.scheduling, 0)
 	require.Len(t, db.replicating, 0)
-	require.Len(t, db.tableTasks, 0)
-	require.Len(t, db.schemaTasks, 0)
+	// ddl table id
+	require.Len(t, db.tableTasks[0], 1)
+	require.Len(t, db.schemaTasks[heartbeatpb.DDLSpanSchemaID], 1)
 	require.Len(t, db.nodeTasks, 0)
 }
 
