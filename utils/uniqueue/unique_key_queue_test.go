@@ -29,11 +29,11 @@ func TestUniqueKeyQueue(t *testing.T) {
 		// Test Pop operation
 		val1, ok1 := queue.Pop()
 		require.True(t, ok1)
-		require.Equal(t, 1, val1)
+		require.Equal(t, "key1", val1.GetKey())
 
 		val2, ok2 := queue.Pop()
 		require.True(t, ok2)
-		require.Equal(t, 2, val2)
+		require.Equal(t, "key2", val2.GetKey())
 
 		// The queue should be empty
 		_, ok3 := queue.Pop()
@@ -49,6 +49,23 @@ func TestUniqueKeyQueue(t *testing.T) {
 		require.Empty(t, val)
 	})
 
+	t.Run("push and pop", func(t *testing.T) {
+		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]]()
+		queue.Push(&testKeyGetter[string]{key: "key1"})
+		val, ok := queue.Pop()
+		require.True(t, ok)
+		require.Equal(t, "key1", val.GetKey())
+
+		val, ok = queue.Pop()
+		require.False(t, ok)
+		require.Empty(t, val)
+		require.Equal(t, queue.queue.Length(), 0)
+
+		queue.Push(&testKeyGetter[string]{key: "key1"})
+		val, ok = queue.Pop()
+		require.True(t, ok)
+		require.Equal(t, "key1", val.GetKey())
+	})
 }
 
 func TestUniqueKeyQueueConcurrent(t *testing.T) {
