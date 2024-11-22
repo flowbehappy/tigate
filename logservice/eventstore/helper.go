@@ -51,6 +51,7 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...eventWithSub
 	log.Info("write data event",
 		zap.Uint64("subID", uint64(subStat.subID)),
 		zap.Uint64("resolvedTs", events[0].raw.CRTs),
+		zap.Any("events[0]", events[0].raw),
 		zap.Any("events", events))
 	subStat.maxEventCommitTs.Store(events[len(events)-1].raw.CRTs)
 	subStat.eventCh <- dataEvents{
