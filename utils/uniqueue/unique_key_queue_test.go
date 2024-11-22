@@ -19,7 +19,7 @@ func (t *testKeyGetter[K]) GetKey() K {
 
 func TestUniqueKeyQueue(t *testing.T) {
 	t.Run("basic push and pop operations", func(t *testing.T) {
-		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]]()
+		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]](0)
 
 		// Test Push operation
 		queue.Push(&testKeyGetter[string]{key: "key1"})
@@ -41,7 +41,7 @@ func TestUniqueKeyQueue(t *testing.T) {
 	})
 
 	t.Run("empty queue operations", func(t *testing.T) {
-		queue := NewUniqueKeyQueue[int, *testKeyGetter[int]]()
+		queue := NewUniqueKeyQueue[int, *testKeyGetter[int]](0)
 
 		// Pop from an empty queue
 		val, ok := queue.Pop()
@@ -50,7 +50,7 @@ func TestUniqueKeyQueue(t *testing.T) {
 	})
 
 	t.Run("push and pop", func(t *testing.T) {
-		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]]()
+		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]](0)
 		queue.Push(&testKeyGetter[string]{key: "key1"})
 		val, ok := queue.Pop()
 		require.True(t, ok)
@@ -69,7 +69,7 @@ func TestUniqueKeyQueue(t *testing.T) {
 }
 
 func TestUniqueKeyQueueConcurrent(t *testing.T) {
-	uniQueue := NewUniqueKeyQueue[uuid.UUID, *testKeyGetter[uuid.UUID]]()
+	uniQueue := NewUniqueKeyQueue[uuid.UUID, *testKeyGetter[uuid.UUID]](0)
 	numGoroutines := 10
 	operationsPerGoroutine := 1000
 	wg := sync.WaitGroup{}

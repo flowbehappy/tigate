@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/ticdc/logservice/schemastore"
 	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
@@ -114,6 +115,8 @@ func newEventBroker(
 		messageWorkerCount = streamCount
 	}
 
+	conf := config.GetGlobalServerConfig().Debug.EventService
+
 	c := &eventBroker{
 		tidbClusterID:           id,
 		eventStore:              eventStore,
@@ -122,7 +125,7 @@ func newEventBroker(
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
-		taskQueue:               uniqueue.NewUniqueKeyQueue[common.DispatcherID, scanTask](),
+		taskQueue:               uniqueue.NewUniqueKeyQueue[common.DispatcherID, scanTask](conf.ScanTaskQueueSize),
 		scanWorkerCount:         defaultScanWorkerCount,
 		ds:                      ds,
 		messageCh:               make([]chan wrapEvent, messageWorkerCount),

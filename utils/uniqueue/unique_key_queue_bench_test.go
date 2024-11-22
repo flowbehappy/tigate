@@ -7,7 +7,7 @@ import (
 
 func BenchmarkUniqueKeyQueue(b *testing.B) {
 	b.Run("Push", func(b *testing.B) {
-		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]]()
+		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]](0)
 		b.ResetTimer()
 
 		for i := 0; i < b.N; i++ {
@@ -17,7 +17,7 @@ func BenchmarkUniqueKeyQueue(b *testing.B) {
 	})
 
 	b.Run("Push-Same-Key", func(b *testing.B) {
-		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]]()
+		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]](0)
 		b.ResetTimer()
 
 		for i := 0; i < b.N; i++ {
@@ -26,7 +26,7 @@ func BenchmarkUniqueKeyQueue(b *testing.B) {
 	})
 
 	b.Run("Push-Pop", func(b *testing.B) {
-		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]]()
+		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]](0)
 		// 预先填充一些数据
 		for i := 0; i < 1000; i++ {
 			key := strconv.Itoa(i)
@@ -45,7 +45,7 @@ func BenchmarkUniqueKeyQueue(b *testing.B) {
 	})
 
 	b.Run("Parallel-Push-Pop", func(b *testing.B) {
-		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]]()
+		queue := NewUniqueKeyQueue[string, *testKeyGetter[string]](0)
 		b.RunParallel(func(pb *testing.PB) {
 			i := 0
 			for pb.Next() {

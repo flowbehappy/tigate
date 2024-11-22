@@ -32,6 +32,8 @@ type DebugConfig struct {
 	Puller *PullerConfig `toml:"puller" json:"puller"`
 
 	SchemaStore *SchemaStoreConfig `toml:"schema-store" json:"schema-store"`
+
+	EventService *EventServiceConfig `toml:"event-service" json:"event-service"`
 }
 
 // ValidateAndAdjust validates and adjusts the debug configuration
@@ -77,5 +79,17 @@ type SchemaStoreConfig struct {
 func NewDefaultSchemaStoreConfig() *SchemaStoreConfig {
 	return &SchemaStoreConfig{
 		EnableGC: false,
+	}
+}
+
+// EventServiceConfig represents config for event service
+type EventServiceConfig struct {
+	ScanTaskQueueSize int `toml:"scan-task-queue-size" json:"scan-task-queue-size"`
+}
+
+// NewDefaultEventServiceConfig return the default event service configuration
+func NewDefaultEventServiceConfig() *EventServiceConfig {
+	return &EventServiceConfig{
+		ScanTaskQueueSize: 1024 * 8,
 	}
 }

@@ -24,10 +24,17 @@ type UniqueKeyQueue[K comparable, T KeyGetter[K]] struct {
 
 // NewUniqueKeyQueue creates and initializes a new UniqueKeyQueue with default capacity.
 // Returns a pointer to the newly created queue.
-func NewUniqueKeyQueue[K comparable, T KeyGetter[K]]() *UniqueKeyQueue[K, T] {
+// If the maxSize is 0, the queue will have no limit.
+func NewUniqueKeyQueue[K comparable, T KeyGetter[K]](maxSize int) *UniqueKeyQueue[K, T] {
+	dq := deque.NewDeque[T](32, maxSize)
+	setSize := 1024
+	if maxSize > 0 {
+		setSize = maxSize
+	}
+
 	return &UniqueKeyQueue[K, T]{
-		set:    make(map[K]struct{}, 1024),
-		queue:  deque.NewDequeDefault[T](),
+		set:    make(map[K]struct{}, setSize),
+		queue:  dq,
 		notify: make(chan struct{}, 1024),
 	}
 }
