@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/utils/dynstream"
+	"go.uber.org/zap"
 )
 
 const (
@@ -42,6 +43,9 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...eventWithSub
 		for _, notifier := range subStat.dispatchers.notifiers {
 			notifier(events[0].raw.CRTs)
 		}
+		log.Info("resolved ts updated",
+			zap.Uint64("subID", uint64(subStat.subID)),
+			zap.Uint64("resolvedTs", events[0].raw.CRTs))
 		return false
 	}
 	subStat.maxEventCommitTs.Store(events[len(events)-1].raw.CRTs)
