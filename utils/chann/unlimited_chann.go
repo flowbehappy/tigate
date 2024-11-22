@@ -44,8 +44,8 @@ func (c *UnlimitedChannel[T]) Push(v T) {
 	c.cond.Signal()
 }
 
-// Get retrieves up to cap(buffer) elements from the channel and stores them in buffer.
-// Return the original buffer and a boolean indicating whether the channel is available.
+// Get retrieves an element from the channel.
+// Return the element and a boolean indicating whether the channel is available.
 // Return false if the channel is closed.
 func (c *UnlimitedChannel[T]) Get() (T, bool) {
 	c.mu.Lock()
