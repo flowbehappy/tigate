@@ -148,7 +148,7 @@ func newEventBroker(
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
-	c.updateDispatcherSendTs(ctx)
+	// c.updateDispatcherSendTs(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
 }
