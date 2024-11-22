@@ -148,7 +148,7 @@ func newEventBroker(
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
-	c.updateDispatcherSendTs(ctx)
+	// c.updateDispatcherSendTs(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
 }
@@ -725,13 +725,9 @@ func (c *eventBroker) getDispatcher(id common.DispatcherID) (*dispatcherStat, bo
 }
 
 func (c *eventBroker) addDispatcher(info DispatcherInfo) {
-	filterConfig := info.GetFilterConfig()
-	filter, err := filter.GetSharedFilterStorage().GetOrSetFilter(info.GetChangefeedID(), filterConfig, "", false)
-	if err != nil {
-		log.Panic("create filter failed", zap.Error(err), zap.Any("filterConfig", filterConfig))
-	}
-
 	defer c.metricDispatcherCount.Inc()
+	filter := info.GetFilter()
+
 	start := time.Now()
 	id := info.GetID()
 	span := info.GetTableSpan()
