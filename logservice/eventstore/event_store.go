@@ -713,12 +713,14 @@ func (e *eventStore) batchAndWriteEvents(ctx context.Context, db *pebble.DB, inp
 	go func() {
 		defer e.wg.Done()
 		for batchEvent := range batchCh {
+
 			batch := batchEvent.batch
 			if batch != nil && !batch.Empty() {
 				size := batch.Len()
-				if err := batch.Commit(pebble.NoSync); err != nil {
-					log.Panic("failed to commit pebble batch", zap.Error(err))
-				}
+				// FIZZ: restore me
+				// if err := batch.Commit(pebble.NoSync); err != nil {
+				// 	log.Panic("failed to commit pebble batch", zap.Error(err))
+				// }
 				metrics.EventStoreWriteBytes.Add(float64(size))
 			}
 
