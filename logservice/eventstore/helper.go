@@ -50,11 +50,11 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...eventWithSub
 	for _, e := range events {
 		items = append(items, e.raw)
 	}
-	subStat.eventCh <- kvEvents{
+	subStat.eventCh.Push(kvEvents{
 		kvs:     items,
 		subID:   subStat.subID,
 		tableID: subStat.tableID,
-	}
+	})
 	return true
 }
 

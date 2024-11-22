@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/ticdc/logservice/logservicepb"
 
+	"github.com/pingcap/ticdc/utils/chann"
 	"github.com/pingcap/ticdc/utils/dynstream"
 
 	"github.com/cockroachdb/pebble"
@@ -111,7 +112,7 @@ type subscriptionStat struct {
 
 	dbIndex int
 
-	eventCh chan kvEvents
+	eventCh *chann.UnlimitedChannel[kvEvents]
 	// data <= checkpointTs can be deleted
 	checkpointTs atomic.Uint64
 	// the resolveTs persisted in the store
@@ -135,7 +136,7 @@ type eventStore struct {
 	pdClock pdutil.Clock
 
 	dbs            []*pebble.DB
-	chs            []chan kvEvents
+	chs            []*chann.UnlimitedChannel[kvEvents]
 	writeTaskPools []*writeTaskPool
 
 	puller *logpuller.LogPuller
@@ -231,7 +232,7 @@ func New(
 		pdClock: pdClock,
 
 		dbs:            make([]*pebble.DB, 0, dbCount),
-		chs:            make([]chan kvEvents, 0, dbCount),
+		chs:            make([]*chann.UnlimitedChannel[kvEvents], 0, dbCount),
 		writeTaskPools: make([]*writeTaskPool, 0, dbCount),
 
 		ds: ds,
@@ -262,7 +263,7 @@ func New(
 			log.Fatal("open db failed", zap.Error(err))
 		}
 		store.dbs = append(store.dbs, db)
-		store.chs = append(store.chs, make(chan kvEvents, 100000))
+		store.chs = append(store.chs, chann.NewUnlimitedChannel[kvEvents]())
 		store.writeTaskPools = append(store.writeTaskPools, newWriteTaskPool(store, store.dbs[i], store.chs[i], writeWorkerNumPerDB))
 	}
 	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]*dispatcherStat)
@@ -293,11 +294,11 @@ func New(
 type writeTaskPool struct {
 	store     *eventStore
 	db        *pebble.DB
-	dataCh    chan kvEvents
+	dataCh    *chann.UnlimitedChannel[kvEvents]
 	workerNum int
 }
 
-func newWriteTaskPool(store *eventStore, db *pebble.DB, ch chan kvEvents, workerNum int) *writeTaskPool {
+func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[kvEvents], workerNum int) *writeTaskPool {
 	return &writeTaskPool{
 		store:     store,
 		db:        db,
@@ -306,21 +307,22 @@ func newWriteTaskPool(store *eventStore, db *pebble.DB, ch chan kvEvents, worker
 	}
 }
 
-func (p *writeTaskPool) run(ctx context.Context) {
+func (p *writeTaskPool) run(_ context.Context) {
 	p.store.wg.Add(p.workerNum)
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
+			batch := make([]kvEvents, 0, 100)
 			for {
-				select {
-				case <-ctx.Done():
+				events, ok := p.dataCh.GetMultiple(batch)
+				if !ok {
 					return
-				case data := <-p.dataCh:
-					// TODO: batch it
-					p.store.writeEvents(p.db, data.kvs, uint64(data.subID), data.tableID)
-					// a data events only contain data for one subscription
-					p.store.wakeSubscription(data.subID)
 				}
+				p.store.writeEvents(p.db, events)
+				for _, event := range events {
+					p.store.wakeSubscription(event.subID)
+				}
+				batch = batch[:0]
 			}
 		}()
 	}
@@ -686,16 +688,21 @@ func (e *eventStore) updateMetricsOnce() {
 	metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
 }
 
-func (e *eventStore) writeEvents(db *pebble.DB, items []*common.RawKVEntry, subID uint64, tableID int64) error {
+func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvents) error {
 	batch := db.NewBatch()
-	for _, item := range items {
-		key := EncodeKey(subID, tableID, item)
-		value := item.Encode()
-		compressedValue := e.encoder.EncodeAll(value, nil)
-		ratio := float64(len(value)) / float64(len(compressedValue))
-		metrics.EventStoreCompressRatio.Set(ratio)
-		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
-			log.Panic("failed to update pebble batch", zap.Error(err))
+	for _, kvEvents := range events {
+		items := kvEvents.kvs
+		subID := uint64(kvEvents.subID)
+		tableID := kvEvents.tableID
+		for _, item := range items {
+			key := EncodeKey(subID, tableID, item)
+			value := item.Encode()
+			compressedValue := e.encoder.EncodeAll(value, nil)
+			ratio := float64(len(value)) / float64(len(compressedValue))
+			metrics.EventStoreCompressRatio.Set(ratio)
+			if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
+				log.Panic("failed to update pebble batch", zap.Error(err))
+			}
 		}
 	}
 	metrics.EventStoreWriteBytes.Add(float64(batch.Len()))
