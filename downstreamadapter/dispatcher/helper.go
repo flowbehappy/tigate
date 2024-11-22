@@ -179,29 +179,6 @@ func (s *ComponentStateWithMutex) Get() heartbeatpb.ComponentState {
 	return s.componentStatus
 }
 
-type TsWithMutex struct {
-	mutex sync.Mutex
-	ts    uint64
-}
-
-func newTsWithMutex(ts uint64) *TsWithMutex {
-	return &TsWithMutex{
-		ts: ts,
-	}
-}
-
-func (r *TsWithMutex) Set(ts uint64) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	r.ts = ts
-}
-
-func (r *TsWithMutex) Get() uint64 {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	return r.ts
-}
-
 /*
 HeartBeatInfo is used to collect the message for HeartBeatRequest for each dispatcher.
 Mainly about the progress of each dispatcher:
