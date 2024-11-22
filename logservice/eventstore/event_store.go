@@ -273,7 +273,6 @@ func New(
 		if raw == nil {
 			log.Panic("should not happen: meet nil event")
 		}
-		log.Info("consume event", zap.Uint64("subID", uint64(subID)), zap.Any("event", raw))
 		store.ds.In(subID) <- eventWithSubID{
 			subID: subID,
 			raw:   raw,
@@ -689,13 +688,7 @@ func (e *eventStore) updateMetricsOnce() {
 
 func (e *eventStore) writeEvents(db *pebble.DB, items []*common.RawKVEntry, subID uint64, tableID int64) error {
 	batch := db.NewBatch()
-	log.Info("write events",
-		zap.Int64("tableID", tableID),
-		zap.Any("events", items))
 	for _, item := range items {
-		log.Info("write event",
-			zap.Int64("tableID", tableID),
-			zap.Any("event", item))
 		key := EncodeKey(subID, tableID, item)
 		value := item.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
