@@ -223,7 +223,7 @@ func New(
 	}
 
 	option := dynstream.NewOption()
-	option.InputBufferSize = 10240
+	option.InputBufferSize = 102400
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
