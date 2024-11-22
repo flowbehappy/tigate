@@ -690,7 +690,7 @@ func (e *eventStore) writeEvents(db *pebble.DB, events []eventWithSubID, tableID
 	batch := db.NewBatch()
 	log.Info("write events",
 		zap.Int64("tableID", tableID),
-		zap.Int("eventLen", len(events)))
+		zap.Any("events", events))
 	for _, item := range events {
 		log.Info("write event",
 			zap.Int64("tableID", tableID),
