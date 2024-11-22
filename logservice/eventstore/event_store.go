@@ -245,6 +245,7 @@ func New(
 	}
 
 	option := dynstream.NewOption()
+	option.InputBufferSize = 10240
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, &eventsHandler{}, option)
 	ds.Start()
 
@@ -391,6 +392,7 @@ func (e *eventStore) Close(ctx context.Context) error {
 	if err := e.puller.Close(ctx); err != nil {
 		log.Error("failed to close log puller", zap.Error(err))
 	}
+	e.ds.Close()
 
 	e.wg.Wait()
 
@@ -498,8 +500,9 @@ func (e *eventStore) RegisterDispatcher(
 	subStat.checkpointTs.Store(startTs)
 	subStat.resolvedTs.Store(startTs)
 	subStat.maxEventCommitTs.Store(startTs)
-
 	e.dispatcherMeta.subscriptionStats[stat.subID] = subStat
+	e.ds.AddPath(stat.subID, subStat, dynstream.AreaSettings{})
+
 	dispatchersForSameTable, ok := e.dispatcherMeta.tableToDispatchers[tableSpan.TableID]
 	if !ok {
 		e.dispatcherMeta.tableToDispatchers[tableSpan.TableID] = map[common.DispatcherID]bool{dispatcherID: true}
@@ -545,6 +548,7 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 	delete(dispatchersForSameTable, dispatcherID)
 	if len(dispatchersForSameTable) == 0 {
 		delete(e.dispatcherMeta.tableToDispatchers, tableID)
+		e.ds.RemovePath(subID)
 	}
 
 	return nil
