@@ -747,10 +747,10 @@ func (e *eventStore) batchAndWriteEvents(ctx context.Context, db *pebble.DB, inp
 					continue
 				}
 				atomic.StoreUint64(&subscriptionStat.resolvedTs, resolvedTs)
-				for dispatcherID := range subscriptionStat.ids {
-					dispatcherStat := e.dispatcherMeta.dispatcherStats[dispatcherID]
-					dispatcherStat.notifier(resolvedTs)
-				}
+				// for dispatcherID := range subscriptionStat.ids {
+				// 	dispatcherStat := e.dispatcherMeta.dispatcherStats[dispatcherID]
+				// 	dispatcherStat.notifier(resolvedTs)
+				// }
 			}
 			e.dispatcherMeta.RUnlock()
 		}
