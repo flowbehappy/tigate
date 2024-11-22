@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/logservice/logpuller"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"go.uber.org/zap"
 )
@@ -56,8 +57,13 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...eventWithSub
 		zap.Any("events[0]", events[0].raw),
 		zap.Any("events", fmt.Sprintf("%+v", events)))
 	subStat.maxEventCommitTs.Store(events[len(events)-1].raw.CRTs)
-	subStat.eventCh <- dataEvents{
-		events:  events,
+	items := make([]*common.RawKVEntry, 0, len(events))
+	for _, e := range events {
+		items = append(items, e.raw)
+	}
+	subStat.eventCh <- kvEvents{
+		kvs:     items,
+		subID:   subStat.subID,
 		tableID: subStat.tableID,
 	}
 	return true

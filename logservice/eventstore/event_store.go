@@ -111,7 +111,7 @@ type subscriptionStat struct {
 
 	dbIndex int
 
-	eventCh chan dataEvents
+	eventCh chan kvEvents
 	// data <= checkpointTs can be deleted
 	checkpointTs atomic.Uint64
 	// the resolveTs persisted in the store
@@ -125,8 +125,9 @@ type eventWithSubID struct {
 	raw   *common.RawKVEntry
 }
 
-type dataEvents struct {
-	events  []eventWithSubID
+type kvEvents struct {
+	kvs     []*common.RawKVEntry
+	subID   logpuller.SubscriptionID
 	tableID int64
 }
 
@@ -134,7 +135,7 @@ type eventStore struct {
 	pdClock pdutil.Clock
 
 	dbs            []*pebble.DB
-	chs            []chan dataEvents
+	chs            []chan kvEvents
 	writeTaskPools []*writeTaskPool
 
 	puller *logpuller.LogPuller
@@ -230,7 +231,7 @@ func New(
 		pdClock: pdClock,
 
 		dbs:            make([]*pebble.DB, 0, dbCount),
-		chs:            make([]chan dataEvents, 0, dbCount),
+		chs:            make([]chan kvEvents, 0, dbCount),
 		writeTaskPools: make([]*writeTaskPool, 0, dbCount),
 
 		ds: ds,
@@ -261,7 +262,7 @@ func New(
 			log.Fatal("open db failed", zap.Error(err))
 		}
 		store.dbs = append(store.dbs, db)
-		store.chs = append(store.chs, make(chan dataEvents, 100000))
+		store.chs = append(store.chs, make(chan kvEvents, 100000))
 		store.writeTaskPools = append(store.writeTaskPools, newWriteTaskPool(store, store.dbs[i], store.chs[i], writeWorkerNumPerDB))
 	}
 	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]*dispatcherStat)
@@ -293,11 +294,11 @@ func New(
 type writeTaskPool struct {
 	store     *eventStore
 	db        *pebble.DB
-	dataCh    chan dataEvents
+	dataCh    chan kvEvents
 	workerNum int
 }
 
-func newWriteTaskPool(store *eventStore, db *pebble.DB, ch chan dataEvents, workerNum int) *writeTaskPool {
+func newWriteTaskPool(store *eventStore, db *pebble.DB, ch chan kvEvents, workerNum int) *writeTaskPool {
 	return &writeTaskPool{
 		store:     store,
 		db:        db,
@@ -317,9 +318,9 @@ func (p *writeTaskPool) run(ctx context.Context) {
 					return
 				case data := <-p.dataCh:
 					// TODO: batch it
-					p.store.writeEvents(p.db, data.events, data.tableID)
+					p.store.writeEvents(p.db, data.kvs, uint64(data.subID), data.tableID)
 					// a data events only contain data for one subscription
-					p.store.wakeSubscription(data.events[0].subID)
+					p.store.wakeSubscription(data.subID)
 				}
 			}
 		}()
@@ -686,17 +687,17 @@ func (e *eventStore) updateMetricsOnce() {
 	metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
 }
 
-func (e *eventStore) writeEvents(db *pebble.DB, events []eventWithSubID, tableID int64) error {
+func (e *eventStore) writeEvents(db *pebble.DB, items []*common.RawKVEntry, subID uint64, tableID int64) error {
 	batch := db.NewBatch()
 	log.Info("write events",
 		zap.Int64("tableID", tableID),
-		zap.Any("events", events))
-	for _, item := range events {
+		zap.Any("events", items))
+	for _, item := range items {
 		log.Info("write event",
 			zap.Int64("tableID", tableID),
-			zap.Any("event", item.raw))
-		key := EncodeKey(uint64(item.subID), tableID, item.raw)
-		value := item.raw.Encode()
+			zap.Any("event", item))
+		key := EncodeKey(subID, tableID, item)
+		value := item.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
 		ratio := float64(len(value)) / float64(len(compressedValue))
 		metrics.EventStoreCompressRatio.Set(ratio)
