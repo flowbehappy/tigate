@@ -710,10 +710,13 @@ func (e *eventStore) updateMetricsOnce() {
 
 func (e *eventStore) writeEvents(db *pebble.DB, events []eventWithSubID, tableID int64) error {
 	batch := db.NewBatch()
-	log.Info("write event",
+	log.Info("write events",
 		zap.Int64("tableID", tableID),
 		zap.Int("eventLen", len(events)))
 	for _, item := range events {
+		log.Info("write event",
+			zap.Int64("tableID", tableID),
+			zap.Any("event", item.raw))
 		key := EncodeKey(uint64(item.subID), tableID, item.raw)
 		value := item.raw.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
