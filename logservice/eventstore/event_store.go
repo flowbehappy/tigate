@@ -244,12 +244,18 @@ func New(
 		log.Panic("Failed to create zstd decoder", zap.Error(err))
 	}
 
+	option := dynstream.NewOption()
+	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, &eventsHandler{}, option)
+	ds.Start()
+
 	store := &eventStore{
 		pdClock: pdClock,
 
 		dbs:            make([]*pebble.DB, 0, dbCount),
 		chs:            make([]chan dataEvents, 0, dbCount),
 		writeTaskPools: make([]*writeTaskPool, 0, dbCount),
+
+		ds: ds,
 
 		gcManager: newGCManager(),
 		encoder:   encoder,
@@ -283,10 +289,6 @@ func New(
 	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]*dispatcherStat)
 	store.dispatcherMeta.subscriptionStats = make(map[logpuller.SubscriptionID]*subscriptionStat)
 	store.dispatcherMeta.tableToDispatchers = make(map[int64]map[common.DispatcherID]bool)
-
-	option := dynstream.NewOption()
-	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, &eventsHandler{}, option)
-	ds.Start()
 
 	consume := func(ctx context.Context, raw *common.RawKVEntry, subID logpuller.SubscriptionID) error {
 		store.ds.In(subID) <- eventWithSubID{
