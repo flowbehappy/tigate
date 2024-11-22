@@ -23,10 +23,6 @@ type Digest struct {
 	b uint64
 	c uint64
 	d uint64
-	// use ok to represent the digest is valid or not
-	// if valid, means the columnSchema with digest use the columnSchema in SharedColumnSchemaStorage
-	// otherwise, verse versa.
-	ok bool
 }
 
 func ToDigest(b []byte) Digest {
@@ -133,7 +129,7 @@ func NewColumnSchemaWithCount(columnSchema *columnSchema) *ColumnSchemaWithCount
 
 type SharedColumnSchemaStorage struct {
 	// For the table have the same column schema, we will use the same columnSchema object to reduce memory usage.
-	// we use a map to store the columnSchema object(in ColumnSchemaWithTableInfo),
+	// we use a map to store the columnSchema object(in ColumnSchemaWithCount),
 	// the key is the hash value of the Column Info of the table info.
 	// We use SHA-256 to calculate the hash value to reduce the collision probability.
 	// However, there may still have some collisions in some cases,
@@ -193,7 +189,7 @@ func (s *columnSchema) SameWithTableInfo(tableInfo *model.TableInfo) bool {
 }
 
 // compare the item calculated in hashTableInfo
-func (s *columnSchema) Equal(columnSchema *columnSchema) bool {
+func (s *columnSchema) equal(columnSchema *columnSchema) bool {
 	return s.sameColumnsAndIndices(columnSchema.Columns, columnSchema.Indices)
 }
 
@@ -206,7 +202,7 @@ func (s *SharedColumnSchemaStorage) incColumnSchemaCount(columnSchema *columnSch
 		log.Error("inc column schema count failed, column schema not found", zap.Any("columnSchema", columnSchema))
 	}
 	for idx, colSchemaWithCount := range colSchemas {
-		if colSchemaWithCount.columnSchema.Equal(columnSchema) {
+		if colSchemaWithCount.columnSchema.equal(columnSchema) {
 			s.m[columnSchema.Digest][idx].count++
 			return
 		}
@@ -216,7 +212,7 @@ func (s *SharedColumnSchemaStorage) incColumnSchemaCount(columnSchema *columnSch
 	}
 }
 
-// we only should get ColumnSchema By GetOrSetColumnSchema.
+// we should get ColumnSchema By GetOrSetColumnSchema.
 // For the object which get columnSchema by this function, we need to set finalizer to ask
 // when the object is released, we should call tryReleaseColumnSchema to decrease the reference count of the columnSchema object
 // to ensure the gc for column schema.
@@ -263,7 +259,7 @@ func (s *SharedColumnSchemaStorage) getOrSetColumnSchemaByColumnSchema(columnSch
 	} else {
 		for idx, colSchemaWithCount := range colSchemas {
 			// compare tableInfo to check whether the column schema is the same
-			if colSchemaWithCount.columnSchema.Equal(columnSchema) {
+			if colSchemaWithCount.columnSchema.equal(columnSchema) {
 				s.m[digest][idx].count++
 				return colSchemaWithCount.columnSchema
 			}
@@ -310,7 +306,8 @@ func (s *SharedColumnSchemaStorage) tryReleaseColumnSchema(columnSchema *columnS
 // columnSchema is used to store the column schema information of tableInfo.
 // columnSchema is shared across multiple tableInfos with the same schema, in order to reduce memory usage.
 // we make columnSchema as a private struct, in order to avoid other method to directly create a columnSchema object.
-// we only want user to get columnSchema by GetOrSetColumnSchema or Clone method.
+// we only want user to get columnSchema by the function we provide, which will increase the reference count of columnSchema.(GetOrSetColumnSchema)
+// If user want to copy columnSchema(shaddow copy), they should use Clone method.
 type columnSchema struct {
 	// digest of the table info
 	Digest Digest `json:"digest"`
