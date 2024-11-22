@@ -35,10 +35,10 @@ const (
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
 var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
-var metricEventBrokerDropResolvedTsCount = metrics.EventServiceDropResolvedTsCount
+var metricEventBrokerScanTaskCount = metrics.EventServiceScanTaskCount
 var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
 var metricEventBrokerTaskHandleDuration = metrics.EventServiceTaskHandleDuration
-var metricEventBrokerDropNotificationCount = metrics.EventServiceDropNotificationCount
+var metricEventBrokerPendingScanTaskCount = metrics.EventServicePendingScanTaskCount
 var metricEventBrokerDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-broker")
 var metricEventBrokerDSChannelSize = metrics.DynamicStreamEventChanSize.WithLabelValues("event-broker")
 
@@ -469,6 +469,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		if eventCount != 0 {
 			task.metricSorterOutputEventCountKV.Add(float64(eventCount))
 		}
+		metricEventBrokerScanTaskCount.Inc()
 	}()
 
 	sendDML := func(dml *pevent.DMLEvent) {
@@ -663,6 +664,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				dsMetrics := c.ds.GetMetrics()
 				metricEventBrokerDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 				metricEventBrokerDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
+				metricEventBrokerPendingScanTaskCount.Set(float64(c.taskQueue.Length()))
 			}
 		}
 	}()

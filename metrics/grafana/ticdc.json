@@ -4562,7 +4562,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_event_service_drop_notification_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", instance=~\"$ticdc_instance\"}[1m])) by (namespace, instance)",
+              "expr": "sum(rate(ticdc_event_service_pending_scan_task_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", instance=~\"$ticdc_instance\"}[1m])) by (namespace, instance)",
               "hide": false,
               "interval": "",
               "legendFormat": "dropped-notification-{{instance}}",
@@ -4574,7 +4574,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Event Service Dropped Notification",
+          "title": "Event Service Pending Scan Task",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -4660,10 +4660,10 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_event_service_drop_scan_task_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance)",
+              "expr": "sum(rate(ticdc_event_service_scan_task_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance)",
               "hide": false,
               "interval": "",
-              "legendFormat": "dropped-scan-task-{{instance}}",
+              "legendFormat": "finished-scan-task-{{instance}}",
               "queryType": "randomWalk",
               "refId": "A"
             }
@@ -4672,7 +4672,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Droped scan task count",
+          "title": "Event Service Finished Scan Task Count",
           "tooltip": {
             "shared": true,
             "sort": 0,

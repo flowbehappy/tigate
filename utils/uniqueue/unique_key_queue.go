@@ -77,3 +77,9 @@ func (q *UniqueKeyQueue[K, T]) Pop() (T, bool) {
 func (q *UniqueKeyQueue[K, T]) Notify() <-chan struct{} {
 	return q.notify
 }
+
+func (q *UniqueKeyQueue[K, T]) Length() int {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	return q.queue.Length()
+}
