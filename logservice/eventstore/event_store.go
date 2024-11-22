@@ -288,7 +288,7 @@ func New(
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, &eventsHandler{}, option)
 	ds.Start()
 
-	consume := func(ctx context.Context, raw *common.RawKVEntry, subID logpuller.SubscriptionID, extraData interface{}) error {
+	consume := func(ctx context.Context, raw *common.RawKVEntry, subID logpuller.SubscriptionID) error {
 		store.ds.In(subID) <- eventWithSubID{
 			subID: subID,
 			raw:   raw,
@@ -479,7 +479,7 @@ func (e *eventStore) RegisterDispatcher(
 	// maxEventCommitTs may not be updated correctly and cause data loss.(lost resolved ts is harmless)
 	// To fix it, we need to alloc subID and initialize dispatcherStat before puller may send events.
 	// That is allocate subID in a separate method.
-	stat.subID = e.puller.Subscribe(*tableSpan, startTs, 0)
+	stat.subID = e.puller.Subscribe(*tableSpan, startTs)
 	metrics.EventStoreSubscriptionGauge.Inc()
 
 	e.dispatcherMeta.Lock()
