@@ -651,19 +651,13 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 }
 
 func (e *eventStore) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(5 * time.Second)
-	counter := 0
+	ticker := time.NewTicker(10 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			counter++
-			if counter%2 == 0 {
-				e.updateMetricsOnce()
-			} else {
-				e.puller.UpdateMetrics()
-			}
+			e.updateMetricsOnce()
 		}
 	}
 }
