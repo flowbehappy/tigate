@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/ticdc/eventpb"
 	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/node"
 
@@ -54,7 +55,8 @@ type EventDispatcherManager struct {
 	changefeedID common.ChangeFeedID
 	maintainerID node.ID
 
-	config *config.ChangefeedConfig
+	config       *config.ChangefeedConfig
+	filterConfig *eventpb.FilterConfig
 	// only not nil when enable sync point
 	// TODO: changefeed update config
 	syncPointConfig *syncpoint.SyncPointConfig
@@ -122,6 +124,7 @@ func NewEventDispatcherManager(
 		errCh:                          make(chan error, 1),
 		cancel:                         cancel,
 		config:                         cfConfig,
+		filterConfig:                   toFilterConfigPB(cfConfig.Filter),
 		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
 		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
@@ -331,7 +334,7 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 			schemaIds[idx],
 			e.schemaIDToDispatchers,
 			e.syncPointConfig,
-			e.config.Filter,
+			e.filterConfig,
 			pdTsList[idx],
 			e.errCh)
 
@@ -656,4 +659,30 @@ func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *disp
 		fn(key.(common.DispatcherID), value.(*dispatcher.Dispatcher))
 		return true
 	})
+}
+
+func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
+	filterConfig := &eventpb.FilterConfig{
+		Rules:            filter.Rules,
+		IgnoreTxnStartTs: filter.IgnoreTxnStartTs,
+		EventFilters:     make([]*eventpb.EventFilterRule, len(filter.EventFilters)),
+	}
+
+	for _, eventFilter := range filter.EventFilters {
+		ignoreEvent := make([]string, len(eventFilter.IgnoreEvent))
+		for _, event := range eventFilter.IgnoreEvent {
+			ignoreEvent = append(ignoreEvent, string(event))
+		}
+		filterConfig.EventFilters = append(filterConfig.EventFilters, &eventpb.EventFilterRule{
+			Matcher:                  eventFilter.Matcher,
+			IgnoreEvent:              ignoreEvent,
+			IgnoreSql:                eventFilter.IgnoreSQL,
+			IgnoreInsertValueExpr:    eventFilter.IgnoreInsertValueExpr,
+			IgnoreUpdateNewValueExpr: eventFilter.IgnoreUpdateNewValueExpr,
+			IgnoreUpdateOldValueExpr: eventFilter.IgnoreUpdateOldValueExpr,
+			IgnoreDeleteValueExpr:    eventFilter.IgnoreDeleteValueExpr,
+		})
+	}
+
+	return filterConfig
 }

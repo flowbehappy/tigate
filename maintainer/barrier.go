@@ -58,11 +58,19 @@ func NewBarrier(controller *Controller, splitTableEnabled bool) *Barrier {
 // HandleStatus handle the block status from dispatcher manager
 func (b *Barrier) HandleStatus(from node.ID,
 	request *heartbeatpb.BlockStatusRequest) *messaging.TargetMessage {
+	log.Debug("handle block status", zap.String("from", from.String()),
+		zap.String("changefeed", request.ChangefeedID.GetName()),
+		zap.String("detail", request.String()))
 	eventMap := make(map[*BarrierEvent][]*heartbeatpb.DispatcherID)
 	var dispatcherStatus []*heartbeatpb.DispatcherStatus
 	for _, status := range request.BlockStatuses {
 		event := b.handleOneStatus(request.ChangefeedID, status)
 		if event == nil {
+			// should not happen
+			log.Error("handle block status failed, event is nil",
+				zap.String("from", from.String()),
+				zap.String("changefeed", request.ChangefeedID.GetName()),
+				zap.String("detail", status.String()))
 			continue
 		}
 		eventMap[event] = append(eventMap[event], status.ID)
@@ -81,6 +89,9 @@ func (b *Barrier) HandleStatus(from node.ID,
 		}
 	}
 	if len(dispatcherStatus) <= 0 {
+		log.Warn("no dispatcher status to send",
+			zap.String("from", from.String()),
+			zap.String("changefeed", request.ChangefeedID.String()))
 		return nil
 	}
 	// send ack or write action message to dispatcher
@@ -188,6 +199,13 @@ func (b *Barrier) handleBlockState(changefeedID common.ChangeFeedID,
 		key := getEventKey(blockState.BlockTs, blockState.IsSyncPoint)
 		// insert an event, or get the old one event check if the event is already tracked
 		event := b.getOrInsertNewEvent(changefeedID, key, blockState)
+		if dispatcherID == b.controller.ddlDispatcherID {
+			log.Info("the block event is sent by ddl dispatcher",
+				zap.String("changefeed", changefeedID.Name()),
+				zap.String("dispatcher", dispatcherID.String()),
+				zap.Uint64("commitTs", blockState.BlockTs))
+			event.tableTriggerDispatcherRelated = true
+		}
 		if event.selected {
 			// the event already in the selected state, ignore the block event just sent ack
 			log.Warn("the block event already selected, ignore the block event",

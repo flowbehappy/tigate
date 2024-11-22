@@ -131,6 +131,8 @@ type subscribedSpan struct {
 	staleLocksTargetTs atomic.Uint64
 
 	lastAdvanceTime atomic.Int64
+	// This is used to calculate the resolvedTs lag for metrics.
+	resolvedTs atomic.Uint64
 }
 
 type SubscriptionClientConfig struct {
@@ -816,6 +818,7 @@ func (s *SubscriptionClient) newSubscribedSpan(
 		startTs:   startTs,
 		rangeLock: rangeLock,
 	}
+	rt.resolvedTs.Store(startTs)
 
 	rt.tryResolveLock = func(regionID uint64, state *regionlock.LockedRangeState) {
 		targetTs := rt.staleLocksTargetTs.Load()
@@ -829,6 +832,24 @@ func (s *SubscriptionClient) newSubscribedSpan(
 		}
 	}
 	return rt
+}
+
+func (s *SubscriptionClient) GetResolvedTsLag() float64 {
+	pullerMinResolvedTs := uint64(0)
+	s.totalSpans.RLock()
+	for _, rt := range s.totalSpans.spanMap {
+		resolvedTs := rt.resolvedTs.Load()
+		if pullerMinResolvedTs == 0 || resolvedTs < pullerMinResolvedTs {
+			pullerMinResolvedTs = resolvedTs
+		}
+	}
+	s.totalSpans.RUnlock()
+	if pullerMinResolvedTs == 0 {
+		return 0
+	}
+	phyResolvedTs := oracle.ExtractPhysical(pullerMinResolvedTs)
+	lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
+	return lag
 }
 
 func (r *subscribedSpan) resolveStaleLocks(targetTs uint64) {

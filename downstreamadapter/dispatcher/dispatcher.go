@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
-	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
@@ -81,7 +80,7 @@ type Dispatcher struct {
 	// componentStatus is the status of the dispatcher, such as working, removing, stopped.
 	componentStatus *ComponentStateWithMutex
 	// the config of filter
-	filterConfig *config.FilterConfig
+	filterConfig *eventpb.FilterConfig
 
 	// tableInfo is the latest table info of the dispatcher
 	tableInfo *common.TableInfo
@@ -103,7 +102,7 @@ type Dispatcher struct {
 	syncPointConfig *syncpoint.SyncPointConfig
 
 	// the max resolvedTs received by the dispatcher
-	resolvedTs *TsWithMutex
+	resolvedTs uint64
 
 	// blockEventStatus is used to store the current pending ddl/sync point event and its block status.
 	blockEventStatus BlockEventStatus
@@ -139,7 +138,7 @@ func NewDispatcher(
 	schemaID int64,
 	schemaIDToDispatchers *SchemaIDToDispatchers,
 	syncPointConfig *syncpoint.SyncPointConfig,
-	filterConfig *config.FilterConfig,
+	filterConfig *eventpb.FilterConfig,
 	currentPdTs uint64,
 	errCh chan error) *Dispatcher {
 	dispatcher := &Dispatcher{
@@ -151,7 +150,7 @@ func NewDispatcher(
 		blockStatusesChan:     blockStatusesChan,
 		syncPointConfig:       syncPointConfig,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
-		resolvedTs:            newTsWithMutex(startTs),
+		resolvedTs:            startTs,
 		filterConfig:          filterConfig,
 		isRemoving:            atomic.Bool{},
 		blockEventStatus:      BlockEventStatus{blockPendingEvent: nil},
@@ -245,7 +244,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 	for _, dispatcherEvent := range dispatcherEvents {
 		event := dispatcherEvent.Event
 		// Pre-check, make sure the event is not stale
-		if event.GetCommitTs() < d.resolvedTs.Get() {
+		if event.GetCommitTs() < atomic.LoadUint64(&d.resolvedTs) {
 			log.Info("Received a stale event, should ignore it",
 				zap.Any("commitTs", event.GetCommitTs()),
 				zap.Any("seq", event.GetSeq()),
@@ -257,7 +256,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 
 		switch event.GetType() {
 		case commonEvent.TypeResolvedEvent:
-			d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
+			atomic.StoreUint64(&d.resolvedTs, event.(commonEvent.ResolvedEvent).ResolvedTs)
 		case commonEvent.TypeDMLEvent:
 			block = true
 			dml := event.(*commonEvent.DMLEvent)
@@ -454,7 +453,7 @@ func (d *Dispatcher) GetStartTs() uint64 {
 }
 
 func (d *Dispatcher) GetResolvedTs() uint64 {
-	return d.resolvedTs.Get()
+	return atomic.LoadUint64(&d.resolvedTs)
 }
 
 func (d *Dispatcher) GetCheckpointTs() uint64 {
@@ -499,33 +498,7 @@ func (d *Dispatcher) EnableSyncPoint() bool {
 }
 
 func (d *Dispatcher) GetFilterConfig() *eventpb.FilterConfig {
-	return toFilterConfigPB(d.filterConfig)
-}
-
-func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
-	filterConfig := &eventpb.FilterConfig{
-		Rules:            filter.Rules,
-		IgnoreTxnStartTs: filter.IgnoreTxnStartTs,
-		EventFilters:     make([]*eventpb.EventFilterRule, len(filter.EventFilters)),
-	}
-
-	for _, eventFilter := range filter.EventFilters {
-		ignoreEvent := make([]string, len(eventFilter.IgnoreEvent))
-		for _, event := range eventFilter.IgnoreEvent {
-			ignoreEvent = append(ignoreEvent, string(event))
-		}
-		filterConfig.EventFilters = append(filterConfig.EventFilters, &eventpb.EventFilterRule{
-			Matcher:                  eventFilter.Matcher,
-			IgnoreEvent:              ignoreEvent,
-			IgnoreSql:                eventFilter.IgnoreSQL,
-			IgnoreInsertValueExpr:    eventFilter.IgnoreInsertValueExpr,
-			IgnoreUpdateNewValueExpr: eventFilter.IgnoreUpdateNewValueExpr,
-			IgnoreUpdateOldValueExpr: eventFilter.IgnoreUpdateOldValueExpr,
-			IgnoreDeleteValueExpr:    eventFilter.IgnoreDeleteValueExpr,
-		})
-	}
-
-	return filterConfig
+	return d.filterConfig
 }
 
 func (d *Dispatcher) GetSyncPointInterval() time.Duration {

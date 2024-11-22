@@ -548,4 +548,13 @@ func (db *ReplicationDB) reset() {
 func (db *ReplicationDB) putDDLDispatcher(ddlSpan *SpanReplication) {
 	// we don't need to schedule the ddl span, but added it to the allTasks map, so we can query it by id
 	db.allTasks[ddlSpan.ID] = ddlSpan
+	// dispatcher will report a block event with table ID 0,
+	// so we need to add it to the table map
+	db.tableTasks[ddlSpan.Span.TableID] = map[common.DispatcherID]*SpanReplication{
+		ddlSpan.ID: ddlSpan,
+	}
+	// also put it to the schema map
+	db.schemaTasks[ddlSpan.schemaID] = map[common.DispatcherID]*SpanReplication{
+		ddlSpan.ID: ddlSpan,
+	}
 }

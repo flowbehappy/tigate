@@ -453,6 +453,8 @@ func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) e
 		batch := &s.tsBatches.events[slot].resolvedTsBatches[len(s.tsBatches.events[slot].resolvedTsBatches)-1]
 		if state := s.getRegionState(subscriptionID, regionID); state != nil {
 			batch.regions = append(batch.regions, state)
+			// Update the resolvedTs of the region here for metrics.
+			state.region.subscribedSpan.resolvedTs.Store(resolvedTs.Ts)
 		}
 	}
 

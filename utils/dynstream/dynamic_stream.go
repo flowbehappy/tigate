@@ -11,6 +11,7 @@ import (
 
 	. "github.com/pingcap/ticdc/pkg/apperror"
 	. "github.com/pingcap/ticdc/utils"
+	"github.com/pingcap/ticdc/utils/deque"
 )
 
 const TrackTopPaths = 16
@@ -118,7 +119,10 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	memControl *memControl[A, P, T, D, H]
 
-	eventChan    chan T                 // The channel to receive the incoming events by distributor
+	bufferCount atomic.Int64
+	inChan      chan T // The channel to receive the incoming events by receiver
+	outChan     chan T // The channel to send the events to the streams by distributor
+
 	wakeChan     chan P                 // The channel to receive the wake signal by distributor
 	feedbackChan chan Feedback[A, P, D] // The channel to report the feedback to outside listener
 
@@ -132,11 +136,14 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	hasClosed atomic.Bool
 
+	recvWg  sync.WaitGroup
 	schedWg sync.WaitGroup
 	distWg  sync.WaitGroup
 
 	eventExtraSize int
 	startTime      time.Time
+
+	allStreamPendingLen atomic.Int64
 }
 
 func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
@@ -167,8 +174,10 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		trackTopPaths:   TrackTopPaths,
 		baseStreamCount: option.StreamCount,
 
-		eventChan: make(chan T, option.InputBufferSize),
-		wakeChan:  make(chan P, 1024),
+		inChan:  make(chan T, option.InputBufferSize),
+		outChan: make(chan T, 64),
+
+		wakeChan: make(chan P, 1024),
 
 		reportChan: make(chan streamStat[A, P, T, D, H], 64),
 		cmdToSched: make(chan *command, 64),
@@ -190,7 +199,7 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) In(path ...P) chan<- T {
-	return d.eventChan
+	return d.inChan
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Wake(path ...P) chan<- P {
@@ -202,6 +211,8 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
+	d.recvWg.Add(1)
+	go d.receiver()
 	d.schedWg.Add(1)
 	go d.scheduler()
 	d.distWg.Add(1)
@@ -210,11 +221,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Close() {
 	if d.hasClosed.CompareAndSwap(false, true) {
+		close(d.inChan)
 		close(d.cmdToSched)
 		if d.feedbackChan != nil {
 			close(d.feedbackChan)
 		}
 	}
+	d.recvWg.Wait()
 	d.schedWg.Wait()
 }
 
@@ -264,6 +277,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) RemovePath(path P) error {
 func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings AreaSettings) {
 	if d.memControl != nil {
 		d.memControl.setAreaSettings(area, settings)
+	}
+}
+
+func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
+	return Metrics{
+		EventChanSize:   int(d.bufferCount.Load()) + len(d.inChan) + len(d.outChan),
+		PendingQueueLen: int(d.allStreamPendingLen.Load()),
 	}
 }
 
@@ -648,7 +668,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 					area := d.handler.GetArea(path, add.path.Dest)
 					pi := newPathInfo[A, P, T, D, H](area, path, add.path.Dest)
 					si := nextStream()
-					pi.stream = si.stream
+					pi.setStream(si.stream)
 					si.pathMap[pi] = struct{}{}
 					globalPathMap[path] = pi
 					add.pi = pi
@@ -712,9 +732,16 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			si.streamStat = stat
 		case <-ticker.C:
 			doSchedule(ruleType(scheduleRule.Next()), 0, nil)
+
+			// Update the metrics
 			if d.memControl != nil {
 				d.memControl.updateMetrics()
 			}
+			allStreamPendingLen := 0
+			for _, si := range d.streamInfos {
+				allStreamPendingLen += si.streamStat.pendingLen
+			}
+			d.allStreamPendingLen.Store(int64(allStreamPendingLen))
 		}
 	}
 }
@@ -726,7 +753,10 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 
 	for {
 		select {
-		case e := <-d.eventChan:
+		case e, ok := <-d.outChan:
+			if !ok {
+				return
+			}
 			eventType := d.handler.GetType(e)
 			if pi, ok := pathMap[d.handler.Path(e)]; ok {
 				e := eventWrap[A, P, T, D, H]{
@@ -801,7 +831,9 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 							if _, ok := pathMap[pi.path]; !ok {
 								panic(fmt.Sprintf("Path %v doesn't exist in distributor", pi.path))
 							}
-							pi.stream = newStream
+							// We must set the stream of this path here immediately.
+							// Because we might send the event to the path shortly, before the asynchronous initialization of the stream finish.
+							pi.setStream(newStream)
 						}
 						// Streams must be started and closed in the distributor.
 						// Otherwise, the distributor will send the events to the closed streams.
@@ -813,6 +845,39 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				}
 			default:
 				panic("Unknown command type")
+			}
+		}
+	}
+}
+
+func (d *dynamicStreamImpl[A, P, T, D, H]) receiver() {
+	defer func() {
+		close(d.outChan)
+		d.recvWg.Done()
+	}()
+
+	buffer := deque.NewDequeDefault[T]()
+
+	for {
+		event, ok := buffer.FrontRef()
+		if !ok {
+			e, ok := <-d.inChan
+			if !ok {
+				return
+			}
+			buffer.PushBack(e)
+			d.bufferCount.Add(1)
+		} else {
+			select {
+			case e, ok := <-d.inChan:
+				if !ok {
+					return
+				}
+				buffer.PushBack(e)
+				d.bufferCount.Add(1)
+			case d.outChan <- *event:
+				buffer.PopFront()
+				d.bufferCount.Add(-1)
 			}
 		}
 	}

@@ -104,6 +104,22 @@ func NewLogPuller(
 	return puller
 }
 
+func (p *LogPuller) updateMetrics(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			resolvedTsLag := p.client.GetResolvedTsLag()
+			if resolvedTsLag > 0 {
+				metrics.LogPullerResolvedTsLag.Set(resolvedTsLag)
+			}
+		}
+	}
+}
+
 func (p *LogPuller) Run(ctx context.Context) (err error) {
 	// TODO: distiguish event between event store and schema store
 	p.CounterKv = metrics.EventStoreReceivedEventCount.WithLabelValues("kv")
@@ -147,6 +163,8 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 	eg.Go(func() error { return p.client.Run(ctx, consumeLogEvent) })
 
 	eg.Go(func() error { return p.runResolveLockChecker(ctx) })
+
+	eg.Go(func() error { return p.updateMetrics(ctx) })
 
 	log.Info("LogPuller starts")
 	return eg.Wait()

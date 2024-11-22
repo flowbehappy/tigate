@@ -27,24 +27,23 @@ const (
 )
 
 type pathHasher struct {
-	streamCount int
 }
 
-func (h pathHasher) HashPath(path common.DispatcherID) int {
-	return int((common.GID)(path).FastHash() % (uint64)(h.streamCount))
+func (h pathHasher) HashPath(path common.DispatcherID) uint64 {
+	return (common.GID)(path).FastHash()
 }
 
 func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
-	option.InputBufferSize = 1000000 / streamCount
+	// option.InputBufferSize = 1000000 / streamCount
 	// Enable memory control for dispatcher events dynamic stream.
 	log.Info("New EventDynamicStream, memory control is enabled")
 	option.EnableMemoryControl = true
 	eventsHandler := &EventsHandler{
 		eventCollector: collector,
 	}
-	stream := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, eventsHandler, option)
+	stream := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, eventsHandler, option)
 	stream.Start()
 	return stream
 }

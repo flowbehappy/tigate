@@ -1,18 +1,16 @@
 package dynstream
 
-import "fmt"
-
 // Use a hasher to select target stream for the path.
 // It implements the DynamicStream interface.
 type parallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
-	pathHaser      PathHasher[P]
+	pathHasher     PathHasher[P]
 	dynamicStreams []*dynamicStreamImpl[A, P, T, D, H]
 	feedbackChan   chan Feedback[A, P, D]
 }
 
 func newParallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](streamCount int, hasher PathHasher[P], handler H, option Option) *parallelDynamicStream[A, P, T, D, H] {
 	s := &parallelDynamicStream[A, P, T, D, H]{
-		pathHaser: hasher,
+		pathHasher: hasher,
 	}
 	if option.EnableMemoryControl {
 		s.feedbackChan = make(chan Feedback[A, P, D], 1024)
@@ -39,11 +37,8 @@ func (s *parallelDynamicStream[A, P, T, D, H]) hash(path ...P) int {
 	if len(path) == 0 {
 		panic("no path")
 	}
-	index := s.pathHaser.HashPath(path[0])
-	if index >= len(s.dynamicStreams) {
-		panic(fmt.Sprintf("invalid hash result: %v, streams length: %v", index, len(s.dynamicStreams)))
-	}
-	return index
+	hash := s.pathHasher.HashPath(path[0])
+	return int(hash) % len(s.dynamicStreams)
 }
 
 func (s *parallelDynamicStream[A, P, T, D, H]) In(path ...P) chan<- T {
@@ -70,4 +65,13 @@ func (s *parallelDynamicStream[A, P, T, D, H]) SetAreaSettings(area A, settings 
 	for _, ds := range s.dynamicStreams {
 		ds.SetAreaSettings(area, settings)
 	}
+}
+
+func (s *parallelDynamicStream[A, P, T, D, H]) GetMetrics() Metrics {
+	metrics := Metrics{}
+	for _, ds := range s.dynamicStreams {
+		metrics.EventChanSize += ds.GetMetrics().EventChanSize
+		metrics.PendingQueueLen += ds.GetMetrics().PendingQueueLen
+	}
+	return metrics
 }

@@ -175,7 +175,8 @@ func NewMaintainer(cfID common.ChangeFeedID,
 		handleEventDuration:            metrics.MaintainerHandleEventDuration.WithLabelValues(cfID.Namespace(), cfID.Name()),
 	}
 	m.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse](m.id.Name(), m.getNewBootstrapFn())
-	log.Info("maintainer is created", zap.String("id", cfID.String()))
+	log.Info("maintainer is created", zap.String("id", cfID.String()),
+		zap.String("ddl dispatcher", tableTriggerEventDispatcherID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace(), cfID.Name()).Inc()
 	return m
 }
