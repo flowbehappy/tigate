@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -241,6 +242,7 @@ func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableI
 			if colSchemaWithCount.columnSchema.SameWithTableInfo(tableInfo) {
 				s.m[digest][idx].count++
 				log.Info("hyy into get or set column schema, find the column schema", zap.Any("count", colSchemaWithCount.count))
+				debug.PrintStack()
 				return colSchemaWithCount.columnSchema
 			}
 		}
@@ -287,6 +289,7 @@ func (s *SharedColumnSchemaStorage) getOrSetColumnSchemaByColumnSchema(columnSch
 //  4. versionedTableInfo gc will release some tableInfo.
 func (s *SharedColumnSchemaStorage) tryReleaseColumnSchema(columnSchema *columnSchema) {
 	log.Info("hyy into try release column schema")
+	debug.PrintStack()
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	colSchemas, ok := s.m[columnSchema.Digest]
@@ -297,6 +300,7 @@ func (s *SharedColumnSchemaStorage) tryReleaseColumnSchema(columnSchema *columnS
 	for idx, colSchemaWithCount := range colSchemas {
 		if colSchemaWithCount.columnSchema == columnSchema {
 			log.Info("hyy into try release column schema, find the column schema", zap.Any("count", colSchemaWithCount.count))
+			debug.PrintStack()
 			s.m[columnSchema.Digest][idx].count--
 			if s.m[columnSchema.Digest][idx].count == 0 {
 				// release the columnSchema object
