@@ -170,9 +170,9 @@ type eventStore struct {
 
 const (
 	dataDir             = "event_store"
-	dbCount             = 8
-	writeWorkerNumPerDB = 100
-	streamCount         = 4
+	dbCount             = 32
+	writeWorkerNumPerDB = 32
+	streamCount         = 8
 )
 
 type pathHasher struct {
@@ -224,7 +224,7 @@ func New(
 	}
 
 	option := dynstream.NewOption()
-	option.InputBufferSize = 1024000
+	option.InputBufferSize = 300000
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
