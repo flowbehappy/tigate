@@ -38,7 +38,7 @@ func (s *parallelDynamicStream[A, P, T, D, H]) hash(path ...P) int {
 		panic("no path")
 	}
 	hash := s.pathHasher.HashPath(path[0])
-	return int(hash) % len(s.dynamicStreams)
+	return int(hash % uint64(len(s.dynamicStreams)))
 }
 
 func (s *parallelDynamicStream[A, P, T, D, H]) In(path ...P) chan<- T {
