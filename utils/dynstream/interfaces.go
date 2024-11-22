@@ -164,7 +164,7 @@ type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] inter
 }
 
 type PathHasher[P Path] interface {
-	HashPath(path P) int
+	HashPath(path P) uint64
 }
 
 const DefaultInputBufferSize = 1024

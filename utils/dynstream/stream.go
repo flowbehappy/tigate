@@ -174,7 +174,8 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	eventBlockAllocator *deque.BlockAllocator[eventWrap[A, P, T, D, H]] // The allocator for blocks to store eventWraps in the pendingQueue.
 
-	inChan chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
+	inChan  chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
+	outChan chan eventWrap[A, P, T, D, H] // The buffer channel to send the events.
 
 	eventQueue eventQueue[A, P, T, D, H]    // The queue to store the pending events.
 	doneChan   chan doneInfo[A, P, T, D, H] // The channel to receive the done events.
@@ -202,6 +203,7 @@ func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 		id:                  id,
 		handler:             handler,
 		inChan:              make(chan eventWrap[A, P, T, D, H], 64),
+		outChan:             make(chan eventWrap[A, P, T, D, H], 64),
 		eventQueue:          newEventQueue(option, handler),
 		doneChan:            make(chan doneInfo[A, P, T, D, H], 64),
 		reportNow:           make(chan struct{}, 1),
@@ -223,6 +225,7 @@ func (s *stream[A, P, T, D, H]) start(acceptedPaths []*pathInfo[A, P, T, D, H], 
 	if s.isClosed.Load() {
 		panic("The stream has been closed.")
 	}
+	go s.reciever()
 
 	s.handleWg.Add(1)
 	go s.handleLoop(acceptedPaths, formerStreams)
@@ -239,6 +242,43 @@ func (s *stream[A, P, T, D, H]) close(wait ...bool) {
 	}
 	if len(wait) == 0 || wait[0] {
 		s.handleWg.Wait()
+	}
+}
+
+func (s *stream[A, P, T, D, H]) reciever() {
+	buffer := deque.NewDeque[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 0 /*unlimited*/)
+	defer func() {
+		// Move all remaining events in the buffer to the outChan.
+		for {
+			event, ok := buffer.FrontRef()
+			if !ok {
+				break
+			} else {
+				s.outChan <- *event
+				buffer.PopFront()
+			}
+		}
+		close(s.outChan)
+	}()
+	for {
+		event, ok := buffer.FrontRef()
+		if !ok {
+			e, ok := <-s.inChan
+			if !ok {
+				return
+			}
+			buffer.PushBack(e)
+		} else {
+			select {
+			case e, ok := <-s.inChan:
+				if !ok {
+					return
+				}
+				buffer.PushBack(e)
+			case s.outChan <- *event:
+				buffer.PopFront()
+			}
+		}
 	}
 }
 
@@ -262,8 +302,8 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 		}
 		close(s.doneChan)
 
-		// Move remaining events in the inChan to pendingQueue.
-		for e := range s.inChan {
+		// Move remaining events in the outChan to pendingQueue.
+		for e := range s.outChan {
 			pushToPendingQueue(e)
 		}
 
@@ -305,12 +345,12 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 		s.option.handleWait.Wait()
 	}
 
-	// 1. Drain the inChan to pendingQueue.
+	// 1. Drain the outChan to pendingQueue.
 	// 2. Pop events from the eventQueue and handle them.
 Loop:
 	for {
 		if eventQueueEmpty {
-			e, ok := <-s.inChan
+			e, ok := <-s.outChan
 			if !ok {
 				// The stream is closed.
 				return
@@ -319,7 +359,7 @@ Loop:
 			eventQueueEmpty = false
 		} else {
 			select {
-			case e, ok := <-s.inChan:
+			case e, ok := <-s.outChan:
 				if !ok {
 					return
 				}

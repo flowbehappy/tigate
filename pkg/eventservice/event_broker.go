@@ -87,11 +87,10 @@ type eventBroker struct {
 }
 
 type pathHasher struct {
-	streamCount int
 }
 
-func (h pathHasher) HashPath(path common.DispatcherID) int {
-	return int((common.GID)(path).FastHash() % (uint64)(h.streamCount))
+func (h pathHasher) HashPath(path common.DispatcherID) uint64 {
+	return (common.GID)(path).FastHash()
 }
 
 func newEventBroker(
@@ -107,7 +106,7 @@ func newEventBroker(
 
 	option := dynstream.NewOption()
 	// option.InputBufferSize = 1024 * 1024 / streamCount // 1 Million
-	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, &dispatcherEventsHandler{}, option)
+	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
 	ds.Start()
 
 	messageWorkerCount := runtime.NumCPU()

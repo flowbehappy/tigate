@@ -1,7 +1,5 @@
 package dynstream
 
-import "fmt"
-
 // Use a hasher to select target stream for the path.
 // It implements the DynamicStream interface.
 type parallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
@@ -39,11 +37,8 @@ func (s *parallelDynamicStream[A, P, T, D, H]) hash(path ...P) int {
 	if len(path) == 0 {
 		panic("no path")
 	}
-	index := s.pathHasher.HashPath(path[0])
-	if index >= len(s.dynamicStreams) {
-		panic(fmt.Sprintf("invalid hash result: %v, streams length: %v", index, len(s.dynamicStreams)))
-	}
-	return index
+	hash := s.pathHasher.HashPath(path[0])
+	return int(hash) % len(s.dynamicStreams)
 }
 
 func (s *parallelDynamicStream[A, P, T, D, H]) In(path ...P) chan<- T {
