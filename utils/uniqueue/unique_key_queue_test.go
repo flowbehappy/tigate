@@ -80,6 +80,7 @@ func TestUniqueKeyQueueConcurrent(t *testing.T) {
 					popCount.Add(1)
 				}
 			}
+
 		}()
 	}
 	// Wait for all goroutines to complete
