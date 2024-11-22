@@ -105,7 +105,7 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	option.InputBufferSize = 200000 // 1 Million
+	option.InputBufferSize = 100000 // 1 Million
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
 	ds.Start()
 
