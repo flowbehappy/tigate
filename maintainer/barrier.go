@@ -60,7 +60,7 @@ func (b *Barrier) HandleStatus(from node.ID,
 	request *heartbeatpb.BlockStatusRequest) *messaging.TargetMessage {
 	log.Debug("handle block status", zap.String("from", from.String()),
 		zap.String("changefeed", request.ChangefeedID.GetName()),
-		zap.String("detail", request.String()))
+		zap.Any("detail", request))
 	eventMap := make(map[*BarrierEvent][]*heartbeatpb.DispatcherID)
 	var dispatcherStatus []*heartbeatpb.DispatcherStatus
 	for _, status := range request.BlockStatuses {
