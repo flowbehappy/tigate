@@ -102,7 +102,7 @@ type Dispatcher struct {
 	syncPointConfig *syncpoint.SyncPointConfig
 
 	// the max resolvedTs received by the dispatcher
-	resolvedTs *TsWithMutex
+	resolvedTs uint64
 
 	// blockEventStatus is used to store the current pending ddl/sync point event and its block status.
 	blockEventStatus BlockEventStatus
@@ -150,7 +150,7 @@ func NewDispatcher(
 		blockStatusesChan:     blockStatusesChan,
 		syncPointConfig:       syncPointConfig,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
-		resolvedTs:            newTsWithMutex(startTs),
+		resolvedTs:            startTs,
 		filterConfig:          filterConfig,
 		isRemoving:            atomic.Bool{},
 		blockEventStatus:      BlockEventStatus{blockPendingEvent: nil},
@@ -244,7 +244,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 	for _, dispatcherEvent := range dispatcherEvents {
 		event := dispatcherEvent.Event
 		// Pre-check, make sure the event is not stale
-		if event.GetCommitTs() < d.resolvedTs.Get() {
+		if event.GetCommitTs() < atomic.LoadUint64(&d.resolvedTs) {
 			log.Info("Received a stale event, should ignore it",
 				zap.Any("commitTs", event.GetCommitTs()),
 				zap.Any("seq", event.GetSeq()),
@@ -256,7 +256,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 
 		switch event.GetType() {
 		case commonEvent.TypeResolvedEvent:
-			d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
+			atomic.StoreUint64(&d.resolvedTs, event.(commonEvent.ResolvedEvent).ResolvedTs)
 		case commonEvent.TypeDMLEvent:
 			block = true
 			dml := event.(*commonEvent.DMLEvent)
@@ -453,7 +453,7 @@ func (d *Dispatcher) GetStartTs() uint64 {
 }
 
 func (d *Dispatcher) GetResolvedTs() uint64 {
-	return d.resolvedTs.Get()
+	return atomic.LoadUint64(&d.resolvedTs)
 }
 
 func (d *Dispatcher) GetCheckpointTs() uint64 {
