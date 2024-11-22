@@ -12,7 +12,7 @@ type dispatcherEventsHandler struct {
 }
 
 func (h *dispatcherEventsHandler) Path(task scanTask) common.DispatcherID {
-	return task.dispatcherStat.info.GetID()
+	return task.id
 }
 
 // Handle implements the dynstream.Handler interface.

@@ -131,7 +131,8 @@ type subscribedSpan struct {
 	staleLocksTargetTs atomic.Uint64
 
 	lastAdvanceTime atomic.Int64
-	resolvedTs      atomic.Uint64
+	// This is used to calculate the resolvedTs lag for metrics.
+	resolvedTs atomic.Uint64
 }
 
 type SubscriptionClientConfig struct {
