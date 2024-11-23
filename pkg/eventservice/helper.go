@@ -34,7 +34,7 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 		return false
 	}
 	// The dispatcher has new events. We need to push the task to the task pool.
-	broker.taskQueue.Push(task)
+	broker.taskQueue <- task
 	return true
 }
 

@@ -12,7 +12,7 @@ import (
 type UnlimitedChannel[T any] struct {
 	queue deque.Deque[T]
 
-	mu     sync.RWMutex
+	mu     sync.Mutex
 	cond   *sync.Cond
 	closed bool
 }
@@ -102,7 +102,7 @@ func (c *UnlimitedChannel[T]) GetMultiple(buffer []T) ([]T, bool) {
 }
 
 func (c *UnlimitedChannel[T]) Len() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.queue.Length()
 }
