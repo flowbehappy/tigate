@@ -173,9 +173,9 @@ type eventStore struct {
 
 const (
 	dataDir             = "event_store"
-	dbCount             = 16
-	writeWorkerNumPerDB = 64
-	streamCount         = 16
+	dbCount             = 4
+	writeWorkerNumPerDB = 32
+	streamCount         = 8
 )
 
 type pathHasher struct {
