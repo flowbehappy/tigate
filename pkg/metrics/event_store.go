@@ -42,6 +42,14 @@ var (
 			Help:      "The number of bytes written by event store.",
 		})
 
+	EventStoreWriteDurationHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "ticdc",
+		Subsystem: "event_store",
+		Name:      "write_duration",
+		Help:      "Bucketed histogram of event store write duration",
+		Buckets:   prometheus.ExponentialBuckets(0.004, 2.0, 20),
+	})
+
 	EventStoreScanRequestsCount = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "ticdc",
@@ -105,6 +113,7 @@ func InitEventStoreMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventStoreSubscriptionGauge)
 	registry.MustRegister(EventStoreReceivedEventCount)
 	registry.MustRegister(EventStoreWriteBytes)
+	registry.MustRegister(EventStoreWriteDurationHistogram)
 	registry.MustRegister(EventStoreScanRequestsCount)
 	registry.MustRegister(EventStoreScanBytes)
 	registry.MustRegister(EventStoreDeleteRangeCount)
