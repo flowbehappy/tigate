@@ -25783,13 +25783,6 @@
           "renderer": "flot",
           "repeat": null,
           "repeatDirection": "h",
-          "scopedVars": {
-            "runtime_instance": {
-              "selected": false,
-              "text": "10.2.12.81:8300",
-              "value": "10.2.12.81:8300"
-            }
-          },
           "seriesOverrides": [
             {
               "alias": "alloc-from-os",
@@ -25964,13 +25957,6 @@
           "renderer": "flot",
           "repeat": null,
           "repeatDirection": "h",
-          "scopedVars": {
-            "runtime_instance": {
-              "selected": false,
-              "text": "10.2.12.81:8300",
-              "value": "10.2.12.81:8300"
-            }
-          },
           "seriesOverrides": [],
           "spaceLength": 10,
           "stack": false,
@@ -26066,13 +26052,6 @@
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
-          "scopedVars": {
-            "runtime_instance": {
-              "selected": false,
-              "text": "10.2.12.81:8300",
-              "value": "10.2.12.81:8300"
-            }
-          },
           "seriesOverrides": [
             {}
           ],
@@ -26183,13 +26162,6 @@
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
-          "scopedVars": {
-            "runtime_instance": {
-              "selected": false,
-              "text": "10.2.12.81:8300",
-              "value": "10.2.12.81:8300"
-            }
-          },
           "seriesOverrides": [
             {
               "alias": "sweep",
@@ -26281,13 +26253,6 @@
         }
       ],
       "repeat": "runtime_instance",
-      "scopedVars": {
-        "runtime_instance": {
-          "selected": false,
-          "text": "10.2.12.81:8300",
-          "value": "10.2.12.81:8300"
-        }
-      },
       "title": "Runtime $runtime_instance",
       "type": "row"
     },
