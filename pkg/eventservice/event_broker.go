@@ -205,6 +205,7 @@ func (c *eventBroker) getMessageCh(workerIndex int) chan wrapEvent {
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
+	c.wg.Add(c.scanWorkerCount)
 	for i := 0; i < c.scanWorkerCount; i++ {
 		go func() {
 			defer c.wg.Done()
