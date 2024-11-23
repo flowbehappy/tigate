@@ -55,6 +55,7 @@ func TestSpanReplication_NewAddDispatcherMessage(t *testing.T) {
 	require.Equal(t, heartbeatpb.ScheduleAction_Create, req.ScheduleAction)
 	require.Equal(t, oracle.ComposeTS(10, 1), req.Config.CurrentPdTs)
 	require.Equal(t, replicaSet.ID.ToPB(), req.Config.DispatcherID)
+	require.Equal(t, replicaSet.schemaID, req.Config.SchemaID)
 
 	tsoClient.EXPECT().GetTS(gomock.Any()).Return(int64(1), int64(1), errors.New("error")).AnyTimes()
 	_, err = replicaSet.NewAddDispatcherMessage("node1")
