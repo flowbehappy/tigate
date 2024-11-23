@@ -8,18 +8,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/ticdc/pkg/apperror"
-	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/ticdc/utils/dynstream"
-
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/logservice/eventstore"
 	"github.com/pingcap/ticdc/logservice/schemastore"
+	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
+	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/utils/chann"
+	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -35,10 +35,10 @@ const (
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
 var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
-var metricEventBrokerDropResolvedTsCount = metrics.EventServiceDropResolvedTsCount
+var metricEventBrokerScanTaskCount = metrics.EventServiceScanTaskCount
 var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
 var metricEventBrokerTaskHandleDuration = metrics.EventServiceTaskHandleDuration
-var metricEventBrokerDropNotificationCount = metrics.EventServiceDropNotificationCount
+var metricEventBrokerPendingScanTaskCount = metrics.EventServicePendingScanTaskCount
 var metricEventBrokerDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-broker")
 var metricEventBrokerDSChannelSize = metrics.DynamicStreamEventChanSize.WithLabelValues("event-broker")
 
@@ -62,7 +62,7 @@ type eventBroker struct {
 	tableTriggerDispatchers sync.Map
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
-	taskPool *scanTaskPool
+	taskQueue *chann.UnlimitedChannel[scanTask]
 
 	// GID here is the internal changefeedID, use to identify the area of the dispatcher.
 	ds dynstream.DynamicStream[common.GID, common.DispatcherID, scanTask, *eventBroker, *dispatcherEventsHandler]
@@ -114,6 +114,8 @@ func newEventBroker(
 		messageWorkerCount = streamCount
 	}
 
+	//conf := config.GetGlobalServerConfig().Debug.EventService
+
 	c := &eventBroker{
 		tidbClusterID:           id,
 		eventStore:              eventStore,
@@ -122,7 +124,7 @@ func newEventBroker(
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
-		taskPool:                newScanTaskPool(),
+		taskQueue:               chann.NewUnlimitedChannel[scanTask](),
 		scanWorkerCount:         defaultScanWorkerCount,
 		ds:                      ds,
 		messageCh:               make([]chan wrapEvent, messageWorkerCount),
@@ -205,16 +207,17 @@ func (c *eventBroker) getMessageCh(workerIndex int) chan wrapEvent {
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
 	for i := 0; i < c.scanWorkerCount; i++ {
-		taskCh := c.taskPool.popTask()
-		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
 			for {
 				select {
 				case <-ctx.Done():
 					return
-				case task := <-taskCh:
-					c.doScan(ctx, task)
+				default:
+					task, ok := c.taskQueue.Get()
+					if ok {
+						c.doScan(ctx, task)
+					}
 				}
 			}
 		}()
@@ -440,16 +443,6 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		log.Panic("get ddl events failed", zap.Error(err))
 	}
 
-	//2. Get event iterator from eventStore.
-	iter, err := c.eventStore.GetIterator(dispatcherID, dataRange)
-	if err != nil {
-		log.Panic("read events failed", zap.Error(err))
-	}
-	// TODO: use error to indicate the dispatcher is removed
-	if iter == nil {
-		return
-	}
-
 	// After all the events are sent, we need to
 	// drain the ddlEvents and wake up the dispatcher.
 	defer func() {
@@ -464,11 +457,22 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			task.metricEventServiceSendResolvedTsCount)
 	}()
 
+	//2. Get event iterator from eventStore.
+	iter, err := c.eventStore.GetIterator(dispatcherID, dataRange)
+	if err != nil {
+		log.Panic("read events failed", zap.Error(err))
+	}
+	// TODO: use error to indicate the dispatcher is removed
+	if iter == nil {
+		return
+	}
+
 	defer func() {
 		eventCount, _ := iter.Close()
 		if eventCount != 0 {
 			task.metricSorterOutputEventCountKV.Add(float64(eventCount))
 		}
+		metricEventBrokerScanTaskCount.Inc()
 	}()
 
 	sendDML := func(dml *pevent.DMLEvent) {
@@ -663,6 +667,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				dsMetrics := c.ds.GetMetrics()
 				metricEventBrokerDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 				metricEventBrokerDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
+				metricEventBrokerPendingScanTaskCount.Set(float64(c.taskQueue.Len()))
 			}
 		}
 	}()
@@ -946,33 +951,8 @@ func (t scanTask) handle() {
 	//metricScanTaskQueueDuration.Observe(float64(time.Since(t.createTime).Milliseconds()))
 }
 
-type scanTaskPool struct {
-	// pendingTaskQueue is used to store the tasks that are waiting to be handled by the scan workers.
-	// The length of the pendingTaskQueue is equal to the number of the scan workers.
-	pendingTaskQueue chan scanTask
-}
-
-func newScanTaskPool() *scanTaskPool {
-	return &scanTaskPool{
-		pendingTaskQueue: make(chan scanTask, defaultChannelSize),
-	}
-}
-
-// pushTask pushes a task to the pool,
-// and merge the task if the task is overlapped with the existing tasks.
-func (p *scanTaskPool) pushTask(task scanTask) bool {
-	select {
-	case p.pendingTaskQueue <- task:
-		return true
-	default:
-		metricEventBrokerDropTaskCount.Inc()
-		// If the queue is full, we just drop the task
-		return false
-	}
-}
-
-func (p *scanTaskPool) popTask() <-chan scanTask {
-	return p.pendingTaskQueue
+func (t scanTask) GetKey() common.DispatcherID {
+	return t.id
 }
 
 type wrapEvent struct {
