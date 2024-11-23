@@ -319,6 +319,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 				if !ok {
 					return
 				}
+				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(len(events)))
 				p.store.writeEvents(p.db, events)
 				for _, event := range events {
 					p.store.wakeSubscription(event.subID)
@@ -690,6 +691,7 @@ func (e *eventStore) updateMetricsOnce() {
 }
 
 func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvents) error {
+	metrics.EventStoreWriteRequestsCount.Inc()
 	batch := db.NewBatch()
 	for _, kvEvents := range events {
 		items := kvEvents.kvs
@@ -706,6 +708,7 @@ func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvents) error {
 			}
 		}
 	}
+	metrics.EventStoreWriteBatchSizeHist.Observe(float64(batch.Len()))
 	metrics.EventStoreWriteBytes.Add(float64(batch.Len()))
 	start := time.Now()
 	err := batch.Commit(pebble.NoSync)

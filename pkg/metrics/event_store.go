@@ -87,8 +87,8 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_store",
-			Name:      "resolved_ts_lag",
-			Help:      "The resolved ts lag of event store.",
+			Name:      "max_resolved_ts_lag",
+			Help:      "The max resolved ts lag of event store.",
 		})
 
 	EventStoreDispatcherWatermarkLagHist = prometheus.NewHistogram(
@@ -107,6 +107,32 @@ var (
 			Name:      "compress_ratio",
 			Help:      "The compression ratio of the event data.",
 		})
+
+	EventStoreWriteBatchEventsCountHist = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "write_batch_events_count",
+			Help:      "Batch event count histogram for write task pool.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
+		})
+
+	EventStoreWriteBatchSizeHist = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "write_batch_size",
+			Help:      "Batch event size histogram for write task pool.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 26),
+		})
+
+	EventStoreWriteRequestsCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "write_requests_count",
+			Help:      "The number of write requests received by event store.",
+		})
 )
 
 func InitEventStoreMetrics(registry *prometheus.Registry) {
@@ -121,4 +147,7 @@ func InitEventStoreMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventStoreResolvedTsLagGauge)
 	registry.MustRegister(EventStoreDispatcherWatermarkLagHist)
 	registry.MustRegister(EventStoreCompressRatio)
+	registry.MustRegister(EventStoreWriteBatchEventsCountHist)
+	registry.MustRegister(EventStoreWriteBatchSizeHist)
+	registry.MustRegister(EventStoreWriteRequestsCount)
 }
