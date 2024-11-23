@@ -130,8 +130,8 @@
   "editable": true,
   "gnetId": null,
   "graphTooltip": 1,
-  "id": 33,
-  "iteration": 1732343791065,
+  "id": 32,
+  "iteration": 1732345252721,
   "links": [],
   "panels": [
     {
@@ -4069,6 +4069,201 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_C1}",
+          "description": "",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 54
+          },
+          "hiddenSeries": false,
+          "id": 20028,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(ticdc_dynamic_stream_event_chan_size{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\", component=\"event-store\"}[1m])) by (instance,component)",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "Input-chanel-len-{{instance}}",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "DS Input Channel Length",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:1887",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:1888",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_C1}",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 54
+          },
+          "hiddenSeries": false,
+          "id": 20036,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(ticdc_dynamic_stream_pending_queue_len{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\", component=\"event-store\"}[1m])) by (instance,component)",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "len-{{instance}}",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "DS Pending Queue Length",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:1751",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:1752",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
         }
       ],
       "title": "Event Store",
@@ -5204,6 +5399,7 @@
           },
           "yaxes": [
             {
+              "$$hashKey": "object:1751",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -5212,6 +5408,7 @@
               "show": true
             },
             {
+              "$$hashKey": "object:1752",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -5231,7 +5428,6 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_C1}",
-          "description": "",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -5245,7 +5441,7 @@
             "y": 30
           },
           "hiddenSeries": false,
-          "id": 20028,
+          "id": 20035,
           "legend": {
             "avg": false,
             "current": false,
@@ -5273,10 +5469,10 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_dynamic_stream_event_chan_size{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\", component=\"event-broker\"}[1m])) by (instance,component)",
+              "expr": "sum(rate(ticdc_dynamic_stream_pending_queue_len{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\", component=\"event-broker\"}[1m])) by (instance,component)",
               "hide": false,
               "interval": "",
-              "legendFormat": "Input-chanel-len-{{instance}}",
+              "legendFormat": "len-{{instance}}",
               "refId": "B"
             }
           ],
@@ -5284,7 +5480,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DS Input Channel Length",
+          "title": "DS Pending Queue Length",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -5300,6 +5496,7 @@
           },
           "yaxes": [
             {
+              "$$hashKey": "object:1751",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -5308,6 +5505,7 @@
               "show": true
             },
             {
+              "$$hashKey": "object:1752",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -27908,6 +28106,6 @@
   },
   "timezone": "browser",
   "title": "${DS_C1}-TiCDC",
-  "uid": "YiGL8hBZ0aaa",
-  "version": 1
+  "uid": "YiGL8hBZ0aab",
+  "version": 2
 }

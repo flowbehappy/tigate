@@ -50,6 +50,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var metricEventStoreDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-store")
+var metricEventStoreDSChannelSize = metrics.DynamicStreamEventChanSize.WithLabelValues("event-store")
+
 type ResolvedTsNotifier func(watermark uint64)
 
 type EventStore interface {
@@ -225,7 +228,7 @@ func New(
 
 	option := dynstream.NewOption()
 	option.InputBufferSize = 80000
-	option.BatchCount = 4096
+	option.BatchCount = 40960
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
@@ -688,6 +691,9 @@ func (e *eventStore) updateMetricsOnce() {
 	minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
 	eventStoreResolvedTsLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
 	metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
+	dsMetrics := e.ds.GetMetrics()
+	metricEventStoreDSChannelSize.Set(float64(dsMetrics.EventChanSize))
+	metricEventStoreDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 }
 
 func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvents) error {
