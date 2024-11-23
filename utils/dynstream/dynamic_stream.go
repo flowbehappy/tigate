@@ -123,7 +123,10 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 	inChan      chan T // The channel to receive the incoming events by receiver
 	outChan     chan T // The channel to send the events to the streams by distributor
 
-	wakeChan     chan P                 // The channel to receive the wake signal by distributor
+	wakeBufferCount atomic.Int64
+	wakeInChan      chan P // The channel to receive the wake signal by receiver
+	wakeOutChan     chan P // The channel to send the wake signal to the streams by distributor
+
 	feedbackChan chan Feedback[A, P, D] // The channel to report the feedback to outside listener
 
 	reportChan chan streamStat[A, P, T, D, H] // The channel to receive the report by scheduler
@@ -136,7 +139,6 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	hasClosed atomic.Bool
 
-	recvWg  sync.WaitGroup
 	schedWg sync.WaitGroup
 	distWg  sync.WaitGroup
 
@@ -177,7 +179,8 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		inChan:  make(chan T, option.InputBufferSize),
 		outChan: make(chan T, 64),
 
-		wakeChan: make(chan P, 1024),
+		wakeInChan:  make(chan P, 64),
+		wakeOutChan: make(chan P, 64),
 
 		reportChan: make(chan streamStat[A, P, T, D, H], 64),
 		cmdToSched: make(chan *command, 64),
@@ -203,7 +206,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) In(path ...P) chan<- T {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Wake(path ...P) chan<- P {
-	return d.wakeChan
+	return d.wakeInChan
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
@@ -211,8 +214,9 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
-	d.recvWg.Add(1)
-	go d.receiver()
+	go receiver(d.inChan, d.outChan, &d.bufferCount)
+	go receiver(d.wakeInChan, d.wakeOutChan, &d.wakeBufferCount)
+
 	d.schedWg.Add(1)
 	go d.scheduler()
 	d.distWg.Add(1)
@@ -222,12 +226,12 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
 func (d *dynamicStreamImpl[A, P, T, D, H]) Close() {
 	if d.hasClosed.CompareAndSwap(false, true) {
 		close(d.inChan)
+		close(d.wakeInChan)
 		close(d.cmdToSched)
 		if d.feedbackChan != nil {
 			close(d.feedbackChan)
 		}
 	}
-	d.recvWg.Wait()
 	d.schedWg.Wait()
 }
 
@@ -773,11 +777,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				}
 				pi.stream.in() <- e
 			} else {
-				// Otherwise, drop the event. If the event is not a periodic signal,
-				// we should notify the handler that the event is dropped.
+				// Otherwise, drop the event and notify the handler
 				d.handler.OnDrop(e)
 			}
-		case p := <-d.wakeChan:
+		case p, ok := <-d.wakeOutChan:
+			if !ok {
+				return
+			}
 			if pi, ok := pathMap[p]; ok {
 				pi.stream.in() <- eventWrap[A, P, T, D, H]{wake: true, pathInfo: pi}
 			}
@@ -850,34 +856,31 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 	}
 }
 
-func (d *dynamicStreamImpl[A, P, T, D, H]) receiver() {
-	defer func() {
-		close(d.outChan)
-		d.recvWg.Done()
-	}()
+func receiver[E any](inChan <-chan E, outChan chan<- E, bufferCount *atomic.Int64) {
+	defer close(outChan)
 
-	buffer := deque.NewDequeDefault[T]()
+	buffer := deque.NewDequeDefault[E]()
 
 	for {
 		event, ok := buffer.FrontRef()
 		if !ok {
-			e, ok := <-d.inChan
+			e, ok := <-inChan
 			if !ok {
 				return
 			}
 			buffer.PushBack(e)
-			d.bufferCount.Add(1)
+			bufferCount.Add(1)
 		} else {
 			select {
-			case e, ok := <-d.inChan:
+			case e, ok := <-inChan:
 				if !ok {
 					return
 				}
 				buffer.PushBack(e)
-				d.bufferCount.Add(1)
-			case d.outChan <- *event:
+				bufferCount.Add(1)
+			case outChan <- *event:
 				buffer.PopFront()
-				d.bufferCount.Add(-1)
+				bufferCount.Add(-1)
 			}
 		}
 	}
