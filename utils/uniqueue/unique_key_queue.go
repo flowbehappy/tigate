@@ -65,11 +65,11 @@ func (q *UniqueKeyQueue[K, T]) Push(value T) {
 func (q *UniqueKeyQueue[K, T]) Pop() (T, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-
 	var zero T
 	if q.queue.Length() == 0 {
 		return zero, false
 	}
+
 	v, ok := q.queue.PopFront()
 	if !ok {
 		return zero, false

@@ -14,13 +14,12 @@ import (
 	"github.com/pingcap/ticdc/logservice/schemastore"
 	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/common"
-	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/utils/chann"
 	"github.com/pingcap/ticdc/utils/dynstream"
-	"github.com/pingcap/ticdc/utils/uniqueue"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -63,7 +62,7 @@ type eventBroker struct {
 	tableTriggerDispatchers sync.Map
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
-	taskQueue *uniqueue.UniqueKeyQueue[common.DispatcherID, scanTask]
+	taskQueue *chann.UnlimitedChannel[scanTask]
 
 	// GID here is the internal changefeedID, use to identify the area of the dispatcher.
 	ds dynstream.DynamicStream[common.GID, common.DispatcherID, scanTask, *eventBroker, *dispatcherEventsHandler]
@@ -115,7 +114,7 @@ func newEventBroker(
 		messageWorkerCount = streamCount
 	}
 
-	conf := config.GetGlobalServerConfig().Debug.EventService
+	//conf := config.GetGlobalServerConfig().Debug.EventService
 
 	c := &eventBroker{
 		tidbClusterID:           id,
@@ -125,7 +124,7 @@ func newEventBroker(
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
-		taskQueue:               uniqueue.NewUniqueKeyQueue[common.DispatcherID, scanTask](conf.ScanTaskQueueSize),
+		taskQueue:               chann.NewUnlimitedChannel[scanTask](),
 		scanWorkerCount:         defaultScanWorkerCount,
 		ds:                      ds,
 		messageCh:               make([]chan wrapEvent, messageWorkerCount),
@@ -214,8 +213,9 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 				select {
 				case <-ctx.Done():
 					return
-				case <-c.taskQueue.Notify():
-					if task, ok := c.taskQueue.Pop(); ok {
+				default:
+					task, ok := c.taskQueue.Get()
+					if ok {
 						c.doScan(ctx, task)
 					}
 				}
@@ -667,7 +667,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				dsMetrics := c.ds.GetMetrics()
 				metricEventBrokerDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 				metricEventBrokerDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
-				metricEventBrokerPendingScanTaskCount.Set(float64(c.taskQueue.Length()))
+				metricEventBrokerPendingScanTaskCount.Set(float64(c.taskQueue.Len()))
 			}
 		}
 	}()
