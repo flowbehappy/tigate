@@ -179,14 +179,7 @@ func getSpansNumber(regionNum, captureNum int) int {
 	}
 	spanNum := 1
 	if regionNum > 1 {
-		// spanNumber = max(captureNum * coefficient, totalRegions / spanRegionLimit)
-		spanNum = captureNum * coefficient
-		if regionNum/spanRegionLimit > spanNum {
-			spanNum = regionNum / spanRegionLimit
-		}
+		spanNum = max(captureNum*coefficient, regionNum/spanRegionLimit)
 	}
-	if spanNum > maxSpanNumber {
-		spanNum = maxSpanNumber
-	}
-	return spanNum
+	return min(spanNum, maxSpanNumber)
 }

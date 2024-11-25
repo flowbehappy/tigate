@@ -176,8 +176,10 @@ func TestSplitRegionsByWrittenKeysCold(t *testing.T) {
 	re := require.New(t)
 	cfID := common.NewChangeFeedIDWithName("test")
 	splitter := newWriteSplitter(cfID, nil, 0)
+	baseSpanNum := getSpansNumber(7, 1)
+	require.Equal(t, 3, baseSpanNum)
 	regions, startKeys, endKeys := prepareRegionsInfo([7]int{})
-	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 3) // [2,3,4], [5,6,7], [8]
+	info := splitter.splitRegionsByWrittenKeysV1(0, regions, baseSpanNum) // [2,3,4], [5,6,7], [8]
 	re.Len(info.RegionCounts, 3)
 	re.EqualValues(3, info.RegionCounts[0], info)
 	re.EqualValues(3, info.RegionCounts[1])
