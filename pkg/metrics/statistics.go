@@ -70,7 +70,7 @@ type Statistics struct {
 // ObserveRows stats all received `RowChangedEvent`s.
 func (b *Statistics) ObserveRows(events []*commonEvent.DMLEvent) {
 	for _, event := range events {
-		b.metricEventSizeHis.Observe(float64(event.Rows.MemoryUsage()))
+		b.metricEventSizeHis.Observe(float64(event.GetSize()))
 		b.metricExecDMLCnt.Inc()
 	}
 }
