@@ -70,7 +70,6 @@ func (p *TableProgress) Add(event commonEvent.FlushableEvent) {
 	elem := p.list.PushBack(ts)
 	p.elemMap[ts] = elem
 	p.maxCommitTs = event.GetCommitTs()
-	log.Info("add event to table progress", zap.Any("event", event), zap.Any("cumulateEventSize", p.cumulateEventSize), zap.Any("eventSize", event.GetSize()))
 	event.PushFrontFlushFunc(func() {
 		p.Remove(event)
 	})
