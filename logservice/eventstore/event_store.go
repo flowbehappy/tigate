@@ -228,7 +228,7 @@ func New(
 
 	option := dynstream.NewOption()
 	option.InputBufferSize = 80000
-	option.BatchCount = 40960
+	option.BatchCount = 4096
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
@@ -316,18 +316,22 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			batch := make([]kvEvents, 0, 8126)
+			buffer := make([]kvEvents, 0, 8126)
 			for {
-				events, ok := p.dataCh.GetMultiple(batch)
+				events, ok := p.dataCh.GetMultiple(buffer)
 				if !ok {
 					return
 				}
-				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(len(events)))
+				kvCount := 0
+				for _, e := range events {
+					kvCount += len(e.kvs)
+				}
+				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(kvCount))
 				p.store.writeEvents(p.db, events)
 				for _, event := range events {
 					p.store.wakeSubscription(event.subID)
 				}
-				batch = batch[:0]
+				buffer = buffer[:0]
 			}
 		}()
 	}
