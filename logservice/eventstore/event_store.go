@@ -316,7 +316,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			buffer := make([]kvEvent, 0, 100000)
+			buffer := make([]kvEvent, 0, 10000)
 			for {
 				events, ok := p.dataCh.GetMultiple(buffer)
 				if !ok {

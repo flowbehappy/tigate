@@ -29,7 +29,7 @@ import (
 
 const (
 	resolvedTsCacheSize = 8192
-	streamCount         = 16
+	streamCount         = 8
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -105,7 +105,7 @@ func newEventBroker(
 
 	option := dynstream.NewOption()
 	// option.InputBufferSize = 1024 * 1024 / streamCount // 1 Million
-	option.InputBufferSize = 1000000
+	option.InputBufferSize = 100000
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
 	ds.Start()
 
@@ -166,14 +166,14 @@ func (c *eventBroker) sendWatermark(
 		server,
 		re,
 		d.getEventSenderState())
-	// c.getMessageCh(d.workerIndex) <- resolvedEvent
-	select {
-	case c.getMessageCh(d.workerIndex) <- resolvedEvent:
-		if counter != nil {
-			counter.Inc()
-		}
-	default:
-		// metricEventBrokerDropResolvedTsCount.Inc()
+	c.getMessageCh(d.workerIndex) <- resolvedEvent
+	// select {
+	// case c.getMessageCh(d.workerIndex) <- resolvedEvent:
+	// 	if counter != nil {
+	// 		counter.Inc()
+	// 	}
+	// default:
+	// metricEventBrokerDropResolvedTsCount.Inc()
 	}
 }
 
