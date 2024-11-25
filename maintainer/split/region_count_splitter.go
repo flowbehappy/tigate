@@ -170,13 +170,8 @@ func (e *evenlySplitStepper) Step() int {
 	return e.regionPerSpan + e.extraRegionPerSpan
 }
 
-const maxSpanNumber = 100
-
 func getSpansNumber(regionNum, captureNum int) int {
-	coefficient := captureNum - 1
-	if baseSpanNumberCoefficient > coefficient {
-		coefficient = baseSpanNumberCoefficient
-	}
+	coefficient := max(captureNum-1, baseSpanNumberCoefficient)
 	spanNum := 1
 	if regionNum > 1 {
 		spanNum = max(captureNum*coefficient, regionNum/spanRegionLimit)

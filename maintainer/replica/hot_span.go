@@ -109,6 +109,10 @@ func (s *HotSpans) String() string {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
+	if len(s.hotSpanCache) == 0 {
+		return "No hot spans"
+	}
+
 	var res strings.Builder
 	for id, span := range s.hotSpanCache {
 		res.WriteString(id.String())
