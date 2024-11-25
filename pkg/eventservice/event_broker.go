@@ -173,8 +173,8 @@ func (c *eventBroker) sendWatermark(
 	// 		counter.Inc()
 	// 	}
 	// default:
-	// 		metricEventBrokerDropResolvedTsCount.Inc()
-	}
+	// 	metricEventBrokerDropResolvedTsCount.Inc()
+	// }
 }
 
 func (c *eventBroker) sendReadyEvent(
