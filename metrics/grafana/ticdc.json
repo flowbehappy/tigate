@@ -3825,7 +3825,7 @@
             "show": true,
             "splitFactor": null
           },
-          "yBucketBound": "upper",
+          "yBucketBound": "lower",
           "yBucketNumber": null,
           "yBucketSize": null
         },
