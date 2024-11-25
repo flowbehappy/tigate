@@ -116,7 +116,7 @@ type subscriptionStat struct {
 
 	dbIndex int
 
-	eventCh *chann.UnlimitedChannel[kvEvents]
+	eventCh *chann.UnlimitedChannel[kvEvent, uint64]
 	// data <= checkpointTs can be deleted
 	checkpointTs atomic.Uint64
 	// the resolveTs persisted in the store
@@ -125,22 +125,21 @@ type subscriptionStat struct {
 	maxEventCommitTs atomic.Uint64
 }
 
-type eventWithSubID struct {
-	subID logpuller.SubscriptionID
-	raw   *common.RawKVEntry
-}
-
-type kvEvents struct {
-	kvs     []*common.RawKVEntry
+type kvEvent struct {
+	raw     *common.RawKVEntry
 	subID   logpuller.SubscriptionID
 	tableID int64
 }
+
+func kvEventGrouper(e kvEvent) uint64 { return uint64(e.subID) }
+
+func kvEventSizer(_ kvEvent) int { return 0 }
 
 type eventStore struct {
 	pdClock pdutil.Clock
 
 	dbs            []*pebble.DB
-	chs            []*chann.UnlimitedChannel[kvEvents]
+	chs            []*chann.UnlimitedChannel[kvEvent, uint64]
 	writeTaskPools []*writeTaskPool
 
 	puller *logpuller.LogPuller
@@ -154,7 +153,7 @@ type eventStore struct {
 		id node.ID
 	}
 
-	ds dynstream.DynamicStream[int, logpuller.SubscriptionID, eventWithSubID, *subscriptionStat, *eventsHandler]
+	ds dynstream.DynamicStream[int, logpuller.SubscriptionID, kvEvent, *subscriptionStat, *eventsHandler]
 
 	// To manage background goroutines.
 	wg sync.WaitGroup
@@ -174,9 +173,9 @@ type eventStore struct {
 
 const (
 	dataDir             = "event_store"
-	dbCount             = 16
-	writeWorkerNumPerDB = 64
-	streamCount         = 16
+	dbCount             = 64
+	writeWorkerNumPerDB = 2
+	streamCount         = 8
 )
 
 type pathHasher struct {
@@ -229,7 +228,7 @@ func New(
 
 	option := dynstream.NewOption()
 	option.InputBufferSize = 80000
-	option.BatchCount = 40960
+	option.BatchCount = 4096
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
@@ -237,7 +236,7 @@ func New(
 		pdClock: pdClock,
 
 		dbs:            make([]*pebble.DB, 0, dbCount),
-		chs:            make([]*chann.UnlimitedChannel[kvEvents], 0, dbCount),
+		chs:            make([]*chann.UnlimitedChannel[kvEvent, uint64], 0, dbCount),
 		writeTaskPools: make([]*writeTaskPool, 0, dbCount),
 
 		ds: ds,
@@ -268,7 +267,7 @@ func New(
 			log.Fatal("open db failed", zap.Error(err))
 		}
 		store.dbs = append(store.dbs, db)
-		store.chs = append(store.chs, chann.NewUnlimitedChannel[kvEvents]())
+		store.chs = append(store.chs, chann.NewUnlimitedChannel[kvEvent, uint64](kvEventGrouper, kvEventSizer))
 		store.writeTaskPools = append(store.writeTaskPools, newWriteTaskPool(store, store.dbs[i], store.chs[i], writeWorkerNumPerDB))
 	}
 	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]*dispatcherStat)
@@ -279,9 +278,9 @@ func New(
 		if raw == nil {
 			log.Panic("should not happen: meet nil event")
 		}
-		store.ds.In(subID) <- eventWithSubID{
-			subID: subID,
+		store.ds.In(subID) <- kvEvent{
 			raw:   raw,
+			subID: subID,
 		}
 		return nil
 	}
@@ -299,11 +298,11 @@ func New(
 type writeTaskPool struct {
 	store     *eventStore
 	db        *pebble.DB
-	dataCh    *chann.UnlimitedChannel[kvEvents]
+	dataCh    *chann.UnlimitedChannel[kvEvent, uint64]
 	workerNum int
 }
 
-func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[kvEvents], workerNum int) *writeTaskPool {
+func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[kvEvent, uint64], workerNum int) *writeTaskPool {
 	return &writeTaskPool{
 		store:     store,
 		db:        db,
@@ -317,18 +316,23 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			batch := make([]kvEvents, 0, 4096)
+			buffer := make([]kvEvent, 0, 8192)
 			for {
-				events, ok := p.dataCh.GetMultiple(batch)
+				events, ok := p.dataCh.GetMultiple(buffer)
 				if !ok {
 					return
 				}
-				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(len(events)))
+				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(len(buffer)))
 				p.store.writeEvents(p.db, events)
-				for _, event := range events {
-					p.store.wakeSubscription(event.subID)
+				prevSubID := logpuller.InvalidSubscriptionID
+				for i := range events {
+					// wake once for every subscription. otherwise there may be new events between two wakeups.
+					if events[i].subID != prevSubID {
+						p.store.wakeSubscription(events[i].subID)
+						prevSubID = events[i].subID
+					}
 				}
-				batch = batch[:0]
+				buffer = buffer[:0]
 			}
 		}()
 	}
@@ -697,22 +701,18 @@ func (e *eventStore) updateMetricsOnce() {
 	metricEventStoreDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 }
 
-func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvents) error {
+func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvent) error {
 	metrics.EventStoreWriteRequestsCount.Inc()
 	batch := db.NewBatch()
-	for _, kvEvents := range events {
-		items := kvEvents.kvs
-		subID := uint64(kvEvents.subID)
-		tableID := kvEvents.tableID
-		for _, item := range items {
-			key := EncodeKey(subID, tableID, item)
-			value := item.Encode()
-			compressedValue := e.encoder.EncodeAll(value, nil)
-			ratio := float64(len(value)) / float64(len(compressedValue))
-			metrics.EventStoreCompressRatio.Set(ratio)
-			if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
-				log.Panic("failed to update pebble batch", zap.Error(err))
-			}
+	for _, event := range events {
+		item := event.raw
+		key := EncodeKey(uint64(event.subID), event.tableID, item)
+		value := item.Encode()
+		compressedValue := e.encoder.EncodeAll(value, nil)
+		ratio := float64(len(value)) / float64(len(compressedValue))
+		metrics.EventStoreCompressRatio.Set(ratio)
+		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
+			log.Panic("failed to update pebble batch", zap.Error(err))
 		}
 	}
 	metrics.EventStoreWriteBatchSizeHist.Observe(float64(batch.Len()))

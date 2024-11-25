@@ -29,7 +29,7 @@ import (
 
 const (
 	resolvedTsCacheSize = 8192
-	streamCount         = 4
+	streamCount         = 8
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")

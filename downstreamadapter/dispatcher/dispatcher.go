@@ -30,6 +30,20 @@ import (
 	"go.uber.org/zap"
 )
 
+// EventDispatcher is the interface that responsible for receiving events from Event Service
+type EventDispatcher interface {
+	GetId() common.DispatcherID
+	GetStartTs() uint64
+	GetChangefeedID() common.ChangeFeedID
+	GetTableSpan() *heartbeatpb.TableSpan
+	GetFilterConfig() *eventpb.FilterConfig
+	EnableSyncPoint() bool
+	GetSyncPointInterval() time.Duration
+	GetResolvedTs() uint64
+	SetInitialTableInfo(tableInfo *common.TableInfo)
+	HandleEvents(events []DispatcherEvent, wakeCallback func()) (block bool)
+}
+
 /*
 Dispatcher is responsible for getting events from Event Service and sending them to Sink in appropriate order.
 Each dispatcher only deal with the events of one tableSpan in one changefeed.
