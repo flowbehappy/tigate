@@ -47,7 +47,7 @@ var (
 		Subsystem: "event_store",
 		Name:      "write_duration",
 		Help:      "Bucketed histogram of event store write duration",
-		Buckets:   prometheus.ExponentialBuckets(0.1, 2.0, 20),
+		Buckets:   prometheus.ExponentialBuckets(0.004, 2.0, 10),
 	})
 
 	EventStoreScanRequestsCount = prometheus.NewCounter(
@@ -114,7 +114,7 @@ var (
 			Subsystem: "event_store",
 			Name:      "write_batch_events_count",
 			Help:      "Batch event count histogram for write task pool.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
+			Buckets:   prometheus.ExponentialBuckets(8, 2, 10),
 		})
 
 	EventStoreWriteBatchSizeHist = prometheus.NewHistogram(
@@ -123,7 +123,7 @@ var (
 			Subsystem: "event_store",
 			Name:      "write_batch_size",
 			Help:      "Batch event size histogram for write task pool.",
-			Buckets:   prometheus.ExponentialBuckets(32, 2, 20),
+			Buckets:   prometheus.ExponentialBuckets(256, 2, 10),
 		})
 
 	EventStoreWriteRequestsCount = prometheus.NewCounter(
