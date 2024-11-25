@@ -173,8 +173,8 @@ type eventStore struct {
 
 const (
 	dataDir             = "event_store"
-	dbCount             = 4
-	writeWorkerNumPerDB = 32
+	dbCount             = 32
+	writeWorkerNumPerDB = 2
 	streamCount         = 8
 )
 
@@ -316,7 +316,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			batch := make([]kvEvents, 0, 4096)
+			batch := make([]kvEvents, 0, 8126)
 			for {
 				events, ok := p.dataCh.GetMultiple(batch)
 				if !ok {
