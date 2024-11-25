@@ -227,7 +227,7 @@ func New(
 
 	option := dynstream.NewOption()
 	option.InputBufferSize = 80000
-	option.BatchCount = 1024
+	option.BatchCount = 4096
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
@@ -315,7 +315,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			buffer := make([]kvEvent, 0, 10000)
+			buffer := make([]kvEvent, 0, 8192)
 			for {
 				events, ok := p.dataCh.GetMultiple(buffer)
 				if !ok {
