@@ -172,7 +172,7 @@ type eventStore struct {
 
 const (
 	dataDir             = "event_store"
-	dbCount             = 64
+	dbCount             = 32
 	writeWorkerNumPerDB = 2
 	streamCount         = 8
 )
@@ -226,7 +226,6 @@ func New(
 	}
 
 	option := dynstream.NewOption()
-	option.InputBufferSize = 80000
 	option.BatchCount = 4096
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
@@ -321,7 +320,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 				if !ok {
 					return
 				}
-				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(len(buffer)))
+				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(len(events)))
 				p.store.writeEvents(p.db, events)
 				prevSubID := logpuller.InvalidSubscriptionID
 				for i := range events {
