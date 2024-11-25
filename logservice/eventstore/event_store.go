@@ -172,7 +172,7 @@ type eventStore struct {
 
 const (
 	dataDir             = "event_store"
-	dbCount             = 64
+	dbCount             = 16
 	writeWorkerNumPerDB = 2
 	streamCount         = 8
 )
