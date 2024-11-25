@@ -33,7 +33,7 @@ func (h pathHasher) HashPath(path common.DispatcherID) uint64 {
 	return (common.GID)(path).FastHash()
 }
 
-func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
+func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, *dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
 	// option.InputBufferSize = 1000000 / streamCount
@@ -69,12 +69,12 @@ type EventsHandler struct {
 	eventCollector *EventCollector
 }
 
-func (h *EventsHandler) Path(event dispatcher.DispatcherEvent) common.DispatcherID {
+func (h *EventsHandler) Path(event *dispatcher.DispatcherEvent) common.DispatcherID {
 	return event.GetDispatcherID()
 }
 
 // Invariant: at any times, we can receive events from at most two event service, and one of them must be local event service.
-func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.DispatcherEvent) bool {
+func (h *EventsHandler) Handle(stat *DispatcherStat, events ...*dispatcher.DispatcherEvent) bool {
 	// do some check for safety
 	if len(events) == 0 {
 		return false
@@ -155,7 +155,7 @@ const (
 	DataGroupNotReusable     = 6
 )
 
-func (h *EventsHandler) GetType(event dispatcher.DispatcherEvent) dynstream.EventType {
+func (h *EventsHandler) GetType(event *dispatcher.DispatcherEvent) dynstream.EventType {
 	switch event.GetType() {
 	case commonEvent.TypeResolvedEvent:
 		return dynstream.EventType{DataGroup: DataGroupResolvedTsOrDML, Property: dynstream.PeriodicSignal}
@@ -177,19 +177,19 @@ func (h *EventsHandler) GetType(event dispatcher.DispatcherEvent) dynstream.Even
 	return dynstream.DefaultEventType
 }
 
-func (h *EventsHandler) GetSize(event dispatcher.DispatcherEvent) int { return int(event.GetSize()) }
+func (h *EventsHandler) GetSize(event *dispatcher.DispatcherEvent) int { return int(event.GetSize()) }
 
-func (h *EventsHandler) IsPaused(event dispatcher.DispatcherEvent) bool { return event.IsPaused() }
+func (h *EventsHandler) IsPaused(event *dispatcher.DispatcherEvent) bool { return event.IsPaused() }
 
 func (h *EventsHandler) GetArea(path common.DispatcherID, dest *DispatcherStat) common.GID {
 	return dest.target.GetChangefeedID().ID()
 }
 
-func (h *EventsHandler) GetTimestamp(event dispatcher.DispatcherEvent) dynstream.Timestamp {
+func (h *EventsHandler) GetTimestamp(event *dispatcher.DispatcherEvent) dynstream.Timestamp {
 	return dynstream.Timestamp(event.GetCommitTs())
 }
 
-func (h *EventsHandler) OnDrop(event dispatcher.DispatcherEvent) {
+func (h *EventsHandler) OnDrop(event *dispatcher.DispatcherEvent) {
 	if event.GetType() != commonEvent.TypeResolvedEvent {
 		// It is normal to drop resolved event
 		log.Info("event dropped",
