@@ -96,7 +96,8 @@ func (m *writeSplitter) split(
 		zap.Int("spans", len(splitInfo.Spans)),
 		zap.Int("totalCaptures", captureNum),
 		zap.Int("writeKeyThreshold", m.writeKeyThreshold),
-		zap.Int("spanRegionLimit", spanRegionLimit))
+		zap.Int("spanRegionLimit", spanRegionLimit),
+		zap.Uint64("baseSpansNum", uint64(spansNum)))
 
 	return splitInfo.Spans
 }
