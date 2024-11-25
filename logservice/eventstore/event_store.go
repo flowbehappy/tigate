@@ -50,6 +50,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var metricEventStoreDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-store")
+var metricEventStoreDSChannelSize = metrics.DynamicStreamEventChanSize.WithLabelValues("event-store")
+
 type ResolvedTsNotifier func(watermark uint64)
 
 type EventStore interface {
@@ -170,9 +173,9 @@ type eventStore struct {
 
 const (
 	dataDir             = "event_store"
-	dbCount             = 8
-	writeWorkerNumPerDB = 100
-	streamCount         = 4
+	dbCount             = 16
+	writeWorkerNumPerDB = 64
+	streamCount         = 16
 )
 
 type pathHasher struct {
@@ -224,7 +227,8 @@ func New(
 	}
 
 	option := dynstream.NewOption()
-	option.InputBufferSize = 102400
+	option.InputBufferSize = 80000
+	option.BatchCount = 40960
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
@@ -312,12 +316,13 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			batch := make([]kvEvents, 0, 100)
+			batch := make([]kvEvents, 0, 4096)
 			for {
 				events, ok := p.dataCh.GetMultiple(batch)
 				if !ok {
 					return
 				}
+				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(len(events)))
 				p.store.writeEvents(p.db, events)
 				for _, event := range events {
 					p.store.wakeSubscription(event.subID)
@@ -686,9 +691,13 @@ func (e *eventStore) updateMetricsOnce() {
 	minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
 	eventStoreResolvedTsLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
 	metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
+	dsMetrics := e.ds.GetMetrics()
+	metricEventStoreDSChannelSize.Set(float64(dsMetrics.EventChanSize))
+	metricEventStoreDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 }
 
 func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvents) error {
+	metrics.EventStoreWriteRequestsCount.Inc()
 	batch := db.NewBatch()
 	for _, kvEvents := range events {
 		items := kvEvents.kvs
@@ -705,8 +714,12 @@ func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvents) error {
 			}
 		}
 	}
+	metrics.EventStoreWriteBatchSizeHist.Observe(float64(batch.Len()))
 	metrics.EventStoreWriteBytes.Add(float64(batch.Len()))
-	return batch.Commit(pebble.NoSync)
+	start := time.Now()
+	err := batch.Commit(pebble.NoSync)
+	metrics.EventStoreWriteDurationHistogram.Observe(float64(time.Since(start).Milliseconds()))
+	return err
 }
 
 func (e *eventStore) deleteEvents(dbIndex int, uniqueKeyID uint64, tableID int64, startTs uint64, endTs uint64) error {

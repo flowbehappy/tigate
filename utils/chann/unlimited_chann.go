@@ -100,3 +100,9 @@ func (c *UnlimitedChannel[T]) GetMultiple(buffer []T) ([]T, bool) {
 
 	return buffer, true
 }
+
+func (c *UnlimitedChannel[T]) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.queue.Length()
+}

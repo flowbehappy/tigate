@@ -109,7 +109,8 @@ func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
 	log.Info("new block event is created",
 		zap.String("changefeedID", cfID.Name()),
 		zap.Uint64("block-ts", event.commitTs),
-		zap.Bool("sync-point", event.isSyncPoint))
+		zap.Bool("sync-point", event.isSyncPoint),
+		zap.Any("detail", status))
 	return event
 }
 
@@ -276,17 +277,22 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 	if time.Since(be.lastResendTime) < time.Second {
 		return nil
 	}
-	if time.Since(be.lastWarningLogTime) > time.Second*10 {
-		log.Warn("barrier event is not resolved",
-			zap.String("changefeed", be.cfID.Name()),
-			zap.Uint64("commitTs", be.commitTs),
-			zap.Bool("isSyncPoint", be.isSyncPoint),
-			zap.Bool("selected", be.selected),
-			zap.Bool("writerDispatcherAdvanced", be.writerDispatcherAdvanced),
-			zap.String("coverage", be.rangeChecker.Detail()),
-		)
-		be.lastWarningLogTime = time.Now()
-	}
+	var msgs []*messaging.TargetMessage
+	defer func() {
+		if time.Since(be.lastWarningLogTime) > time.Second*10 {
+			log.Warn("barrier event is not resolved",
+				zap.String("changefeed", be.cfID.Name()),
+				zap.Uint64("commitTs", be.commitTs),
+				zap.Bool("isSyncPoint", be.isSyncPoint),
+				zap.Bool("selected", be.selected),
+				zap.Bool("writerDispatcherAdvanced", be.writerDispatcherAdvanced),
+				zap.String("coverage", be.rangeChecker.Detail()),
+				zap.Any("resend", msgs),
+			)
+			be.lastWarningLogTime = time.Now()
+		}
+	}()
+
 	// still waiting for all dispatcher to reach the block commit ts
 	if !be.selected {
 		return nil
@@ -304,10 +310,12 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 			// todo: select a new writer
 			return nil
 		}
-		return []*messaging.TargetMessage{be.newWriterActionMessage(stm.GetNodeID())}
+		msgs = []*messaging.TargetMessage{be.newWriterActionMessage(stm.GetNodeID())}
+	} else {
+		// the writer dispatcher is advanced, resend pass action
+		msgs = be.sendPassAction()
 	}
-	// the writer dispatcher is advanced, resend pass action
-	return be.sendPassAction()
+	return msgs
 }
 
 func (be *BarrierEvent) newWriterActionMessage(capture node.ID) *messaging.TargetMessage {
