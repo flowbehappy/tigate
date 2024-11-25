@@ -26,6 +26,7 @@ func TestDMLEvent(t *testing.T) {
 	// Set the TableInfo before unmarshal, it is used in Unmarshal.
 	err = reverseEvent.Unmarshal(data)
 	require.NoError(t, err)
+	require.Equal(t, len(data), int(reverseEvent.GetSize()))
 	reverseEvent.AssembleRows(dmlEvent.TableInfo)
 	// Compare the content of the two event's rows.
 	require.Equal(t, dmlEvent.Rows.ToString(dmlEvent.TableInfo.GetFieldSlice()), reverseEvent.Rows.ToString(dmlEvent.TableInfo.GetFieldSlice()))
