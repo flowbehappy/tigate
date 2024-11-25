@@ -16,7 +16,6 @@ package eventstore
 import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/logservice/logpuller"
-	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/utils/dynstream"
 )
 
@@ -28,11 +27,11 @@ const (
 type eventsHandler struct {
 }
 
-func (h *eventsHandler) Path(event eventWithSubID) logpuller.SubscriptionID {
+func (h *eventsHandler) Path(event kvEvent) logpuller.SubscriptionID {
 	return event.subID
 }
 
-func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...eventWithSubID) bool {
+func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) bool {
 	if events[0].raw.IsResolved() {
 		if len(events) != 1 {
 			log.Panic("should not happen")
@@ -46,28 +45,23 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...eventWithSub
 		return false
 	}
 	subStat.maxEventCommitTs.Store(events[len(events)-1].raw.CRTs)
-	items := make([]*common.RawKVEntry, 0, len(events))
 	for _, e := range events {
-		items = append(items, e.raw)
+		e.tableID = subStat.tableID
 	}
-	subStat.eventCh.Push(kvEvents{
-		kvs:     items,
-		subID:   subStat.subID,
-		tableID: subStat.tableID,
-	})
+	subStat.eventCh.Push(events...)
 	return true
 }
 
-func (h *eventsHandler) GetSize(event eventWithSubID) int                                  { return 0 }
+func (h *eventsHandler) GetSize(event kvEvent) int                                         { return 0 }
 func (h *eventsHandler) GetArea(path logpuller.SubscriptionID, dest *subscriptionStat) int { return 0 }
-func (h *eventsHandler) GetTimestamp(event eventWithSubID) dynstream.Timestamp             { return 0 }
-func (h *eventsHandler) IsPaused(event eventWithSubID) bool                                { return false }
+func (h *eventsHandler) GetTimestamp(event kvEvent) dynstream.Timestamp                    { return 0 }
+func (h *eventsHandler) IsPaused(event kvEvent) bool                                       { return false }
 
-func (h *eventsHandler) GetType(event eventWithSubID) dynstream.EventType {
+func (h *eventsHandler) GetType(event kvEvent) dynstream.EventType {
 	if event.raw.IsResolved() {
 		return dynstream.EventType{DataGroup: DataGroupResolvedTs, Property: dynstream.PeriodicSignal}
 	}
 	return dynstream.EventType{DataGroup: DataGroupDML, Property: dynstream.BatchableData}
 }
 
-func (h *eventsHandler) OnDrop(event eventWithSubID) {}
+func (h *eventsHandler) OnDrop(event kvEvent) {}

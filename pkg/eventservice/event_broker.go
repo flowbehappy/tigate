@@ -29,7 +29,7 @@ import (
 
 const (
 	resolvedTsCacheSize = 8192
-	streamCount         = 4
+	streamCount         = 8
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -105,6 +105,7 @@ func newEventBroker(
 
 	option := dynstream.NewOption()
 	// option.InputBufferSize = 1024 * 1024 / streamCount // 1 Million
+	option.InputBufferSize = 100000
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
 	ds.Start()
 
