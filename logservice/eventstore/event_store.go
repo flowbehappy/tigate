@@ -130,7 +130,7 @@ type eventWithSubID struct {
 }
 
 type kvEvents struct {
-	kvs     []*common.RawKVEntry
+	kv      *common.RawKVEntry
 	subID   logpuller.SubscriptionID
 	tableID int64
 }
@@ -316,17 +316,13 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			buffer := make([]kvEvents, 0, 8126)
+			buffer := make([]kvEvents, 0, 100000)
 			for {
 				events, ok := p.dataCh.GetMultiple(buffer)
 				if !ok {
 					return
 				}
-				kvCount := 0
-				for _, e := range events {
-					kvCount += len(e.kvs)
-				}
-				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(kvCount))
+				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(len(buffer)))
 				p.store.writeEvents(p.db, events)
 				for _, event := range events {
 					p.store.wakeSubscription(event.subID)
@@ -704,18 +700,16 @@ func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvents) error {
 	metrics.EventStoreWriteRequestsCount.Inc()
 	batch := db.NewBatch()
 	for _, kvEvents := range events {
-		items := kvEvents.kvs
+		item := kvEvents.kv
 		subID := uint64(kvEvents.subID)
 		tableID := kvEvents.tableID
-		for _, item := range items {
-			key := EncodeKey(subID, tableID, item)
-			value := item.Encode()
-			compressedValue := e.encoder.EncodeAll(value, nil)
-			ratio := float64(len(value)) / float64(len(compressedValue))
-			metrics.EventStoreCompressRatio.Set(ratio)
-			if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
-				log.Panic("failed to update pebble batch", zap.Error(err))
-			}
+		key := EncodeKey(subID, tableID, item)
+		value := item.Encode()
+		compressedValue := e.encoder.EncodeAll(value, nil)
+		ratio := float64(len(value)) / float64(len(compressedValue))
+		metrics.EventStoreCompressRatio.Set(ratio)
+		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
+			log.Panic("failed to update pebble batch", zap.Error(err))
 		}
 	}
 	metrics.EventStoreWriteBatchSizeHist.Observe(float64(batch.Len()))

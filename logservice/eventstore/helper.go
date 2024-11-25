@@ -16,7 +16,6 @@ package eventstore
 import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/logservice/logpuller"
-	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/utils/dynstream"
 )
 
@@ -46,15 +45,13 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...eventWithSub
 		return false
 	}
 	subStat.maxEventCommitTs.Store(events[len(events)-1].raw.CRTs)
-	items := make([]*common.RawKVEntry, 0, len(events))
 	for _, e := range events {
-		items = append(items, e.raw)
+		subStat.eventCh.Push(kvEvents{
+			kv:      e.raw,
+			subID:   subStat.subID,
+			tableID: subStat.tableID,
+		})
 	}
-	subStat.eventCh.Push(kvEvents{
-		kvs:     items,
-		subID:   subStat.subID,
-		tableID: subStat.tableID,
-	})
 	return true
 }
 
