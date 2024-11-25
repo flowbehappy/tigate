@@ -18,7 +18,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/log"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"go.uber.org/zap"
 )
 
 // TableProgress maintains event timestamp information in the sink.
@@ -85,6 +87,7 @@ func (p *TableProgress) Remove(event commonEvent.Event) {
 		delete(p.elemMap, ts)
 	}
 	p.cumulateEventSize += event.GetSize()
+	log.Info("remove event from table progress", zap.Any("event", event), zap.Any("cumulateEventSize", p.cumulateEventSize), zap.Any("eventSize", event.GetSize()))
 }
 
 // Empty checks if the TableProgress is empty.
@@ -128,6 +131,7 @@ func (p *TableProgress) GetEventSizePerSecond() float32 {
 	p.rwMutex.RLock()
 	defer p.rwMutex.RUnlock()
 
+	log.Info("get event size per second", zap.Any("cumulateEventSize", p.cumulateEventSize), zap.Any("lastQueryTime", p.lastQueryTime))
 	eventSizePerSecond := float32(p.cumulateEventSize) / float32(time.Since(p.lastQueryTime).Seconds())
 	p.cumulateEventSize = 0
 	p.lastQueryTime = time.Now()

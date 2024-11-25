@@ -18,8 +18,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
+	"go.uber.org/zap"
 )
 
 const (
@@ -69,6 +71,7 @@ func (s *HotSpans) GetBatch(cache []*SpanReplication) []*SpanReplication {
 }
 
 func (s *HotSpans) UpdateHotSpan(span *SpanReplication, status *heartbeatpb.TableSpanStatus) {
+	log.Info("update hot span", zap.String("id", span.ID.String()), zap.Float32("writeSize", status.EventSizePerSecond))
 	if status.ComponentStatus != heartbeatpb.ComponentState_Working {
 		return
 	}
