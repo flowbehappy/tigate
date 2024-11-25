@@ -43,7 +43,7 @@ var (
 )
 
 type DispatcherRequest struct {
-	Dispatcher *dispatcher.Dispatcher
+	Dispatcher dispatcher.EventDispatcher
 	ActionType eventpb.ActionType
 	StartTs    uint64
 	OnlyUse    bool
@@ -136,7 +136,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 	return &eventCollector
 }
 
-func (c *EventCollector) AddDispatcher(target *dispatcher.Dispatcher, memoryQuota int) {
+func (c *EventCollector) AddDispatcher(target dispatcher.EventDispatcher, memoryQuota int) {
 	log.Info("add dispatcher", zap.Stringer("dispatcher", target.GetId()))
 	defer func() {
 		log.Info("add dispatcher done", zap.Stringer("dispatcher", target.GetId()))
@@ -381,7 +381,7 @@ func (c *EventCollector) updateResolvedTsMetric() {
 
 type DispatcherStat struct {
 	dispatcherID common.DispatcherID
-	target       *dispatcher.Dispatcher
+	target       dispatcher.EventDispatcher
 
 	eventServiceInfo struct {
 		sync.RWMutex
