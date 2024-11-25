@@ -717,7 +717,7 @@ func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvent) error {
 	metrics.EventStoreWriteBytes.Add(float64(batch.Len()))
 	start := time.Now()
 	err := batch.Commit(pebble.NoSync)
-	metrics.EventStoreWriteDurationHistogram.Observe(float64(time.Since(start).Milliseconds()))
+	metrics.EventStoreWriteDurationHistogram.Observe(float64(time.Since(start).Milliseconds()) / 1000)
 	return err
 }
 
