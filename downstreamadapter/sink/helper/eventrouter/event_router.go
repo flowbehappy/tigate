@@ -82,24 +82,22 @@ func (s *EventRouter) GetTopicForRowChange(tableInfo *common.TableInfo) string {
 
 // GetTopicForDDL returns the target topic for DDL.
 func (s *EventRouter) GetTopicForDDL(ddl *commonEvent.DDLEvent) string {
-	schema := ddl.SchemaName
-	table := ddl.TableName
+	var schema, table string
 
-	// TODO: fix this
-	//var schema, table string
-	// if ddl.PreTableInfo != nil {
-	// 	if ddl.PreTableInfo.TableName.Table == "" {
-	// 		return s.defaultTopic
-	// 	}
-	// 	schema = ddl.PreTableInfo.TableName.Schema
-	// 	table = ddl.PreTableInfo.TableName.Table
-	// } else {
-	// 	if ddl.TableInfo.TableName.Table == "" {
-	// 		return s.defaultTopic
-	// 	}
-	// 	schema = ddl.TableInfo.TableName.Schema
-	// 	table = ddl.TableInfo.TableName.Table
-	// }
+	// TODO:Add Test for all cases
+	if ddl.GetPrevSchemaName() != "" {
+		if ddl.GetPrevTableName() == "" {
+			return s.defaultTopic
+		}
+		schema = ddl.GetPrevSchemaName()
+		table = ddl.GetPrevTableName()
+	} else {
+		if ddl.GetCurrentTableName() == "" {
+			return s.defaultTopic
+		}
+		schema = ddl.GetCurrentSchemaName()
+		table = ddl.GetCurrentTableName()
+	}
 
 	topicGenerator := s.matchTopicGenerator(schema, table)
 	return topicGenerator.Substitute(schema, table)

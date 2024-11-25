@@ -138,6 +138,7 @@ func (d *DDLEvent) GetSubEvents() []DDLEvent {
 		}
 	case model.ActionCreateTables:
 		events := make([]DDLEvent, 0, len(d.TableNameChange.AddName))
+		// TODO: don't use ; to split query, please use parser
 		querys := strings.Split(d.Query, ";")
 		if len(querys) != len(d.TableNameChange.AddName) {
 			log.Panic("querys length should be equal to addName length", zap.String("query", d.Query), zap.Any("addName", d.TableNameChange.AddName))

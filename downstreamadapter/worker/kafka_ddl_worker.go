@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/sink/codec/encoder"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
+	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -109,31 +110,53 @@ func (w *KafkaDDLWorker) SetTableSchemaStore(tableSchemaStore *util.TableSchemaS
 }
 
 func (w *KafkaDDLWorker) WriteBlockEvent(event *event.DDLEvent) error {
-	message, err := w.encoder.EncodeDDLEvent(event)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	messages := make([]*ticommon.Message, 0)
+	topics := make([]string, 0)
 
-	topic := w.eventRouter.GetTopicForDDL(event)
-	partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if w.partitionRule == PartitionAll {
-		err = w.statistics.RecordDDLExecution(func() error {
-			return w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, message)
-		})
+	// Some ddl event may be multi-events, we need to split it into multiple messages.
+	// Such as rename table test.table1 to test.table10, test.table2 to test.table20
+	if event.IsMultiEvents() {
+		subEvents := event.GetSubEvents()
+		for _, subEvent := range subEvents {
+			message, err := w.encoder.EncodeDDLEvent(&subEvent)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			topic := w.eventRouter.GetTopicForDDL(&subEvent)
+			messages = append(messages, message)
+			topics = append(topics, topic)
+		}
+	} else {
+		message, err := w.encoder.EncodeDDLEvent(event)
 		if err != nil {
 			return errors.Trace(err)
 		}
-	} else {
-		err = w.statistics.RecordDDLExecution(func() error {
-			return w.producer.SyncSendMessage(w.ctx, topic, 0, message)
-		})
+		topic := w.eventRouter.GetTopicForDDL(event)
+		messages = append(messages, message)
+		topics = append(topics, topic)
+	}
 
+	for i, message := range messages {
+		topic := topics[i]
+		partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if w.partitionRule == PartitionAll {
+			err = w.statistics.RecordDDLExecution(func() error {
+				return w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, message)
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			err = w.statistics.RecordDDLExecution(func() error {
+				return w.producer.SyncSendMessage(w.ctx, topic, 0, message)
+			})
+
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
