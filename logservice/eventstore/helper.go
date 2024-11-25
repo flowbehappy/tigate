@@ -45,8 +45,8 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) boo
 		return false
 	}
 	subStat.maxEventCommitTs.Store(events[len(events)-1].raw.CRTs)
-	for _, e := range events {
-		e.tableID = subStat.tableID
+	for i := range events {
+		events[i].tableID = subStat.tableID
 	}
 	subStat.eventCh.Push(events...)
 	return true
