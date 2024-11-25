@@ -31,7 +31,7 @@ func NewUnlimitedChannelDefault[T any]() *UnlimitedChannel[T, any] {
 }
 
 // NewUnlimitedChannel creates a new UnlimitedChannel.
-// getGroup is a function that returns the group of the element belongs to.
+// grouper is a function that returns the group of the element belongs to.
 // sizer is a function that returns the number of bytes of the element, by default the bytes is 0.
 func NewUnlimitedChannel[T any, G Group](grouper Grouper[T, G], sizer Sizer[T]) *UnlimitedChannel[T, G] {
 	ch := &UnlimitedChannel[T, G]{
@@ -150,6 +150,7 @@ func (c *UnlimitedChannel[T, G]) GetMultiple(buffer []T, batchBytes ...int) ([]T
 				break
 			}
 			buffer = append(buffer, v)
+			bytes += getBytes(v)
 		}
 	}
 
