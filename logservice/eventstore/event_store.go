@@ -115,7 +115,7 @@ type subscriptionStat struct {
 
 	dbIndex int
 
-	eventCh *chann.UnlimitedChannel[kvEvent]
+	eventCh *chann.UnlimitedChannel[kvEvent, uint64]
 	// data <= checkpointTs can be deleted
 	checkpointTs atomic.Uint64
 	// the resolveTs persisted in the store
@@ -124,22 +124,21 @@ type subscriptionStat struct {
 	maxEventCommitTs atomic.Uint64
 }
 
-type eventWithSubID struct {
-	subID logpuller.SubscriptionID
-	raw   *common.RawKVEntry
-}
-
 type kvEvent struct {
-	kv      *common.RawKVEntry
+	raw     *common.RawKVEntry
 	subID   logpuller.SubscriptionID
 	tableID int64
 }
+
+func kvEventGrouper(e kvEvent) uint64 { return uint64(e.subID) }
+
+func kvEventSizer(_ kvEvent) int { return 0 }
 
 type eventStore struct {
 	pdClock pdutil.Clock
 
 	dbs            []*pebble.DB
-	chs            []*chann.UnlimitedChannel[kvEvent]
+	chs            []*chann.UnlimitedChannel[kvEvent, uint64]
 	writeTaskPools []*writeTaskPool
 
 	puller *logpuller.LogPuller
@@ -153,7 +152,7 @@ type eventStore struct {
 		id node.ID
 	}
 
-	ds dynstream.DynamicStream[int, logpuller.SubscriptionID, eventWithSubID, *subscriptionStat, *eventsHandler]
+	ds dynstream.DynamicStream[int, logpuller.SubscriptionID, kvEvent, *subscriptionStat, *eventsHandler]
 
 	// To manage background goroutines.
 	wg sync.WaitGroup
@@ -236,7 +235,7 @@ func New(
 		pdClock: pdClock,
 
 		dbs:            make([]*pebble.DB, 0, dbCount),
-		chs:            make([]*chann.UnlimitedChannel[kvEvent], 0, dbCount),
+		chs:            make([]*chann.UnlimitedChannel[kvEvent, uint64], 0, dbCount),
 		writeTaskPools: make([]*writeTaskPool, 0, dbCount),
 
 		ds: ds,
@@ -267,7 +266,7 @@ func New(
 			log.Fatal("open db failed", zap.Error(err))
 		}
 		store.dbs = append(store.dbs, db)
-		store.chs = append(store.chs, chann.NewUnlimitedChannel[kvEvent]())
+		store.chs = append(store.chs, chann.NewUnlimitedChannel[kvEvent, uint64](kvEventGrouper, kvEventSizer))
 		store.writeTaskPools = append(store.writeTaskPools, newWriteTaskPool(store, store.dbs[i], store.chs[i], writeWorkerNumPerDB))
 	}
 	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]*dispatcherStat)
@@ -278,9 +277,9 @@ func New(
 		if raw == nil {
 			log.Panic("should not happen: meet nil event")
 		}
-		store.ds.In(subID) <- eventWithSubID{
-			subID: subID,
+		store.ds.In(subID) <- kvEvent{
 			raw:   raw,
+			subID: subID,
 		}
 		return nil
 	}
@@ -298,11 +297,11 @@ func New(
 type writeTaskPool struct {
 	store     *eventStore
 	db        *pebble.DB
-	dataCh    *chann.UnlimitedChannel[kvEvent]
+	dataCh    *chann.UnlimitedChannel[kvEvent, uint64]
 	workerNum int
 }
 
-func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[kvEvent], workerNum int) *writeTaskPool {
+func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[kvEvent, uint64], workerNum int) *writeTaskPool {
 	return &writeTaskPool{
 		store:     store,
 		db:        db,
@@ -700,7 +699,7 @@ func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvent) error {
 	metrics.EventStoreWriteRequestsCount.Inc()
 	batch := db.NewBatch()
 	for _, event := range events {
-		item := event.kv
+		item := event.raw
 		key := EncodeKey(uint64(event.subID), event.tableID, item)
 		value := item.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)

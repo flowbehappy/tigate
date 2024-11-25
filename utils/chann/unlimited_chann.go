@@ -50,15 +50,17 @@ func (c *UnlimitedChannel[T, G]) Close() {
 	c.cond.Broadcast()
 }
 
-func (c *UnlimitedChannel[T, G]) Push(v T) {
+func (c *UnlimitedChannel[T, G]) Push(values ...T) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.closed {
 		panic("push to closed ulimited channel")
 	}
+	for _, v := range values {
+		c.queue.PushBack(v)
+	}
 
-	c.queue.PushBack(v)
 	c.cond.Signal()
 }
 
