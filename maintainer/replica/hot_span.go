@@ -14,6 +14,8 @@
 package replica
 
 import (
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/ticdc/heartbeatpb"
@@ -101,4 +103,18 @@ func (s *HotSpans) ClearHotSpans(span ...*SpanReplication) {
 	for _, span := range span {
 		delete(s.hotSpanCache, span.ID)
 	}
+}
+
+func (s *HotSpans) String() string {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	var res strings.Builder
+	for id, span := range s.hotSpanCache {
+		res.WriteString(id.String())
+		res.WriteString("->")
+		res.WriteString(strconv.Itoa(span.score))
+		res.WriteString("; ")
+	}
+	return res.String()
 }
