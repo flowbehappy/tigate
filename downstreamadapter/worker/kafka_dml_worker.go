@@ -73,7 +73,7 @@ type KafkaDMLWorker struct {
 }
 
 // NewKafkaWorker creates a dml flush worker for kafka
-func NewKafkaWorker(
+func NewKafkaDMLWorker(
 	ctx context.Context,
 	id common.ChangeFeedID,
 	protocol config.Protocol,
