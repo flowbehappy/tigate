@@ -82,6 +82,7 @@ type EventStore interface {
 
 type DMLEventState struct {
 	// ResolvedTs       uint64
+	// The max commit ts of dml event in the store.
 	MaxEventCommitTs uint64
 }
 
