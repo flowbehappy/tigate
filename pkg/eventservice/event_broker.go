@@ -104,9 +104,7 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	// option.InputBufferSize = 1024 * 1024 / streamCount // 1 Million
-	option.InputBufferSize = 100000
-	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
+	ds := dynstream.NewDynamicStream(&dispatcherEventsHandler{}, option)
 	ds.Start()
 
 	messageWorkerCount := runtime.NumCPU()
@@ -336,10 +334,13 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 
 	c.checkAndInitDispatcher(task)
 
+	// 1. Get the data range of the dispatcher.
 	dataRange, needScan := task.getDataRange()
 	if !needScan {
 		return false, dataRange
 	}
+
+	// 2. Constrain the data range by the ddl state of the table.
 	ddlState := c.schemaStore.GetTableDDLEventState(task.info.GetTableSpan().TableID)
 	if ddlState.ResolvedTs < dataRange.EndTs {
 		dataRange.EndTs = ddlState.ResolvedTs
@@ -354,6 +355,7 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	if !ok {
 		return false, dataRange
 	}
+
 	if dataRange.StartTs >= dmlState.MaxEventCommitTs && dataRange.StartTs >= ddlState.MaxEventCommitTs {
 		// The dispatcher has no new events. In such case, we don't need to scan the event store.
 		// We just send the watermark to the dispatcher.
@@ -704,14 +706,16 @@ func (c *eventBroker) close() {
 }
 
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
-	if d.onSubscriptionResolvedTs(resolvedTs) {
+	if d.onResolvedTs(resolvedTs) {
 		// Note: don't block the caller of this function.
 		// select {
 		// case c.ds.In(d.id) <- newScanTask(d):
 		// default:
 		// 	metricEventBrokerDropNotificationCount.Inc()
 		// }
-		c.ds.In(d.id) <- d
+		if needScan, _ := c.checkNeedScan(d); needScan {
+			c.ds.In(d.id) <- d
+		}
 	}
 }
 
@@ -859,7 +863,7 @@ type dispatcherStat struct {
 
 	// isRunning is used to indicate whether the dispatcher is running.
 	// It will be set to false, after it receives the pause event from the dispatcher.
-	// It will be set to true, after it receives the resume/reset event from the dispatcher.
+	// It will be set to true, after it receives the register/resume/reset event from the dispatcher.
 	isRunning atomic.Bool
 	// isInitialized is used to indicate whether the dispatcher is initialized.
 	// It will be set to true, after it sends the handshake event to the dispatcher.
@@ -918,14 +922,15 @@ func (a *dispatcherStat) updateTableInfo(tableInfo *common.TableInfo) {
 	a.startTableInfo.Store(tableInfo)
 }
 
-// onSubscriptionResolvedTs try to update the resolved ts of the table span and return whether the resolved ts has been updated.
-func (a *dispatcherStat) onSubscriptionResolvedTs(resolvedTs uint64) bool {
+// onResolvedTs try to update the resolved ts of the dispatcher.
+func (a *dispatcherStat) onResolvedTs(resolvedTs uint64) bool {
 	if resolvedTs < a.resolvedTs.Load() {
 		log.Panic("resolved ts should not fallback")
 	}
 	return util.CompareAndMonotonicIncrease(&a.resolvedTs, resolvedTs)
 }
 
+// getDataRange returns the the data range that the dispatcher needs to scan.
 func (a *dispatcherStat) getDataRange() (common.DataRange, bool) {
 	startTs := a.watermark.Load()
 	if startTs < a.resetTs.Load() {
