@@ -186,11 +186,10 @@ Mainly about the progress of each dispatcher:
 */
 type HeartBeatInfo struct {
 	heartbeatpb.Watermark
-	EventSizePerSecond float32
-	Id                 common.DispatcherID
-	TableSpan          *heartbeatpb.TableSpan
-	ComponentStatus    heartbeatpb.ComponentState
-	IsRemoving         bool
+	Id              common.DispatcherID
+	TableSpan       *heartbeatpb.TableSpan
+	ComponentStatus heartbeatpb.ComponentState
+	IsRemoving      bool
 }
 
 // Resend Task is reponsible for resending the TableSpanBlockStatus message with ddl info to maintainer each 50ms.

@@ -535,7 +535,7 @@ func (e *EventDispatcherManager) aggregateDispatcherHeartbeats(needCompleteStatu
 				ID:                 id.ToPB(),
 				ComponentStatus:    heartBeatInfo.ComponentStatus,
 				CheckpointTs:       heartBeatInfo.Watermark.CheckpointTs,
-				EventSizePerSecond: heartBeatInfo.EventSizePerSecond,
+				EventSizePerSecond: dispatcherItem.GetEventSizePerSecond(),
 			})
 			log.Info("collect status from dispatcher", zap.Any("dispatcher id", id), zap.Any("status", message.Statuses[len(message.Statuses)-1]))
 		}
