@@ -3001,7 +3001,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_event_store_dispatcher_resolved_ts_lag_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
+              "expr": "sum(increase(ticdc_event_store_dispatcher_resolved_ts_lag_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
               "format": "heatmap",
               "hide": false,
               "interval": "",
@@ -3795,7 +3795,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_event_store_write_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
+              "expr": "sum(increase(ticdc_event_store_write_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
               "format": "heatmap",
               "instant": false,
               "interval": "",
@@ -3865,7 +3865,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_event_store_write_batch_events_count_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
+              "expr": "sum(increase(ticdc_event_store_write_batch_events_count_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
               "format": "heatmap",
               "interval": "",
               "legendFormat": "{{le}}",
@@ -3935,7 +3935,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_event_store_write_batch_size_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
+              "expr": "sum(increase(ticdc_event_store_write_batch_size_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
               "format": "heatmap",
               "interval": "",
               "intervalFactor": 1,
@@ -17916,7 +17916,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_sorter_db_write_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
+              "expr": "sum(increase(ticdc_sorter_db_write_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
               "format": "heatmap",
               "instant": false,
               "interval": "",
@@ -27761,7 +27761,7 @@
       "type": "row"
     }
   ],
-  "refresh": "5s",
+  "refresh": "10s",
   "schemaVersion": 27,
   "style": "dark",
   "tags": [],
