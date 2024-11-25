@@ -73,6 +73,8 @@ var subscriptionIDGen atomic.Uint64
 // It is used as `RequestId` in region requests to remote store.
 type SubscriptionID uint64
 
+const InvalidSubscriptionID SubscriptionID = 0
+
 // regionFeedEvent from the kv layer.
 type regionFeedEvent struct {
 	// TODO: every resolve ts event may allocate a common.RawKVEntry, is it memory consuming?
