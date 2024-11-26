@@ -426,8 +426,7 @@ func (d *DispatcherStat) checkEventSeq(event dispatcher.DispatcherEvent, eventCo
 				zap.Stringer("dispatcher", d.target.GetId()),
 				zap.Uint64("receivedSeq", event.GetSeq()),
 				zap.Uint64("expectedSeq", expectedSeq),
-				zap.Uint64("commitTs", event.GetCommitTs()),
-				zap.Any("event", event))
+				zap.Uint64("commitTs", event.GetCommitTs()))
 			d.reset()
 			eventCollector.addDispatcherRequestToSendingQueue(d.eventServiceInfo.serverID, eventServiceTopic, DispatcherRequest{
 				Dispatcher: d.target,
@@ -453,8 +452,7 @@ func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent,
 	if d.waitHandshake.Load() {
 		log.Warn("Receive event before handshake event, ignore it",
 			zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
-			zap.Stringer("dispatcher", d.target.GetId()),
-			zap.Any("event", event))
+			zap.Stringer("dispatcher", d.target.GetId()))
 		return true
 	}
 	if !d.checkEventSeq(event, eventCollector) {
@@ -467,8 +465,7 @@ func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent,
 		log.Warn("Receive resolved event before sendCommitTs, ignore it",
 			zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
 			zap.Stringer("dispatcher", d.target.GetId()),
-			zap.Uint64("sendCommitTs", d.sendCommitTs.Load()),
-			zap.Any("event", event))
+			zap.Uint64("sendCommitTs", d.sendCommitTs.Load()))
 		return true
 	}
 	d.sendCommitTs.Store(event.GetCommitTs())

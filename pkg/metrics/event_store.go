@@ -87,8 +87,8 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_store",
-			Name:      "max_resolved_ts_lag",
-			Help:      "The max resolved ts lag of event store.",
+			Name:      "resolved_ts_lag",
+			Help:      "The resolved ts lag of event store.",
 		})
 
 	EventStoreDispatcherWatermarkLagHist = prometheus.NewHistogram(
@@ -114,7 +114,7 @@ var (
 			Subsystem: "event_store",
 			Name:      "write_batch_events_count",
 			Help:      "Batch event count histogram for write task pool.",
-			Buckets:   prometheus.ExponentialBuckets(8, 2, 10),
+			Buckets:   prometheus.ExponentialBuckets(8, 2, 20),
 		})
 
 	EventStoreWriteBatchSizeHist = prometheus.NewHistogram(
@@ -123,7 +123,7 @@ var (
 			Subsystem: "event_store",
 			Name:      "write_batch_size",
 			Help:      "Batch event size histogram for write task pool.",
-			Buckets:   prometheus.ExponentialBuckets(256, 2, 10),
+			Buckets:   prometheus.ExponentialBuckets(32, 2, 20),
 		})
 
 	EventStoreWriteRequestsCount = prometheus.NewCounter(
