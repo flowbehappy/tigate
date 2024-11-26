@@ -25,6 +25,8 @@ import (
 const (
 	HotSpanWriteThreshold = 1024 * 1024 // 1MB per second
 	HotSpanScoreThreshold = 10
+
+	// TODO: use the imbalance threshold to calculate the score.
 )
 
 type HotSpans struct {

@@ -72,7 +72,7 @@ func (s *splitScheduler) Execute() time.Time {
 		return s.lastCheckTime.Add(s.checkInterval)
 	}
 
-	log.Info("start check split status", zap.String("changefeed", s.changefeedID.Name()),
+	log.Info("check split status", zap.String("changefeed", s.changefeedID.Name()),
 		zap.Stringer("hotSpans", s.hotSpans))
 
 	cachedSpans := s.hotSpans.GetBatch(s.cachedSpans)
