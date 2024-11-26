@@ -557,7 +557,4 @@ func (db *ReplicationDB) putDDLDispatcher(ddlSpan *SpanReplication) {
 	db.schemaTasks[ddlSpan.schemaID] = map[common.DispatcherID]*SpanReplication{
 		ddlSpan.ID: ddlSpan,
 	}
-	db.nodeTasks[ddlSpan.GetNodeID()] = map[common.DispatcherID]*SpanReplication{
-		ddlSpan.ID: ddlSpan,
-	}
 }

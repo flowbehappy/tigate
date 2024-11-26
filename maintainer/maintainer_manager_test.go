@@ -43,7 +43,7 @@ import (
 func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
-	selfNode := node.NewInfo("127.0.0.1:8300", "")
+	selfNode := node.NewInfo("127.0.0.1:18300", "")
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
@@ -196,7 +196,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
-	selfNode := node.NewInfo("127.0.0.1:8300", "")
+	selfNode := node.NewInfo("127.0.0.1:18300", "")
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode

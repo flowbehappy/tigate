@@ -228,7 +228,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	mux.Handle("/metrics", promhttp.Handler())
 	go func() {
-		t.Fatal(http.ListenAndServe(":8300", mux))
+		t.Fatal(http.ListenAndServe(":18300", mux))
 	}()
 
 	if !flag.Parsed() {

@@ -122,7 +122,7 @@ func (s *HotSpans) String() string {
 	var res strings.Builder
 	for i := 1; i < 10; i++ {
 		res.WriteString("score ")
-		res.WriteString(string(i + '0'))
+		res.WriteString(string('0' + i))
 		res.WriteString("->")
 		res.WriteString(strconv.Itoa(cnt[i]))
 		res.WriteString("; ")
