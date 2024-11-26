@@ -86,7 +86,7 @@ func (m *writeSplitter) split(
 		return []*heartbeatpb.TableSpan{span}
 	}
 
-	splitInfo := m.splitRegionsByWrittenKeysV1(span.TableID, regions, spansNum)
+	splitInfo := m.splitRegionsByWrittenKeysV1(span.TableID, regions, spansNum, maxSpanNumber)
 	log.Info("split span by written keys",
 		zap.String("namespace", m.changefeedID.Namespace()),
 		zap.String("changefeed", m.changefeedID.Name()),
@@ -122,6 +122,7 @@ func (m *writeSplitter) splitRegionsByWrittenKeysV1(
 	tableID int64,
 	regions []pdutil.RegionInfo,
 	baseSpansNum int,
+	batch int,
 ) *splitRegionsInfo {
 	decodeKey := func(hexkey string) []byte {
 		key, _ := hex.DecodeString(hexkey)
@@ -149,25 +150,28 @@ func (m *writeSplitter) splitRegionsByWrittenKeysV1(
 		}
 	}
 
-	// calc the spansNum by totalWriteNormalized and writeKeyThreshold?
+	if m.writeKeyThreshold > 0 {
+		baseSpansNum = max(baseSpansNum, int(totalWriteNormalized)/m.writeKeyThreshold)
+	}
+	spansNum := min(batch, baseSpansNum)
 
 	// 2. Calculate the writeLimitPerSpan, if one span's write is larger that
 	// this number, we should create a new span.
-	writeLimitPerSpan := totalWriteNormalized / uint64(baseSpansNum)
+	writeLimitPerSpan := totalWriteNormalized / uint64(spansNum)
 
 	// The result of this method
 	var (
-		regionCounts = make([]int, 0, baseSpansNum)
-		writeKeys    = make([]uint64, 0, baseSpansNum)
-		weights      = make([]uint64, 0, baseSpansNum)
-		spans        = make([]*heartbeatpb.TableSpan, 0, baseSpansNum)
+		regionCounts = make([]int, 0, spansNum)
+		writeKeys    = make([]uint64, 0, spansNum)
+		weights      = make([]uint64, 0, spansNum)
+		spans        = make([]*heartbeatpb.TableSpan, 0, spansNum)
 	)
 
 	// Temp variables used in the loop
 	var (
 		spanWriteWeight = uint64(0)
 		spanStartIndex  = 0
-		restSpans       = baseSpansNum
+		restSpans       = spansNum
 		regionCount     = 0
 		restWeight      = int64(totalWriteNormalized)
 	)

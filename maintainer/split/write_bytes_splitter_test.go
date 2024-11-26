@@ -60,14 +60,14 @@ func TestSplitRegionsByWrittenKeysUniform(t *testing.T) {
 	regions, startKeys, endKeys := prepareRegionsInfo(
 		[]int{100, 100, 100, 100, 100, 100, 100}) // region id: [2,3,4,5,6,7,8]
 	splitter := newWriteSplitter(cfID, nil, 0)
-	info := splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), 1)
+	info := splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), 1, 1)
 	re.Len(info.RegionCounts, 1)
 	re.EqualValues(7, info.RegionCounts[0])
 	re.Len(info.Spans, 1)
 	re.EqualValues(startKeys[2], info.Spans[0].StartKey)
 	re.EqualValues(endKeys[8], info.Spans[0].EndKey)
 
-	info = splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), 2) // [2,3,4,5], [6,7,8]
+	info = splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), 2, 2) // [2,3,4,5], [6,7,8]
 	re.Len(info.RegionCounts, 2)
 	re.EqualValues(4, info.RegionCounts[0])
 	re.EqualValues(3, info.RegionCounts[1])
@@ -80,7 +80,7 @@ func TestSplitRegionsByWrittenKeysUniform(t *testing.T) {
 	re.EqualValues(startKeys[6], info.Spans[1].StartKey)
 	re.EqualValues(endKeys[8], info.Spans[1].EndKey)
 
-	info = splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), 3) // [2,3,4], [5,6,7], [8]
+	info = splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), 3, 3) // [2,3,4], [5,6,7], [8]
 	re.Len(info.RegionCounts, 3)
 	re.EqualValues(3, info.RegionCounts[0])
 	re.EqualValues(3, info.RegionCounts[1])
@@ -99,7 +99,7 @@ func TestSplitRegionsByWrittenKeysUniform(t *testing.T) {
 
 	// spans > regions
 	for p := 7; p <= 10; p++ {
-		info = splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), p)
+		info = splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), p, p)
 		re.Len(info.RegionCounts, 7)
 		for _, c := range info.RegionCounts {
 			re.EqualValues(1, c)
@@ -125,7 +125,7 @@ func TestSplitRegionsByWrittenKeysHotspot1(t *testing.T) {
 	regions, startKeys, endKeys := prepareRegionsInfo(
 		[]int{100, 1, 100, 1, 1, 1, 100})
 	splitter := newWriteSplitter(cfID, nil, 4)
-	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 4) // [2], [3,4], [5,6,7], [8]
+	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 4, 4) // [2], [3,4], [5,6,7], [8]
 	re.Len(info.RegionCounts, 4)
 	re.EqualValues(1, info.RegionCounts[0])
 	re.EqualValues(2, info.RegionCounts[1])
@@ -156,7 +156,7 @@ func TestSplitRegionsByWrittenKeysHotspot2(t *testing.T) {
 	regions, startKeys, endKeys := prepareRegionsInfo(
 		[]int{1000, 1, 1, 1, 100, 1, 99})
 	splitter := newWriteSplitter(cfID, nil, 4)
-	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 4) // [2], [3,4,5,6], [7], [8]
+	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 4, 4) // [2], [3,4,5,6], [7], [8]
 	re.Len(info.Spans, 4)
 	re.EqualValues(startKeys[2], info.Spans[0].StartKey)
 	re.EqualValues(endKeys[2], info.Spans[0].EndKey)
@@ -176,7 +176,7 @@ func TestSplitRegionsByWrittenKeysCold(t *testing.T) {
 	baseSpanNum := getSpansNumber(2, 1)
 	require.Equal(t, 3, baseSpanNum)
 	regions, startKeys, endKeys := prepareRegionsInfo(make([]int, 7))
-	info := splitter.splitRegionsByWrittenKeysV1(0, regions, baseSpanNum) // [2,3,4], [5,6,7], [8]
+	info := splitter.splitRegionsByWrittenKeysV1(0, regions, baseSpanNum, baseSpanNum) // [2,3,4], [5,6,7], [8]
 	re.Len(info.RegionCounts, 3)
 	re.EqualValues(3, info.RegionCounts[0], info)
 	re.EqualValues(3, info.RegionCounts[1])
@@ -202,7 +202,7 @@ func TestNotSplitRegionsByWrittenKeysCold(t *testing.T) {
 	baseSpanNum := getSpansNumber(2, 1)
 	require.Equal(t, 3, baseSpanNum)
 	regions, startKeys, endKeys := prepareRegionsInfo(make([]int, 7))
-	info := splitter.splitRegionsByWrittenKeysV1(0, regions, baseSpanNum) // [2,3,4,5,6,7,8]
+	info := splitter.splitRegionsByWrittenKeysV1(0, regions, baseSpanNum, baseSpanNum) // [2,3,4,5,6,7,8]
 	re.Len(info.RegionCounts, 1)
 	re.EqualValues(7, info.RegionCounts[0], info)
 	re.Len(info.Weights, 1)
@@ -219,7 +219,7 @@ func TestSplitRegionsByWrittenKeysConfig(t *testing.T) {
 	cfID := common.NewChangeFeedIDWithName("test")
 	splitter := newWriteSplitter(cfID, nil, math.MaxInt)
 	regions, startKeys, endKeys := prepareRegionsInfo([]int{1, 1, 1, 1, 1, 1, 1})
-	info := splitter.splitRegionsByWrittenKeysV1(1, regions, 3) // [2,3,4,5,6,7,8]
+	info := splitter.splitRegionsByWrittenKeysV1(1, regions, 3, 3) // [2,3,4,5,6,7,8]
 	re.Len(info.RegionCounts, 1)
 	re.EqualValues(7, info.RegionCounts[0], info)
 	re.Len(info.Weights, 1)
@@ -248,7 +248,7 @@ func TestSplitRegionEven(t *testing.T) {
 	}
 	cfID := common.NewChangeFeedIDWithName("test")
 	splitter := newWriteSplitter(cfID, nil, 4)
-	info := splitter.splitRegionsByWrittenKeysV1(tblID, regions, 5)
+	info := splitter.splitRegionsByWrittenKeysV1(tblID, regions, 5, 5)
 	require.Len(t, info.RegionCounts, 5)
 	require.Len(t, info.Weights, 5)
 	for i, w := range info.Weights {
@@ -270,7 +270,7 @@ func TestSpanRegionLimitBase(t *testing.T) {
 	}
 	captureNum := 2
 	spanNum := getSpansNumber(len(regions), captureNum)
-	info := splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), spanNum)
+	info := splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), spanNum, spanNum)
 	require.Len(t, info.RegionCounts, spanNum)
 	for _, c := range info.RegionCounts {
 		require.LessOrEqual(t, float64(c), spanRegionLimit*1.1)
@@ -342,7 +342,7 @@ func TestSpanRegionLimit(t *testing.T) {
 	}
 	captureNum := 3
 	spanNum := getSpansNumber(len(regions), captureNum)
-	info := splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), spanNum)
+	info := splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), spanNum, spanNum)
 	require.LessOrEqual(t, spanNum, len(info.RegionCounts))
 	for _, c := range info.RegionCounts {
 		require.LessOrEqual(t, float64(c), spanRegionLimit*1.1)
