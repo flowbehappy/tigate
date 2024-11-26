@@ -9,11 +9,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/log"
 	. "github.com/pingcap/ticdc/pkg/apperror"
 	. "github.com/pingcap/ticdc/utils"
 	"github.com/pingcap/ticdc/utils/deque"
-	"go.uber.org/zap"
 )
 
 const TrackTopPaths = 16
@@ -291,7 +289,6 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings Area
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
-	log.Info("ds get metrics", zap.Uint64("minHandledTS", d._statMinHandledTS.Load()), zap.Uint64("batchCount", uint64(d.option.BatchCount)))
 	return Metrics{
 		EventChanSize:   int(d.bufferCount.Load()) + len(d.inChan) + len(d.outChan),
 		PendingQueueLen: int(d._statAllStreamPendingLen.Load()),
@@ -758,13 +755,11 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			for _, si := range d.streamInfos {
 				allStreamPendingLen += si.stream.getPendingSize()
 				handledTs := si.stream._statMinHandledTS.Load()
-				log.Info("statTicker", zap.Uint64("handledTs", handledTs), zap.Uint64("batchCount", uint64(d.option.BatchCount)))
 				if minHandledTS == 0 || (minHandledTS > handledTs && handledTs != 0) {
 					minHandledTS = handledTs
 				}
 			}
 			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
-			log.Info("statTicker result", zap.Uint64("minHandledTS", minHandledTS), zap.Uint64("batchCount", uint64(d.option.BatchCount)))
 			d._statMinHandledTS.Store(minHandledTS)
 		}
 	}
