@@ -763,6 +763,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				}
 			}
 			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
+			log.Info("statTicker result", zap.Uint64("minHandledTS", minHandledTS))
 			d._statMinHandledTS.Store(minHandledTS)
 		}
 	}
