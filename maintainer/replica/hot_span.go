@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -25,6 +26,7 @@ import (
 const (
 	HotSpanWriteThreshold = 1024 * 1024 // 1MB per second
 	HotSpanScoreThreshold = 10
+	clearTimeout          = 300 // seconds
 
 	// TODO: use the imbalance threshold to calculate the score.
 )
@@ -39,7 +41,8 @@ type hotSpan struct {
 	// A span that continuously writes more than hotSpanWriteThreshold for
 	// hotSpanScoreThreshold times will be considered a hot span.
 	// TODO: use more flexible and efficient strategy to calculate the score.
-	score int
+	score          int
+	lastUpdateTime time.Time
 }
 
 func NewHotSpans() *HotSpans {
@@ -58,15 +61,18 @@ func (s *HotSpans) GetBatch(cache []*SpanReplication) []*SpanReplication {
 
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	outdatedSpans := make([]*SpanReplication, 0)
 	for _, span := range s.hotSpanCache {
-		if span.score < HotSpanScoreThreshold {
-			continue
-		}
-		cache = append(cache, span.SpanReplication)
-		if len(cache) >= batchSize {
-			break
+		if time.Since(span.lastUpdateTime) > clearTimeout*time.Second {
+			outdatedSpans = append(outdatedSpans, span.SpanReplication)
+		} else if span.score < HotSpanScoreThreshold {
+			cache = append(cache, span.SpanReplication)
+			if len(cache) >= batchSize {
+				break
+			}
 		}
 	}
+	s.doClear(outdatedSpans...)
 	return cache
 }
 
@@ -98,11 +104,14 @@ func (s *HotSpans) UpdateHotSpan(span *SpanReplication, status *heartbeatpb.Tabl
 	}
 }
 
-func (s *HotSpans) ClearHotSpans(span ...*SpanReplication) {
+func (s *HotSpans) ClearHotSpans(spans ...*SpanReplication) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	s.doClear(spans...)
+}
 
-	for _, span := range span {
+func (s *HotSpans) doClear(spans ...*SpanReplication) {
+	for _, span := range spans {
 		delete(s.hotSpanCache, span.ID)
 	}
 }
@@ -120,11 +129,11 @@ func (s *HotSpans) String() string {
 		cnt[span.score]++
 	}
 	var res strings.Builder
-	for i := 1; i < 10; i++ {
+	for i := 1; i <= 10; i++ {
 		res.WriteString("score ")
-		res.WriteString(string('0' + i))
+		res.WriteString(strconv.Itoa(i))
 		res.WriteString("->")
-		res.WriteString(strconv.Itoa(cnt[i]))
+		res.WriteString(strconv.Itoa(cnt[i-1]))
 		res.WriteString("; ")
 	}
 	return res.String()
