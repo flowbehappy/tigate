@@ -280,6 +280,7 @@ func New(
 	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]*dispatcherStat)
 	store.dispatcherMeta.subscriptionStats = make(map[logpuller.SubscriptionID]*subscriptionStat)
 	store.dispatcherMeta.tableToDispatchers = make(map[int64]map[common.DispatcherID]bool)
+	store.dispatcherMeta.resolvedTsHeap = heap.NewHeap[*resolvedTsItem]()
 
 	consume := func(ctx context.Context, raw *common.RawKVEntry, subID logpuller.SubscriptionID) error {
 		if raw == nil {
