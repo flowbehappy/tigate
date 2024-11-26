@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/eventrouter"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/topicmanager"
+	"github.com/pingcap/ticdc/downstreamadapter/worker/producer"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/common/columnselector"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/codec"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/cdc/sink/dmlsink/mq/dmlproducer"
 	"go.uber.org/zap"
 )
 
@@ -62,7 +62,7 @@ type KafkaDMLWorker struct {
 	encoderGroup codec.EncoderGroup
 
 	// producer is used to send the messages to the Kafka broker.
-	producer dmlproducer.DMLProducer
+	producer producer.DMLProducer
 
 	// statistics is used to record DML metrics.
 	statistics *metrics.Statistics
@@ -77,7 +77,7 @@ func NewKafkaDMLWorker(
 	ctx context.Context,
 	id common.ChangeFeedID,
 	protocol config.Protocol,
-	producer dmlproducer.DMLProducer,
+	producer producer.DMLProducer,
 	encoderGroup codec.EncoderGroup,
 	columnSelector *columnselector.ColumnSelectors,
 	eventRouter *eventrouter.EventRouter,
@@ -105,6 +105,10 @@ func NewKafkaDMLWorker(
 }
 
 func (w *KafkaDMLWorker) Run() {
+	w.errGroup.Go(func() error {
+		return w.producer.Run(w.ctx)
+	})
+
 	w.errGroup.Go(func() error {
 		return w.calculateKeyPartitions()
 	})

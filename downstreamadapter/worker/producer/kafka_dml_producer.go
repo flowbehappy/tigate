@@ -26,6 +26,17 @@ import (
 	"go.uber.org/zap"
 )
 
+// DMLProducer is the interface for message producer.
+type DMLProducer interface {
+	// AsyncSendMessage sends a message asynchronously.
+	AsyncSendMessage(
+		ctx context.Context, topic string, partition int32, message *common.Message,
+	) error
+	Run() error
+	// Close closes the producer and client(s).
+	Close()
+}
+
 // kafkaDMLProducer is used to send messages to kafka.
 type KafkaDMLProducer struct {
 	// id indicates which processor (changefeed) this sink belongs to.
@@ -40,7 +51,7 @@ type KafkaDMLProducer struct {
 	// closed is used to indicate whether the producer is closed.
 	// We also use it to guard against double closes.
 	closed bool
-
+	ctx    context.Context
 	cancel context.CancelFunc
 }
 
@@ -59,6 +70,7 @@ func NewKafkaDMLProducer(
 
 	ctx, cancel := context.WithCancel(ctx)
 	k := &KafkaDMLProducer{
+		ctx:              ctx,
 		id:               changefeedID,
 		asyncProducer:    asyncProducer,
 		metricsCollector: metricsCollector,
@@ -69,26 +81,15 @@ func NewKafkaDMLProducer(
 	// Start collecting metrics.
 	go k.metricsCollector.Run(ctx)
 
-	go func() {
-		if err := k.run(ctx); err != nil && errors.Cause(err) != context.Canceled {
-			select {
-			case <-ctx.Done():
-				return
-			// case errCh <- err:
-			// 	log.Error("Kafka DML producer run error",
-			// 		zap.String("namespace", k.id.Namespace),
-			// 		zap.String("changefeed", k.id.ID),
-			// 		zap.Error(err))
-			default:
-				log.Error("Error channel is full in kafka DML producer",
-					zap.String("namespace", namespace),
-					zap.String("changefeed", changefeedName),
-					zap.Error(err))
-			}
-		}
-	}()
-
 	return k
+}
+
+func (k *KafkaDMLProducer) Run() error {
+	err := k.asyncProducer.AsyncRunCallback(k.ctx)
+	if err != nil && errors.Cause(err) != context.Canceled {
+		return err
+	}
+	return nil
 }
 
 func (k *KafkaDMLProducer) AsyncSendMessage(
@@ -124,12 +125,6 @@ func (k *KafkaDMLProducer) Close() {
 		k.cancel()
 	}
 
-	// close(k.failpointCh)
-
 	k.asyncProducer.Close()
 	k.closed = true
-}
-
-func (k *KafkaDMLProducer) run(ctx context.Context) error {
-	return k.asyncProducer.AsyncRunCallback(ctx)
 }

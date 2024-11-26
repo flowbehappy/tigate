@@ -139,7 +139,7 @@ jobs:
           cd ../dispatcher
           go test --tags=intest
           cd ../worker
-          go test --tags=intest
+          go test ./... --tags=intest
 
   maintainer_unit_test:
     runs-on: ubuntu-latest 
