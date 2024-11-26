@@ -113,6 +113,10 @@ func (p *LogPuller) updateMetrics(ctx context.Context) error {
 			if resolvedTsLag > 0 {
 				metrics.LogPullerResolvedTsLag.Set(resolvedTsLag)
 			}
+			resolvedTsLag2 := p.client.GetResolvedTsLag2()
+			if resolvedTsLag > 0 {
+				metrics.LogPullerResolvedTsLag2.Set(resolvedTsLag2)
+			}
 		}
 	}
 }
