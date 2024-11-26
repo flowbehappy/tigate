@@ -15,6 +15,7 @@ package logpuller
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -131,6 +132,8 @@ type subscribedSpan struct {
 	// To handle stale lock resolvings.
 	tryResolveLock     func(regionID uint64, state *regionlock.LockedRangeState)
 	staleLocksTargetTs atomic.Uint64
+
+	advanceInterval int64
 
 	lastAdvanceTime atomic.Int64
 	// This is used to calculate the resolvedTs lag for metrics.
@@ -815,10 +818,11 @@ func (s *SubscriptionClient) newSubscribedSpan(
 	rangeLock := regionlock.NewRangeLock(uint64(subID), span.StartKey, span.EndKey, startTs)
 
 	rt := &subscribedSpan{
-		subID:     subID,
-		span:      span,
-		startTs:   startTs,
-		rangeLock: rangeLock,
+		subID:           subID,
+		span:            span,
+		startTs:         startTs,
+		rangeLock:       rangeLock,
+		advanceInterval: int64(s.config.AdvanceResolvedTsIntervalInMs)/2 + int64(rand.Intn(int(s.config.AdvanceResolvedTsIntervalInMs))),
 	}
 	rt.resolvedTs.Store(startTs)
 

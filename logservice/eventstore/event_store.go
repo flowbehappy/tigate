@@ -201,7 +201,7 @@ func New(
 	clientConfig := &logpuller.SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:   16,
 		ChangeEventProcessorNum:       64,
-		AdvanceResolvedTsIntervalInMs: 600,
+		AdvanceResolvedTsIntervalInMs: 800,
 	}
 	client := logpuller.NewSubscriptionClient(
 		logpuller.ClientIDEventStore,
