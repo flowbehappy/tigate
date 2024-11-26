@@ -6,6 +6,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/utils/heap"
+	"go.uber.org/zap"
 )
 
 // timestampPathNode is order by timestamp.
@@ -147,8 +148,11 @@ func (q *eventQueue[A, P, T, D, H]) updateHandledTSHeap(path *pathInfo[A, P, T, 
 		return 0
 	} else {
 		q.handledTSHeap.AddOrUpdate((*handledTSPathNode[A, P, T, D, H])(path))
+		log.Info("updateHandledTSHeap AddOrUpdate")
 		top, ok := q.handledTSHeap.PeekTop()
 		if ok {
+			log.Info("updateHandledTSHeap AddOrUpdate result",
+				zap.Uint64("lastHandledTS", uint64(top.lastHandledTS)))
 			return top.lastHandledTS
 		} else {
 			return 0
