@@ -9,9 +9,11 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/log"
 	. "github.com/pingcap/ticdc/pkg/apperror"
 	. "github.com/pingcap/ticdc/utils"
 	"github.com/pingcap/ticdc/utils/deque"
+	"go.uber.org/zap"
 )
 
 const TrackTopPaths = 16
@@ -755,12 +757,16 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			for _, si := range d.streamInfos {
 				allStreamPendingLen += si.stream.getPendingSize()
 				handledTs := si.stream._statMinHandledTS.Load()
+				log.Info("statTicker", zap.Uint64("handledTs", handledTs))
 				if minHandledTS == 0 || (minHandledTS > handledTs && handledTs != 0) {
 					minHandledTS = handledTs
 				}
 			}
 			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
-			d._statMinHandledTS.Store(minHandledTS)
+			log.Info("statTicker result", zap.Uint64("minHandledTS", minHandledTS))
+			if minHandledTS > 0 {
+				d._statMinHandledTS.Store(minHandledTS)
+			}
 		}
 	}
 }
