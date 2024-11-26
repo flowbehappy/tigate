@@ -36,7 +36,7 @@ func kafkaDMLWorkerForTest(t *testing.T) *KafkaDMLWorker {
 
 	statistics := metrics.NewStatistics(changefeedID, "KafkaSink")
 	errGroup, ctx := errgroup.WithContext(ctx)
-	dmlMockProducer := producer.NewDMLMockProducer()
+	dmlMockProducer := producer.NewMockDMLProducer()
 
 	dmlWorker := NewKafkaDMLWorker(ctx, changefeedID, protocol, dmlMockProducer,
 		kafkaComponent.EncoderGroup, kafkaComponent.ColumnSelector,
@@ -68,6 +68,6 @@ func TestWriteEvents(t *testing.T) {
 
 	// Wait for the events to be received by the worker.
 	time.Sleep(time.Second)
-	require.Len(t, dmlWorker.producer.(*producer.MockDMLProducer).GetAllEvents(), 2)
+	require.Len(t, dmlWorker.producer.(*producer.MockProducer).GetAllEvents(), 2)
 	require.Equal(t, count, 1)
 }
