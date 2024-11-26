@@ -396,6 +396,8 @@ Loop:
 					path.lastHandledTS = lastTS
 					minTS := s.eventQueue.onHandledTS(path)
 					if minTS > 0 {
+						log.Info("_statMinHandledTS store",
+							zap.Uint64("minTS", uint64(minTS)))
 						s._statMinHandledTS.Store(uint64(minTS))
 					}
 				}
