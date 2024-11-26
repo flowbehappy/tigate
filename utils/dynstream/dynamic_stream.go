@@ -291,6 +291,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings Area
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
+	log.Info("ds get metrics", zap.Uint64("minHandledTS", d._statMinHandledTS.Load()), zap.Uint64("batchCount", uint64(d.option.BatchCount)))
 	return Metrics{
 		EventChanSize:   int(d.bufferCount.Load()) + len(d.inChan) + len(d.outChan),
 		PendingQueueLen: int(d._statAllStreamPendingLen.Load()),
@@ -764,9 +765,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			}
 			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
 			log.Info("statTicker result", zap.Uint64("minHandledTS", minHandledTS), zap.Uint64("batchCount", uint64(d.option.BatchCount)))
-			if minHandledTS > 0 {
-				d._statMinHandledTS.Store(minHandledTS)
-			}
+			d._statMinHandledTS.Store(minHandledTS)
 		}
 	}
 }
