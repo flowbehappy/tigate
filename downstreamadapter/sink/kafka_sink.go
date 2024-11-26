@@ -15,6 +15,7 @@ package sink
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"sync/atomic"
 
@@ -26,10 +27,13 @@ import (
 	"github.com/pingcap/ticdc/downstreamadapter/worker/producer"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/config"
 	ticonfig "github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/util"
+	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/sink/kafka"
 	tikafka "github.com/pingcap/tiflow/pkg/sink/kafka"
 	utils "github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
@@ -212,4 +216,73 @@ func (s *KafkaSink) Close(removeDDLTsItem bool) error {
 
 func (s *KafkaSink) CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
 	return startTsList, nil
+}
+
+func newKafkaSinkForTest() (*KafkaSink, producer.DMLProducer, ddlproducer.DDLProducer, error) {
+	ctx := context.Background()
+	changefeedID := common.ChangefeedID4Test("test", "test")
+	errCh := make(chan error, 1)
+	openProtocol := "open-protocol"
+	sinkConfig := &config.SinkConfig{Protocol: &openProtocol}
+	uriTemplate := "kafka://%s/%s?kafka-version=0.9.0.0&max-batch-size=1" +
+		"&max-message-bytes=1048576&partition-num=1" +
+		"&kafka-client-id=unit-test&auto-create-topic=false&compression=gzip&protocol=open-protocol"
+	uri := fmt.Sprintf(uriTemplate, "127.0.0.1:9092", kafka.DefaultMockTopicName)
+
+	sinkURI, err := url.Parse(uri)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+
+	errGroup, ctx := errgroup.WithContext(ctx)
+	statistics := metrics.NewStatistics(changefeedID, "KafkaSink")
+	kafkaComponent, protocol, err := worker.GetKafkaSinkComponentForTest(ctx, changefeedID, sinkURI, sinkConfig)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+
+	// We must close adminClient when this func return cause by an error
+	// otherwise the adminClient will never be closed and lead to a goroutine leak.
+	defer func() {
+		if err != nil && kafkaComponent.AdminClient != nil {
+			kafkaComponent.AdminClient.Close()
+		}
+	}()
+
+	dmlMockProducer := producer.NewMockDMLProducer()
+
+	dmlWorker := worker.NewKafkaDMLWorker(ctx,
+		changefeedID,
+		protocol,
+		dmlMockProducer,
+		kafkaComponent.EncoderGroup,
+		kafkaComponent.ColumnSelector,
+		kafkaComponent.EventRouter,
+		kafkaComponent.TopicManager,
+		statistics,
+		errGroup)
+
+	ddlMockProducer := producer.NewMockDDLProducer()
+	ddlWorker := worker.NewKafkaDDLWorker(ctx,
+		changefeedID,
+		protocol,
+		ddlMockProducer,
+		kafkaComponent.Encoder,
+		kafkaComponent.EventRouter,
+		kafkaComponent.TopicManager,
+		statistics,
+		errGroup)
+
+	sink := &KafkaSink{
+		changefeedID: changefeedID,
+		dmlWorker:    dmlWorker,
+		ddlWorker:    ddlWorker,
+		adminClient:  kafkaComponent.AdminClient,
+		topicManager: kafkaComponent.TopicManager,
+		statistics:   statistics,
+		errgroup:     errGroup,
+		errCh:        errCh,
+	}
+	go sink.run()
+	return sink, dmlMockProducer, ddlMockProducer, nil
 }
