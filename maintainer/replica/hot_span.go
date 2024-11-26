@@ -115,11 +115,16 @@ func (s *HotSpans) String() string {
 		return "No hot spans"
 	}
 
+	cnt := [10]int{}
+	for _, span := range s.hotSpanCache {
+		cnt[span.score]++
+	}
 	var res strings.Builder
-	for id, span := range s.hotSpanCache {
-		res.WriteString(id.String())
+	for i := 1; i < 10; i++ {
+		res.WriteString("score ")
+		res.WriteString(string(i + '0'))
 		res.WriteString("->")
-		res.WriteString(strconv.Itoa(span.score))
+		res.WriteString(strconv.Itoa(cnt[i]))
 		res.WriteString("; ")
 	}
 	return res.String()
