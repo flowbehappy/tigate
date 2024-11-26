@@ -426,8 +426,7 @@ func (d *DispatcherStat) checkEventSeq(event dispatcher.DispatcherEvent, eventCo
 				zap.Stringer("dispatcher", d.target.GetId()),
 				zap.Uint64("receivedSeq", event.GetSeq()),
 				zap.Uint64("expectedSeq", expectedSeq),
-				zap.Uint64("commitTs", event.GetCommitTs()),
-				zap.Any("event", event))
+				zap.Uint64("commitTs", event.GetCommitTs()))
 			d.reset()
 			eventCollector.addDispatcherRequestToSendingQueue(d.eventServiceInfo.serverID, eventServiceTopic, DispatcherRequest{
 				Dispatcher: d.target,
