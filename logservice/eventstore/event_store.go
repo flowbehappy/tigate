@@ -704,6 +704,7 @@ func (e *eventStore) updateMetricsOnce() {
 	// }
 	minItem, ok := e.dispatcherMeta.resolvedTsHeap.PeekTop()
 	if !ok {
+		e.dispatcherMeta.RUnlock()
 		return
 	}
 	minResolvedTs = minItem.resolvedTs
