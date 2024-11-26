@@ -106,7 +106,7 @@ func NewKafkaDMLWorker(
 
 func (w *KafkaDMLWorker) Run() {
 	w.errGroup.Go(func() error {
-		return w.producer.Run(w.ctx)
+		return w.producer.Run()
 	})
 
 	w.errGroup.Go(func() error {
