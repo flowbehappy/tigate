@@ -96,7 +96,8 @@ func (m *writeSplitter) split(
 		zap.Int("spans", len(splitInfo.Spans)),
 		zap.Int("totalCaptures", captureNum),
 		zap.Int("writeKeyThreshold", m.writeKeyThreshold),
-		zap.Int("spanRegionLimit", spanRegionLimit))
+		zap.Int("spanRegionLimit", spanRegionLimit),
+		zap.Uint64("baseSpansNum", uint64(spansNum)))
 
 	return splitInfo.Spans
 }
@@ -147,6 +148,8 @@ func (m *writeSplitter) splitRegionsByWrittenKeysV1(
 			}},
 		}
 	}
+
+	// calc the spansNum by totalWriteNormalized and writeKeyThreshold?
 
 	// 2. Calculate the writeLimitPerSpan, if one span's write is larger that
 	// this number, we should create a new span.

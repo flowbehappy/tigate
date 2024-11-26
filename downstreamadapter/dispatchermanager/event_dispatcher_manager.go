@@ -535,7 +535,7 @@ func (e *EventDispatcherManager) aggregateDispatcherHeartbeats(needCompleteStatu
 				ID:                 id.ToPB(),
 				ComponentStatus:    heartBeatInfo.ComponentStatus,
 				CheckpointTs:       heartBeatInfo.Watermark.CheckpointTs,
-				EventSizePerSecond: heartBeatInfo.EventSizePerSecond,
+				EventSizePerSecond: dispatcherItem.GetEventSizePerSecond(),
 			})
 		}
 	})

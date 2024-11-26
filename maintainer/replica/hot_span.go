@@ -14,6 +14,8 @@
 package replica
 
 import (
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/ticdc/heartbeatpb"
@@ -23,6 +25,8 @@ import (
 const (
 	HotSpanWriteThreshold = 1024 * 1024 // 1MB per second
 	HotSpanScoreThreshold = 10
+
+	// TODO: use the imbalance threshold to calculate the score.
 )
 
 type HotSpans struct {
@@ -101,4 +105,27 @@ func (s *HotSpans) ClearHotSpans(span ...*SpanReplication) {
 	for _, span := range span {
 		delete(s.hotSpanCache, span.ID)
 	}
+}
+
+func (s *HotSpans) String() string {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if len(s.hotSpanCache) == 0 {
+		return "No hot spans"
+	}
+
+	cnt := [10]int{}
+	for _, span := range s.hotSpanCache {
+		cnt[span.score]++
+	}
+	var res strings.Builder
+	for i := 1; i < 10; i++ {
+		res.WriteString("score ")
+		res.WriteString(string('0' + i))
+		res.WriteString("->")
+		res.WriteString(strconv.Itoa(cnt[i]))
+		res.WriteString("; ")
+	}
+	return res.String()
 }

@@ -28,15 +28,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func prepareRegionsInfo(writtenKeys [7]int) ([]pdutil.RegionInfo, map[int][]byte, map[int][]byte) {
-	regions := []pdutil.RegionInfo{
-		pdutil.NewTestRegionInfo(2, []byte("a"), []byte("b"), uint64(writtenKeys[0])),
-		pdutil.NewTestRegionInfo(3, []byte("b"), []byte("c"), uint64(writtenKeys[1])),
-		pdutil.NewTestRegionInfo(4, []byte("c"), []byte("d"), uint64(writtenKeys[2])),
-		pdutil.NewTestRegionInfo(5, []byte("e"), []byte("f"), uint64(writtenKeys[3])),
-		pdutil.NewTestRegionInfo(6, []byte("f"), []byte("fa"), uint64(writtenKeys[4])),
-		pdutil.NewTestRegionInfo(7, []byte("fa"), []byte("fc"), uint64(writtenKeys[5])),
-		pdutil.NewTestRegionInfo(8, []byte("fc"), []byte("ff"), uint64(writtenKeys[6])),
+func prepareRegionsInfo(writtenKeys []int) ([]pdutil.RegionInfo, map[int][]byte, map[int][]byte) {
+	regions := []pdutil.RegionInfo{}
+	start := byte('a')
+	for i, writtenKey := range writtenKeys {
+		regions = append(regions, pdutil.NewTestRegionInfo(uint64(i+2), []byte{start}, []byte{start + 1}, uint64(writtenKey)))
+		start++
 	}
 	startKeys := map[int][]byte{}
 	endKeys := map[int][]byte{}
@@ -61,7 +58,7 @@ func TestSplitRegionsByWrittenKeysUniform(t *testing.T) {
 
 	cfID := common.NewChangeFeedIDWithName("test")
 	regions, startKeys, endKeys := prepareRegionsInfo(
-		[7]int{100, 100, 100, 100, 100, 100, 100}) // region id: [2,3,4,5,6,7,8]
+		[]int{100, 100, 100, 100, 100, 100, 100}) // region id: [2,3,4,5,6,7,8]
 	splitter := newWriteSplitter(cfID, nil, 0)
 	info := splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), 1)
 	re.Len(info.RegionCounts, 1)
@@ -126,7 +123,7 @@ func TestSplitRegionsByWrittenKeysHotspot1(t *testing.T) {
 	// Hotspots
 	cfID := common.NewChangeFeedIDWithName("test")
 	regions, startKeys, endKeys := prepareRegionsInfo(
-		[7]int{100, 1, 100, 1, 1, 1, 100})
+		[]int{100, 1, 100, 1, 1, 1, 100})
 	splitter := newWriteSplitter(cfID, nil, 4)
 	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 4) // [2], [3,4], [5,6,7], [8]
 	re.Len(info.RegionCounts, 4)
@@ -157,7 +154,7 @@ func TestSplitRegionsByWrittenKeysHotspot2(t *testing.T) {
 	// Hotspots
 	cfID := common.NewChangeFeedIDWithName("test")
 	regions, startKeys, endKeys := prepareRegionsInfo(
-		[7]int{1000, 1, 1, 1, 100, 1, 99})
+		[]int{1000, 1, 1, 1, 100, 1, 99})
 	splitter := newWriteSplitter(cfID, nil, 4)
 	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 4) // [2], [3,4,5,6], [7], [8]
 	re.Len(info.Spans, 4)
@@ -176,8 +173,10 @@ func TestSplitRegionsByWrittenKeysCold(t *testing.T) {
 	re := require.New(t)
 	cfID := common.NewChangeFeedIDWithName("test")
 	splitter := newWriteSplitter(cfID, nil, 0)
-	regions, startKeys, endKeys := prepareRegionsInfo([7]int{})
-	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 3) // [2,3,4], [5,6,7], [8]
+	baseSpanNum := getSpansNumber(2, 1)
+	require.Equal(t, 3, baseSpanNum)
+	regions, startKeys, endKeys := prepareRegionsInfo(make([]int, 7))
+	info := splitter.splitRegionsByWrittenKeysV1(0, regions, baseSpanNum) // [2,3,4], [5,6,7], [8]
 	re.Len(info.RegionCounts, 3)
 	re.EqualValues(3, info.RegionCounts[0], info)
 	re.EqualValues(3, info.RegionCounts[1])
@@ -195,13 +194,31 @@ func TestSplitRegionsByWrittenKeysCold(t *testing.T) {
 	re.EqualValues(endKeys[8], info.Spans[2].EndKey)
 }
 
+func TestNotSplitRegionsByWrittenKeysCold(t *testing.T) {
+	t.Parallel()
+	re := require.New(t)
+	cfID := common.NewChangeFeedIDWithName("test")
+	splitter := newWriteSplitter(cfID, nil, 1)
+	baseSpanNum := getSpansNumber(2, 1)
+	require.Equal(t, 3, baseSpanNum)
+	regions, startKeys, endKeys := prepareRegionsInfo(make([]int, 7))
+	info := splitter.splitRegionsByWrittenKeysV1(0, regions, baseSpanNum) // [2,3,4,5,6,7,8]
+	re.Len(info.RegionCounts, 1)
+	re.EqualValues(7, info.RegionCounts[0], info)
+	re.Len(info.Weights, 1)
+	re.EqualValues(7, info.Weights[0])
+	re.Len(info.Spans, 1)
+	re.EqualValues(startKeys[2], info.Spans[0].StartKey)
+	re.EqualValues(endKeys[8], info.Spans[0].EndKey)
+}
+
 func TestSplitRegionsByWrittenKeysConfig(t *testing.T) {
 	t.Parallel()
 	re := require.New(t)
 
 	cfID := common.NewChangeFeedIDWithName("test")
 	splitter := newWriteSplitter(cfID, nil, math.MaxInt)
-	regions, startKeys, endKeys := prepareRegionsInfo([7]int{1, 1, 1, 1, 1, 1, 1})
+	regions, startKeys, endKeys := prepareRegionsInfo([]int{1, 1, 1, 1, 1, 1, 1})
 	info := splitter.splitRegionsByWrittenKeysV1(1, regions, 3) // [2,3,4,5,6,7,8]
 	re.Len(info.RegionCounts, 1)
 	re.EqualValues(7, info.RegionCounts[0], info)

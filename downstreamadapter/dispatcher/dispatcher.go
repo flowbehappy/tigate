@@ -594,11 +594,14 @@ func (d *Dispatcher) GetBlockEventStatus() *heartbeatpb.State {
 func (d *Dispatcher) GetHeartBeatInfo(h *HeartBeatInfo) {
 	h.Watermark.CheckpointTs = d.GetCheckpointTs()
 	h.Watermark.ResolvedTs = d.GetResolvedTs()
-	h.EventSizePerSecond = d.tableProgress.GetEventSizePerSecond()
 	h.Id = d.GetId()
 	h.ComponentStatus = d.GetComponentStatus()
 	h.TableSpan = d.GetTableSpan()
 	h.IsRemoving = d.GetRemovingStatus()
+}
+
+func (d *Dispatcher) GetEventSizePerSecond() float32 {
+	return d.tableProgress.GetEventSizePerSecond()
 }
 
 func (d *Dispatcher) HandleCheckpointTs(checkpointTs uint64) {
