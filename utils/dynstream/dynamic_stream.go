@@ -2,7 +2,6 @@ package dynstream
 
 import (
 	"fmt"
-	"math"
 	"reflect"
 	"sort"
 	"sync"
@@ -752,10 +751,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				d.memControl.updateMetrics()
 			}
 			allStreamPendingLen := 0
-			minHandledTS := uint64(math.MaxUint64)
+			minHandledTS := uint64(0)
 			for _, si := range d.streamInfos {
 				allStreamPendingLen += si.stream.getPendingSize()
-				minHandledTS = min(minHandledTS, si.stream._statMinHandledTS.Load())
+				handledTs := si.stream._statMinHandledTS.Load()
+				if minHandledTS == 0 || minHandledTS > handledTs {
+					minHandledTS = handledTs
+				}
 			}
 			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
 			d._statMinHandledTS.Store(minHandledTS)
