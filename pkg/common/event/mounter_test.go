@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/ticdc/pkg/common"
 	timodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -641,77 +642,77 @@ func TestAllTypes(t *testing.T) {
 	require.Equal(t, binaryFormat, row.Row.GetBytes(44))
 }
 
-// func TestNullColumn(t *testing.T) {
-// 	helper := NewEventTestHelper(t)
-// 	defer helper.Close()
+func TestNullColumn(t *testing.T) {
+	helper := NewEventTestHelper(t)
+	defer helper.Close()
 
-// 	job := helper.DDL2Job(`create table test.t(
-// 	a tinyint primary key, b tinyint, c bool, d bool, e smallint,
-// 	f smallint, g int, h int, i float, j float,
-// 	k double, l double, m timestamp, n timestamp, o bigint,
-// 	p bigint, q mediumint, r mediumint, s date, t date,
-// 	u time, v time, w datetime, x datetime, y year,
-// 	z year, aa varchar(10), ab varchar(10), ac varbinary(10), ad varbinary(10),
-// 	ae bit(10), af bit(10), ag json, ah json, ai decimal(10,2),
-// 	aj decimal(10,2))`)
+	job := helper.DDL2Job(`create table test.t(
+	a tinyint primary key, b tinyint, c bool, d bool, e smallint,
+	f smallint, g int, h int, i float, j float,
+	k double, l double, m timestamp, n timestamp, o bigint,
+	p bigint, q mediumint, r mediumint, s date, t date,
+	u time, v time, w datetime, x datetime, y year,
+	z year, aa varchar(10), ab varchar(10), ac varbinary(10), ad varbinary(10),
+	ae bit(10), af bit(10), ag json, ah json, ai decimal(10,2),
+	aj decimal(10,2))`)
 
-// 	require.NotNil(t, job)
-// 	dmlEvent := helper.DML2Event("test", "t", `insert into test.t(a,c,e,g,i,k,m,o,q,s,u,w,y,aa,ac,ae,ag,ai) values (1, true, -1, 123, 153.123,153.123,"1973-12-30 15:30:00",123,123,"2000-01-01","23:59:59","2015-12-20 23:58:58",1970,"测试","测试",81,'{"key1": "value1"}', 129012.12)`)
-// 	require.NotNil(t, dmlEvent)
+	require.NotNil(t, job)
+	dmlEvent := helper.DML2Event("test", "t", `insert into test.t(a,c,e,g,i,k,m,o,q,s,u,w,y,aa,ac,ae,ag,ai) values (1, true, -1, 123, 153.123,153.123,"1973-12-30 15:30:00",123,123,"2000-01-01","23:59:59","2015-12-20 23:58:58",1970,"测试","测试",81,'{"key1": "value1"}', 129012.12)`)
+	require.NotNil(t, dmlEvent)
 
-// 	row, ok := dmlEvent.GetNextRow()
-// 	require.True(t, ok)
-// 	require.Equal(t, RowTypeInsert, row.RowType)
+	row, ok := dmlEvent.GetNextRow()
+	require.True(t, ok)
+	require.Equal(t, RowTypeInsert, row.RowType)
 
-// 	tableInfo := helper.GetTableInfo(job)
-// 	require.NotNil(t, tableInfo)
+	tableInfo := helper.GetTableInfo(job)
+	require.NotNil(t, tableInfo)
 
-// 	// column b is the 2th column
-// 	colValue, err := common.FormatColVal(&row.Row, tableInfo.Columns[1], 1)
-// 	require.NoError(t, err)
-// 	require.Equal(t, nil, colValue)
-// 	// column d is the 4th column
-// 	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[3], 3)
-// 	require.NoError(t, err)
-// 	require.Equal(t, nil, colValue)
-// 	// column f is the 6th column
-// 	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[5], 5)
-// 	require.NoError(t, err)
-// 	require.Equal(t, nil, colValue)
-// 	// column h is the 8th column
-// 	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[7], 7)
-// 	require.NoError(t, err)
-// 	require.Equal(t, nil, colValue)
-// 	// column j is the 10th column
-// 	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[9], 9)
-// 	require.NoError(t, err)
-// 	require.Equal(t, nil, colValue)
-// 	// column l is the 12th column
-// 	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[11], 11)
-// 	require.NoError(t, err)
-// 	require.Equal(t, nil, colValue)
-// 	// column ah is the 34th column
-// 	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[33], 33)
-// 	require.NoError(t, err)
-// 	require.Equal(t, nil, colValue)
-// }
+	// column b is the 2th column
+	colValue, err := common.FormatColVal(&row.Row, tableInfo.Columns[1], 1)
+	require.NoError(t, err)
+	require.Equal(t, nil, colValue)
+	// column d is the 4th column
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[3], 3)
+	require.NoError(t, err)
+	require.Equal(t, nil, colValue)
+	// column f is the 6th column
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[5], 5)
+	require.NoError(t, err)
+	require.Equal(t, nil, colValue)
+	// column h is the 8th column
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[7], 7)
+	require.NoError(t, err)
+	require.Equal(t, nil, colValue)
+	// column j is the 10th column
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[9], 9)
+	require.NoError(t, err)
+	require.Equal(t, nil, colValue)
+	// column l is the 12th column
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[11], 11)
+	require.NoError(t, err)
+	require.Equal(t, nil, colValue)
+	// column ah is the 34th column
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[33], 33)
+	require.NoError(t, err)
+	require.Equal(t, nil, colValue)
+}
 
-// func TestBinary(t *testing.T) {
-// 	helper := NewEventTestHelper(t)
-// 	defer helper.Close()
+func TestBinary(t *testing.T) {
+	helper := NewEventTestHelper(t)
+	defer helper.Close()
 
-// 	job := helper.DDL2Job(`create table test.t( a binary(10), b binary(10))`)
-// 	require.NotNil(t, job)
+	job := helper.DDL2Job(`create table test.t( a binary(10), b binary(10))`)
+	require.NotNil(t, job)
 
-// 	dmlEvent := helper.DML2Event("test", "t", `insert into test.t (a) values (0x0102030405060708090A)`)
-// 	require.NotNil(t, dmlEvent)
+	dmlEvent := helper.DML2Event("test", "t", `insert into test.t (a) values (0x0102030405060708090A)`)
+	require.NotNil(t, dmlEvent)
 
-// 	row, ok := dmlEvent.GetNextRow()
-// 	require.True(t, ok)
-// 	require.Equal(t, RowTypeInsert, row.RowType)
-// 	tableInfo := helper.GetTableInfo(job)
-// 	v, err := common.FormatColVal(&row.Row, tableInfo.Columns[0], 0)
-// 	require.NoError(t, err)
-// 	binaryFormat := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A}
-// 	require.Equal(t, binaryFormat, v)
-// }
+	row, ok := dmlEvent.GetNextRow()
+	require.True(t, ok)
+	require.Equal(t, RowTypeInsert, row.RowType)
+	tableInfo := helper.GetTableInfo(job)
+	v, err := common.FormatColVal(&row.Row, tableInfo.Columns[0], 0)
+	require.NoError(t, err)
+	binaryFormat := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A}
+	require.Equal(t, binaryFormat, v)
+}
