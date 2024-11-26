@@ -168,7 +168,7 @@ type PathHasher[P Path] interface {
 }
 
 const DefaultInputBufferSize = 1024
-const DefaultSchedulerInterval = 1 * time.Second
+const DefaultSchedulerInterval = 100000000 * time.Second
 const DefaultReportInterval = 500 * time.Millisecond
 const DefaultMaxPendingSize = 128 * (1 << 20) // 128 MB
 const DefaultFeedbackInterval = 1000 * time.Millisecond

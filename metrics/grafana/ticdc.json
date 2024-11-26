@@ -3817,7 +3817,7 @@
           "xBucketNumber": null,
           "xBucketSize": null,
           "yAxis": {
-            "decimals": 1,
+            "decimals": 3,
             "format": "s",
             "logBase": 1,
             "max": null,
