@@ -74,6 +74,7 @@ type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	timestampHeapIndex int
 	queueTimeHeapIndex int
 	sizeHeapIndex      int
+	handledTSHeapIndex int
 
 	// Those values below are used to compare in the heap.
 	frontTimestamp Timestamp // The timestamp of the front event.
@@ -85,6 +86,8 @@ type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	paused               bool // The path is paused to send events.
 	lastSwitchPausedTime time.Time
 	lastSendFeedbackTime time.Time
+
+	lastHandledTS Timestamp
 }
 
 func newPathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](area A, path P, dest D) *pathInfo[A, P, T, D, H] {
@@ -191,6 +194,8 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	handleWg sync.WaitGroup
 	reportWg sync.WaitGroup
+
+	_statMinHandledTS atomic.Uint64
 }
 
 func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
@@ -346,7 +351,8 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 			}
 			eventBuf = eventBuf[:0]
 		}
-		path *pathInfo[A, P, T, D, H]
+		path   *pathInfo[A, P, T, D, H]
+		lastTS Timestamp
 	)
 
 	// For testing. Don't handle events until this wait group is done.
@@ -375,7 +381,7 @@ Loop:
 				pushToPendingQueue(e)
 				eventQueueEmpty = false
 			default:
-				eventBuf, path = s.eventQueue.popEvents(eventBuf)
+				eventBuf, path, lastTS = s.eventQueue.popEvents(eventBuf)
 				if len(eventBuf) == 0 {
 					eventQueueEmpty = true
 					continue Loop
@@ -386,6 +392,12 @@ Loop:
 
 				if path.blocking {
 					s.eventQueue.blockPath(path)
+				} else {
+					path.lastHandledTS = lastTS
+					minTS := s.eventQueue.onHandledTS(path)
+					if minTS > 0 {
+						s._statMinHandledTS.Store(uint64(minTS))
+					}
 				}
 				cleanUpEventBuf()
 			}

@@ -93,14 +93,14 @@ func TestPopEvents(t *testing.T) {
 	buf := make([]*simpleEvent, 0, batchSize)
 
 	// Case 1: Only one event in the buffer, since the first event is non-batchable.
-	events, _ := q.popEvents(buf)
+	events, _, _ := q.popEvents(buf)
 	require.Len(t, events, 1)
 	require.Equal(t, events[0], event1)
 	require.Equal(t, int64(5), q.totalPendingLength.Load())
 
 	// Case 2: The buffer is full of the repeated event.
 	buf = make([]*simpleEvent, 0, batchSize)
-	events, pi := q.popEvents(buf)
+	events, pi, _ := q.popEvents(buf)
 	require.Equal(t, pathInfo2.path, pi.path)
 	require.Len(t, events, batchSize)
 	require.Equal(t, int64(2), q.totalPendingLength.Load())
@@ -110,13 +110,13 @@ func TestPopEvents(t *testing.T) {
 
 	// Case 3: Only one event in the buffer, since the second event is non-batchable.
 	buf = make([]*simpleEvent, 0, batchSize)
-	events, _ = q.popEvents(buf)
+	events, _, _ = q.popEvents(buf)
 	require.Equal(t, len(events), 1)
 	require.Equal(t, events[0], event2)
 
 	// Case 4: Only one event in the buffer, since the first event is non-batchable.
 	buf = make([]*simpleEvent, 0, batchSize)
-	events, _ = q.popEvents(buf)
+	events, _, _ = q.popEvents(buf)
 	require.Equal(t, len(events), 1)
 	require.Equal(t, events[0], event1)
 

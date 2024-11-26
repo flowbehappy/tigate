@@ -2,6 +2,7 @@ package dynstream
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"sync"
@@ -145,7 +146,11 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 	eventExtraSize int
 	startTime      time.Time
 
-	allStreamPendingLen atomic.Int64
+	_statAllStreamPendingLen atomic.Int64
+	_statMinHandledTS        atomic.Uint64
+	_statAddPathCount        atomic.Uint64
+	_statRemovePathCount     atomic.Uint64
+	_statArrangeStreamCount  atomic.Uint64
 }
 
 func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
@@ -287,7 +292,11 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings Area
 func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
 	return Metrics{
 		EventChanSize:   int(d.bufferCount.Load()) + len(d.inChan) + len(d.outChan),
-		PendingQueueLen: int(d.allStreamPendingLen.Load()),
+		PendingQueueLen: int(d._statAllStreamPendingLen.Load()),
+		MinHandledTS:    d._statMinHandledTS.Load(),
+		AddPath:         int(d._statAddPathCount.Load()),
+		RemovePath:      int(d._statRemovePathCount.Load()),
+		ArrangeStream:   int(d._statArrangeStreamCount.Load()),
 	}
 }
 
@@ -655,7 +664,8 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 	}
 
 	scheduleRule := NewRoundRobin(3)
-	ticker := time.NewTicker(d.option.SchedulerInterval)
+	schedulerTicker := time.NewTicker(d.option.SchedulerInterval)
+	statTicker := time.NewTicker(50 * time.Millisecond)
 	for {
 		select {
 		case cmd, ok := <-d.cmdToSched:
@@ -734,18 +744,21 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				continue
 			}
 			si.streamStat = stat
-		case <-ticker.C:
+		case <-schedulerTicker.C:
 			doSchedule(ruleType(scheduleRule.Next()), 0, nil)
-
+		case <-statTicker.C:
 			// Update the metrics
 			if d.memControl != nil {
 				d.memControl.updateMetrics()
 			}
 			allStreamPendingLen := 0
+			minHandledTS := uint64(math.MaxUint64)
 			for _, si := range d.streamInfos {
 				allStreamPendingLen += si.stream.getPendingSize()
+				minHandledTS = min(minHandledTS, si.stream._statMinHandledTS.Load())
 			}
-			d.allStreamPendingLen.Store(int64(allStreamPendingLen))
+			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
+			d._statMinHandledTS.Store(minHandledTS)
 		}
 	}
 }
@@ -808,6 +821,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 					}
 				}
 				cmd.wg.Done()
+				d._statAddPathCount.Add(1)
 			case typeRemovePath:
 				remove := cmd.cmd.(*removePathCmd[P])
 				// We don't need to remove the path in distributor if there was an error
@@ -828,6 +842,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 					}
 				}
 				cmd.wg.Done()
+				d._statRemovePathCount.Add(1)
 			case typeArrangeStream:
 				arranges := cmd.cmd.([]*arrangeStreamCmd[A, P, T, D, H])
 				for _, arrange := range arranges {
@@ -845,6 +860,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 						// Otherwise, the distributor will send the events to the closed streams.
 						newStream.start(paths, arrange.oldStreams...)
 					}
+					d._statArrangeStreamCount.Add(1)
 				}
 				if cmd.wg != nil {
 					cmd.wg.Done()

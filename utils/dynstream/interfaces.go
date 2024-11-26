@@ -181,6 +181,7 @@ type Option struct {
 
 	StreamCount int // The count of streams. I.e. the count of goroutines to handle events. By default 0, means runtime.NumCPU().
 	BatchCount  int // The batch size of handling events. <= 1 means no batch. By default 1.
+	BatchBytes  int // The max bytes of the batch. <= 1 means no limit. By default 0.
 
 	EnableMemoryControl bool // Enable the memory control. By default false.
 
@@ -260,4 +261,8 @@ func NewParallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T
 type Metrics struct {
 	EventChanSize   int
 	PendingQueueLen int
+	MinHandledTS    uint64 // The min handled timestamp of the stream. Could be zero if no events are handled.
+	AddPath         int
+	RemovePath      int
+	ArrangeStream   int
 }

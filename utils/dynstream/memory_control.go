@@ -310,6 +310,7 @@ func (m *memControl[A, P, T, D, H]) removePathFromArea(path *pathInfo[A, P, T, D
 	}
 }
 
+// FIXME/TODO: We use global metric here, which is not good for multiple streams.
 func (m *memControl[A, P, T, D, H]) updateMetrics() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
