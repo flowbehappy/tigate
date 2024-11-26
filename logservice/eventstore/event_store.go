@@ -232,7 +232,7 @@ func New(
 	}
 
 	option := dynstream.NewOption()
-	option.BatchCount = 40960
+	option.BatchCount = 4096
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
