@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/ticdc/utils/chann"
 	"github.com/pingcap/ticdc/utils/dynstream"
+	"github.com/pingcap/ticdc/utils/heap"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/klauspost/compress/zstd"
@@ -123,6 +124,10 @@ type subscriptionStat struct {
 	resolvedTs atomic.Uint64
 	// the max commit ts of dml event in the store
 	maxEventCommitTs atomic.Uint64
+
+	item *resolvedTsItem
+
+	store *eventStore
 }
 
 type kvEvent struct {
@@ -165,6 +170,8 @@ type eventStore struct {
 		// table id -> dispatcher ids
 		// use table id as the key is to share data between spans not completely the same in the future.
 		tableToDispatchers map[int64]map[common.DispatcherID]bool
+
+		resolvedTsHeap *heap.Heap[*resolvedTsItem]
 	}
 
 	encoder *zstd.Encoder
@@ -487,7 +494,12 @@ func (e *eventStore) RegisterDispatcher(
 		tableID: tableSpan.TableID,
 		dbIndex: chIndex,
 		eventCh: e.chs[chIndex],
+		item: &resolvedTsItem{
+			resolvedTs: startTs,
+		},
+		store: e,
 	}
+	e.dispatcherMeta.resolvedTsHeap.AddOrUpdate(subStat.item)
 	subStat.dispatchers.notifiers = make(map[common.DispatcherID]ResolvedTsNotifier)
 	subStat.dispatchers.notifiers[dispatcherID] = notifier
 	subStat.checkpointTs.Store(startTs)
@@ -658,7 +670,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 }
 
 func (e *eventStore) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():
@@ -674,21 +686,26 @@ func (e *eventStore) updateMetricsOnce() {
 	currentPhyTs := oracle.GetPhysical(currentTime)
 	minResolvedTs := uint64(0)
 	e.dispatcherMeta.RLock()
-	for _, subscriptionStat := range e.dispatcherMeta.subscriptionStats {
-		// resolved ts lag
-		resolvedTs := subscriptionStat.resolvedTs.Load()
-		resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
-		resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
-		metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
-		if minResolvedTs == 0 || resolvedTs < minResolvedTs {
-			minResolvedTs = resolvedTs
-		}
-		// checkpoint ts lag
-		checkpointTs := subscriptionStat.checkpointTs.Load()
-		watermarkPhyTs := oracle.ExtractPhysical(checkpointTs)
-		watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
-		metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
+	// for _, subscriptionStat := range e.dispatcherMeta.subscriptionStats {
+	// 	// resolved ts lag
+	// 	resolvedTs := subscriptionStat.resolvedTs.Load()
+	// 	resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
+	// 	resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+	// 	metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
+	// 	if minResolvedTs == 0 || resolvedTs < minResolvedTs {
+	// 		minResolvedTs = resolvedTs
+	// 	}
+	// 	// checkpoint ts lag
+	// 	checkpointTs := subscriptionStat.checkpointTs.Load()
+	// 	watermarkPhyTs := oracle.ExtractPhysical(checkpointTs)
+	// 	watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
+	// 	metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
+	// }
+	minItem, ok := e.dispatcherMeta.resolvedTsHeap.PeekTop()
+	if !ok {
+		return
 	}
+	minResolvedTs = minItem.resolvedTs
 	e.dispatcherMeta.RUnlock()
 	if minResolvedTs == 0 {
 		return
@@ -699,6 +716,19 @@ func (e *eventStore) updateMetricsOnce() {
 	dsMetrics := e.ds.GetMetrics()
 	metricEventStoreDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 	metricEventStoreDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
+}
+
+type resolvedTsItem struct {
+	resolvedTs uint64
+	heapIndex  int
+}
+
+func (m *resolvedTsItem) SetHeapIndex(index int) { m.heapIndex = index }
+
+func (m *resolvedTsItem) GetHeapIndex() int { return m.heapIndex }
+
+func (m *resolvedTsItem) LessThan(other *resolvedTsItem) bool {
+	return m.resolvedTs < other.resolvedTs
 }
 
 func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvent) error {
