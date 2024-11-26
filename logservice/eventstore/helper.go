@@ -54,8 +54,10 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) boo
 
 func (h *eventsHandler) GetSize(event kvEvent) int                                         { return 0 }
 func (h *eventsHandler) GetArea(path logpuller.SubscriptionID, dest *subscriptionStat) int { return 0 }
-func (h *eventsHandler) GetTimestamp(event kvEvent) dynstream.Timestamp                    { return 0 }
-func (h *eventsHandler) IsPaused(event kvEvent) bool                                       { return false }
+func (h *eventsHandler) GetTimestamp(event kvEvent) dynstream.Timestamp {
+	return dynstream.Timestamp(event.raw.CRTs)
+}
+func (h *eventsHandler) IsPaused(event kvEvent) bool { return false }
 
 func (h *eventsHandler) GetType(event kvEvent) dynstream.EventType {
 	if event.raw.IsResolved() {

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/ticdc/logservice/logservicepb"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/pingcap/ticdc/utils/chann"
 	"github.com/pingcap/ticdc/utils/dynstream"
@@ -169,6 +170,10 @@ type eventStore struct {
 
 	encoder *zstd.Encoder
 	decoder *zstd.Decoder
+
+	metricEventStoreDSAddPathNum      prometheus.Gauge
+	metricEventStoreDSRemovePathNum   prometheus.Gauge
+	metricEventStoreDSArrageStreamNum prometheus.Gauge
 }
 
 const (
@@ -243,6 +248,10 @@ func New(
 		gcManager: newGCManager(),
 		encoder:   encoder,
 		decoder:   decoder,
+
+		metricEventStoreDSAddPathNum:      metrics.DynamicStreamAddPathNum.WithLabelValues("event-store"),
+		metricEventStoreDSRemovePathNum:   metrics.DynamicStreamRemovePathNum.WithLabelValues("event-store"),
+		metricEventStoreDSArrageStreamNum: metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-store"),
 	}
 	// TODO: update pebble options
 	for i := 0; i < dbCount; i++ {
@@ -657,7 +666,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 }
 
 func (e *eventStore) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
@@ -669,35 +678,42 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 }
 
 func (e *eventStore) updateMetricsOnce() {
-	currentTime := e.pdClock.CurrentTime()
-	currentPhyTs := oracle.GetPhysical(currentTime)
-	minResolvedTs := uint64(0)
-	e.dispatcherMeta.RLock()
-	for _, subscriptionStat := range e.dispatcherMeta.subscriptionStats {
-		// resolved ts lag
-		resolvedTs := subscriptionStat.resolvedTs.Load()
-		resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
-		resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
-		metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
-		if minResolvedTs == 0 || resolvedTs < minResolvedTs {
-			minResolvedTs = resolvedTs
-		}
-		// checkpoint ts lag
-		checkpointTs := subscriptionStat.checkpointTs.Load()
-		watermarkPhyTs := oracle.ExtractPhysical(checkpointTs)
-		watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
-		metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
-	}
-	e.dispatcherMeta.RUnlock()
-	if minResolvedTs == 0 {
-		return
-	}
-	minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
-	eventStoreResolvedTsLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
-	metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
+	// currentTime := e.pdClock.CurrentTime()
+	// currentPhyTs := oracle.GetPhysical(currentTime)
+	// minResolvedTs := uint64(0)
+	// e.dispatcherMeta.RLock()
+	// for _, subscriptionStat := range e.dispatcherMeta.subscriptionStats {
+	// 	// resolved ts lag
+	// 	resolvedTs := subscriptionStat.resolvedTs.Load()
+	// 	resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
+	// 	resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+	// 	metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
+	// 	if minResolvedTs == 0 || resolvedTs < minResolvedTs {
+	// 		minResolvedTs = resolvedTs
+	// 	}
+	// 	// checkpoint ts lag
+	// 	checkpointTs := subscriptionStat.checkpointTs.Load()
+	// 	watermarkPhyTs := oracle.ExtractPhysical(checkpointTs)
+	// 	watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
+	// 	metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
+	// }
+	// e.dispatcherMeta.RUnlock()
+	// if minResolvedTs == 0 {
+	// 	return
+	// }
+	// minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
+	// eventStoreResolvedTsLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
+	// metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
 	dsMetrics := e.ds.GetMetrics()
+	if dsMetrics.MinHandledTS != 0 {
+		lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandledTS)) / 1e3
+		metrics.EventStoreResolvedTsLagGauge.Set(lag)
+	}
 	metricEventStoreDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 	metricEventStoreDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
+	e.metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))
+	e.metricEventStoreDSRemovePathNum.Set(float64(dsMetrics.RemovePath))
+	e.metricEventStoreDSArrageStreamNum.Set(float64(dsMetrics.ArrangeStream))
 }
 
 func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvent) error {
