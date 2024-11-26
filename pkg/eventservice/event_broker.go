@@ -104,7 +104,7 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	ds := dynstream.NewDynamicStream(&dispatcherEventsHandler{}, option)
+	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
 	ds.Start()
 
 	messageWorkerCount := runtime.NumCPU()
