@@ -52,6 +52,8 @@ func (h *dispatcherEventsHandler) GetArea(path common.DispatcherID, dest *eventB
 	}
 	return d.info.GetChangefeedID().ID()
 }
-func (h *dispatcherEventsHandler) GetTimestamp(event scanTask) dynstream.Timestamp { return 0 }
-func (h *dispatcherEventsHandler) IsPaused(event scanTask) bool                    { return false }
-func (h *dispatcherEventsHandler) OnDrop(event scanTask)                           {}
+func (h *dispatcherEventsHandler) GetTimestamp(event scanTask) dynstream.Timestamp {
+	return dynstream.Timestamp(event.watermark.Load())
+}
+func (h *dispatcherEventsHandler) IsPaused(event scanTask) bool { return false }
+func (h *dispatcherEventsHandler) OnDrop(event scanTask)        {}
