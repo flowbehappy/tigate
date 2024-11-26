@@ -452,8 +452,7 @@ func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent,
 	if d.waitHandshake.Load() {
 		log.Warn("Receive event before handshake event, ignore it",
 			zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
-			zap.Stringer("dispatcher", d.target.GetId()),
-			zap.Any("event", event))
+			zap.Stringer("dispatcher", d.target.GetId()))
 		return true
 	}
 	if !d.checkEventSeq(event, eventCollector) {
@@ -466,8 +465,7 @@ func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent,
 		log.Warn("Receive resolved event before sendCommitTs, ignore it",
 			zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
 			zap.Stringer("dispatcher", d.target.GetId()),
-			zap.Uint64("sendCommitTs", d.sendCommitTs.Load()),
-			zap.Any("event", event))
+			zap.Uint64("sendCommitTs", d.sendCommitTs.Load()))
 		return true
 	}
 	d.sendCommitTs.Store(event.GetCommitTs())
