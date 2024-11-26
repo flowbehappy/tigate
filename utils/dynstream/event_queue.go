@@ -142,7 +142,7 @@ func newEventQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](optio
 }
 
 func (q *eventQueue[A, P, T, D, H]) updateHandledTSHeap(path *pathInfo[A, P, T, D, H]) Timestamp {
-	if path.removed {
+	if path.removed || path.lastHandledTS == 0 {
 		q.handledTSHeap.Remove((*handledTSPathNode[A, P, T, D, H])(path))
 		return 0
 	} else {
