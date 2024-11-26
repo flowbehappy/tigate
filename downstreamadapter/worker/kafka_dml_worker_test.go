@@ -31,7 +31,7 @@ func kafkaDMLWorkerForTest(t *testing.T) *KafkaDMLWorker {
 
 	sinkURI, err := url.Parse(uri)
 	require.NoError(t, err)
-	kafkaComponent, protocol, err := getKafkaSinkComponentForTest(ctx, changefeedID, sinkURI, sinkConfig)
+	kafkaComponent, protocol, err := GetKafkaSinkComponentForTest(ctx, changefeedID, sinkURI, sinkConfig)
 	require.NoError(t, err)
 
 	statistics := metrics.NewStatistics(changefeedID, "KafkaSink")

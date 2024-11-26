@@ -120,7 +120,7 @@ func GetKafkaSinkComponent(
 	return getKafkaSinkComponentWithFactory(ctx, changefeedID, sinkURI, sinkConfig, factoryCreator)
 }
 
-func getKafkaSinkComponentForTest(
+func GetKafkaSinkComponentForTest(
 	ctx context.Context,
 	changefeedID common.ChangeFeedID,
 	sinkURI *url.URL,
