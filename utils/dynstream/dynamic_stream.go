@@ -755,7 +755,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			for _, si := range d.streamInfos {
 				allStreamPendingLen += si.stream.getPendingSize()
 				handledTs := si.stream._statMinHandledTS.Load()
-				if minHandledTS == 0 || minHandledTS > handledTs {
+				if minHandledTS == 0 || (minHandledTS > handledTs && handledTs != 0) {
 					minHandledTS = handledTs
 				}
 			}
