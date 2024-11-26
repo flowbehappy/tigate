@@ -757,13 +757,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			for _, si := range d.streamInfos {
 				allStreamPendingLen += si.stream.getPendingSize()
 				handledTs := si.stream._statMinHandledTS.Load()
-				log.Info("statTicker", zap.Uint64("handledTs", handledTs), zap.Uint64("inputChannelSize", uint64(d.option.InputBufferSize)))
+				log.Info("statTicker", zap.Uint64("handledTs", handledTs), zap.Uint64("batchCount", uint64(d.option.BatchCount)))
 				if minHandledTS == 0 || (minHandledTS > handledTs && handledTs != 0) {
 					minHandledTS = handledTs
 				}
 			}
 			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
-			log.Info("statTicker result", zap.Uint64("minHandledTS", minHandledTS), zap.Uint64("inputChannelSize", uint64(d.option.InputBufferSize)))
+			log.Info("statTicker result", zap.Uint64("minHandledTS", minHandledTS), zap.Uint64("batchCount", uint64(d.option.BatchCount)))
 			if minHandledTS > 0 {
 				d._statMinHandledTS.Store(minHandledTS)
 			}
