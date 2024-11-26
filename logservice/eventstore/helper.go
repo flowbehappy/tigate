@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/utils/dynstream"
+	"go.uber.org/zap"
 )
 
 const (
@@ -56,6 +57,7 @@ func (h *eventsHandler) GetSize(event kvEvent) int                              
 func (h *eventsHandler) GetArea(path logpuller.SubscriptionID, dest *subscriptionStat) int { return 0 }
 func (h *eventsHandler) GetTimestamp(event kvEvent) dynstream.Timestamp {
 	// TODO: only provide resolved ts?
+	log.Info("event store return timestamp", zap.Uint64("ts", event.raw.CRTs))
 	return dynstream.Timestamp(event.raw.CRTs)
 }
 func (h *eventsHandler) IsPaused(event kvEvent) bool { return false }
