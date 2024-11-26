@@ -44,12 +44,13 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) boo
 		}
 		return false
 	}
+	return false
 	// subStat.maxEventCommitTs.Store(events[len(events)-1].raw.CRTs)
 	// for i := range events {
 	// 	events[i].tableID = subStat.tableID
 	// }
 	// subStat.eventCh.Push(events...)
-	return true
+	// return true
 }
 
 func (h *eventsHandler) GetSize(event kvEvent) int                                         { return 0 }
