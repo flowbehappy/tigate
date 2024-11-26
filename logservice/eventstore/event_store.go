@@ -705,9 +705,7 @@ func (e *eventStore) updateMetricsOnce() {
 	// eventStoreResolvedTsLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
 	// metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
 	dsMetrics := e.ds.GetMetrics()
-	log.Info("event store update lag metrics try", zap.Uint64("MinHandledTS", dsMetrics.MinHandledTS))
 	if dsMetrics.MinHandledTS != 0 {
-		log.Info("event store update lag metrics", zap.Uint64("minHandledTs", dsMetrics.MinHandledTS))
 		lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandledTS)) / 1e3
 		metrics.EventStoreResolvedTsLagGauge.Set(lag)
 	}
