@@ -3085,7 +3085,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "ticdc_event_store_max_resolved_ts_lag{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}",
+              "expr": "ticdc_event_store_resolved_ts_lag{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}",
               "interval": "",
               "legendFormat": "{{instance}}",
               "queryType": "randomWalk",

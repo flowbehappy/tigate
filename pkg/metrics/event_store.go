@@ -87,7 +87,7 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_store",
-			Name:      "max_resolved_ts_lag",
+			Name:      "resolved_ts_lag",
 			Help:      "The max resolved ts lag of event store.",
 		})
 

@@ -631,7 +631,7 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
 	c.wg.Add(1)
-	ticker := time.NewTicker(time.Second * 10)
+	ticker := time.NewTicker(time.Millisecond * 500)
 	go func() {
 		defer c.wg.Done()
 		log.Info("update metrics goroutine is started")
