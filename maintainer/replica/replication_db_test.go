@@ -85,13 +85,13 @@ func TestBasicFunction(t *testing.T) {
 
 	require.Len(t, db.GetReplicating(), 0)
 	require.Equal(t, 1, db.TaskSize())
-	require.Len(t, db.absent, 0)
-	require.Len(t, db.scheduling, 0)
-	require.Len(t, db.replicating, 0)
+	require.Equal(t, db.GetAbsentSize(), 0)
+	require.Equal(t, db.GetSchedulingSize(), 0)
+	require.Equal(t, db.GetReplicatingSize(), 0)
 	// ddl table id
 	require.Len(t, db.tableTasks[0], 1)
 	require.Len(t, db.schemaTasks[heartbeatpb.DDLSpanSchemaID], 1)
-	require.Len(t, db.nodeTasks, 0)
+	require.Len(t, db.GetTaskSizePerNode(), 0)
 }
 
 func TestReplaceReplicaSet(t *testing.T) {

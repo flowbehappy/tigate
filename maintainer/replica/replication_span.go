@@ -40,6 +40,7 @@ type SpanReplication struct {
 
 	schemaID int64
 	nodeID   node.ID
+	groupID  groupID
 	status   *atomic.Pointer[heartbeatpb.TableSpanStatus]
 
 	tsoClient TSOClient
@@ -53,6 +54,7 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 	checkpointTs uint64) *SpanReplication {
 	r := &SpanReplication{
 		ID:           id,
+		groupID:      defaultGroupID,
 		tsoClient:    tsoClient,
 		schemaID:     SchemaID,
 		Span:         span,

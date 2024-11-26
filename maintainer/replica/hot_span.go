@@ -29,6 +29,9 @@ const (
 	clearTimeout          = 300 // seconds
 
 	// TODO: use the imbalance threshold to calculate the score.
+	// use multiple thresholds to control different split groups. For example:
+	// For score 1-5, dispatcher it to the same split group.
+	// For score 6-10, use single split group to track the hot span.
 )
 
 type HotSpans struct {
