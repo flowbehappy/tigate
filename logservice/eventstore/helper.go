@@ -37,13 +37,13 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) boo
 			log.Panic("should not happen")
 		}
 		subStat.resolvedTs.Store(events[0].raw.CRTs)
-		subStat.dispatchers.RLock()
-		defer subStat.dispatchers.RUnlock()
-		subStat.item.resolvedTs = events[0].raw.CRTs
-
 		subStat.store.dispatcherMeta.Lock()
+		subStat.item.resolvedTs = events[0].raw.CRTs
 		subStat.store.dispatcherMeta.resolvedTsHeap.AddOrUpdate(subStat.item)
 		subStat.store.dispatcherMeta.Unlock()
+
+		subStat.dispatchers.RLock()
+		defer subStat.dispatchers.RUnlock()
 		for _, notifier := range subStat.dispatchers.notifiers {
 			notifier(events[0].raw.CRTs)
 		}
