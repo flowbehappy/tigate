@@ -74,7 +74,7 @@ func NewDMLEvent(
 		PhysicalTableID:  tableID,
 		StartTs:          startTs,
 		CommitTs:         commitTs,
-		TableInfoVersion: tableInfo.ColumnSchema.UpdateTS,
+		TableInfoVersion: tableInfo.UpdateTS(),
 		TableInfo:        tableInfo,
 		Rows:             chk,
 		RowTypes:         make([]RowType, 0, 1),
@@ -334,8 +334,8 @@ func (t *DMLEvent) AssembleRows(tableInfo *common.TableInfo) error {
 		log.Panic("DMLEvent: RawRows is empty")
 		return nil
 	}
-	if t.TableInfoVersion != tableInfo.ColumnSchema.UpdateTS {
-		log.Panic("DMLEvent: TableInfoVersion mismatch", zap.Uint64("dmlEventTableInfoVersion", t.TableInfoVersion), zap.Uint64("tableInfoVersion", tableInfo.ColumnSchema.UpdateTS))
+	if t.TableInfoVersion != tableInfo.UpdateTS() {
+		log.Panic("DMLEvent: TableInfoVersion mismatch", zap.Uint64("dmlEventTableInfoVersion", t.TableInfoVersion), zap.Uint64("tableInfoVersion", tableInfo.UpdateTS()))
 		return nil
 	}
 	decoder := chunk.NewCodec(tableInfo.GetFieldSlice())

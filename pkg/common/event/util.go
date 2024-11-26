@@ -172,7 +172,7 @@ func (s *EventTestHelper) DML2Event(schema, table string, dml ...string) *DMLEve
 	tableInfo, ok := s.tableInfos[key]
 	require.True(s.t, ok)
 	did := common.NewDispatcherID()
-	ts := tableInfo.ColumnSchema.UpdateTS
+	ts := tableInfo.UpdateTS()
 	dmlEvent := NewDMLEvent(did, tableInfo.TableName.TableID, ts-1, ts+1, tableInfo)
 	rawKvs := s.DML2RawKv(schema, table, dml...)
 	for _, rawKV := range rawKvs {
@@ -185,7 +185,7 @@ func (s *EventTestHelper) DML2Event(schema, table string, dml ...string) *DMLEve
 func (s EventTestHelper) DML2RawKv(schema, table string, dml ...string) []*common.RawKVEntry {
 	tableInfo, ok := s.tableInfos[toTableInfosKey(schema, table)]
 	require.True(s.t, ok)
-	ts := tableInfo.ColumnSchema.UpdateTS
+	ts := tableInfo.UpdateTS()
 	var rawKVs []*common.RawKVEntry
 	for _, dml := range dml {
 		s.tk.MustExec(dml)

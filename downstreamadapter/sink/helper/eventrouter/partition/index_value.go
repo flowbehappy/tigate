@@ -57,7 +57,7 @@ func (r *IndexValuePartitionGenerator) GeneratePartitionIndexAndKey(row *commonE
 
 	// the most normal case, index-name is not set, use the handle key columns.
 	if r.IndexName == "" {
-		for idx, col := range tableInfo.ColumnSchema.Columns {
+		for idx, col := range tableInfo.GetColumns() {
 			if col == nil {
 				continue
 			}
@@ -80,7 +80,7 @@ func (r *IndexValuePartitionGenerator) GeneratePartitionIndexAndKey(row *commonE
 				"index not found when dispatch event, table: %v, index: %s", tableInfo.GetTableName(), r.IndexName)
 		}
 		for idx := 0; idx < len(names); idx++ {
-			colInfo := tableInfo.ColumnSchema.Columns[offsets[idx]]
+			colInfo := tableInfo.GetColumns()[offsets[idx]]
 			value, err := common.FormatColVal(&rowData, colInfo, idx)
 			if err != nil {
 				// FIXME:
