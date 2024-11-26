@@ -720,9 +720,7 @@ func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
 		// default:
 		// 	metricEventBrokerDropNotificationCount.Inc()
 		// }
-		if needScan, _ := c.checkNeedScan(d); needScan {
-			c.ds.In(d.id) <- d
-		}
+		c.ds.In(d.id) <- d
 	}
 }
 
