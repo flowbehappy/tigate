@@ -84,7 +84,6 @@ func (s *EventRouter) GetTopicForRowChange(tableInfo *common.TableInfo) string {
 func (s *EventRouter) GetTopicForDDL(ddl *commonEvent.DDLEvent) string {
 	var schema, table string
 
-	// TODO:Add Test for all cases
 	if ddl.GetPrevSchemaName() != "" {
 		if ddl.GetPrevTableName() == "" {
 			return s.defaultTopic
@@ -110,9 +109,6 @@ func (s *EventRouter) GetActiveTopics(activeTables []*commonEvent.SchemaTableNam
 	topicsMap := make(map[string]bool, len(activeTables))
 	for _, tableName := range activeTables {
 		topicDispatcher := s.matchTopicGenerator(tableName.SchemaName, tableName.TableName)
-		if topicDispatcher.TopicGeneratorType() == topic.StaticTopicGeneratorType {
-			continue
-		}
 		topicName := topicDispatcher.Substitute(tableName.SchemaName, tableName.TableName)
 		if !topicsMap[topicName] {
 			topicsMap[topicName] = true
