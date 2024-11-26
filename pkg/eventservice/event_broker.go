@@ -104,7 +104,7 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	ds := dynstream.NewDynamicStream(&dispatcherEventsHandler{}, option)
+	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
 	ds.Start()
 
 	messageWorkerCount := runtime.NumCPU()
@@ -720,9 +720,7 @@ func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
 		// default:
 		// 	metricEventBrokerDropNotificationCount.Inc()
 		// }
-		if needScan, _ := c.checkNeedScan(d); needScan {
-			c.ds.In(d.id) <- d
-		}
+		c.ds.In(d.id) <- d
 	}
 }
 
