@@ -81,13 +81,35 @@ func (s *balanceScheduler) Execute() time.Time {
 		return now.Add(s.checkBalanceInterval)
 	}
 
-	s.forceBalance = scheduler.Balance(s.batchSize, s.random, s.nodeManager.GetAliveNodes(),
-		s.replicationDB.GetReplicating(), func(replication *replica.SpanReplication, id node.ID) bool {
+	groupBalanced, batch := true, s.batchSize
+	for _, group := range s.replicationDB.GetGroups() {
+		moved := s.schedulerGroup(group, batch)
+		if moved != 0 {
+			groupBalanced = false
+		}
+		batch -= moved
+		if batch <= 0 {
+			break
+		}
+	}
+	if groupBalanced {
+		s.schedulerGlobal()
+	}
+	s.lastRebalanceTime = now
+	return now.Add(s.checkBalanceInterval)
+}
+
+func (s *balanceScheduler) schedulerGroup(id replica.GroupID, batch int) (consumed int) {
+	consumed = scheduler.Balance(batch, s.random, s.nodeManager.GetAliveNodes(),
+		s.replicationDB.GetReplicatingByGroup(id), func(replication *replica.SpanReplication, id node.ID) bool {
 			op := operator.NewMoveDispatcherOperator(s.replicationDB, replication, replication.GetNodeID(), id)
 			return s.operatorController.AddOperator(op)
 		})
-	s.lastRebalanceTime = now
-	return now.Add(s.checkBalanceInterval)
+	return
+}
+
+func (s *balanceScheduler) schedulerGlobal() {
+	// implement it
 }
 
 func (s *balanceScheduler) Name() string {

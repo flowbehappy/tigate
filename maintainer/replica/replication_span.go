@@ -42,7 +42,7 @@ type SpanReplication struct {
 
 	schemaID int64
 	nodeID   node.ID
-	groupID  groupID
+	groupID  GroupID
 	status   *atomic.Pointer[heartbeatpb.TableSpanStatus]
 
 	tsoClient TSOClient

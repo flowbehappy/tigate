@@ -58,7 +58,7 @@ func Balance[T Replication](batchSize int,
 	random *rand.Rand,
 	activeNodes map[node.ID]*node.Info,
 	replicating []T,
-	move func(T, node.ID) bool) (hasPending bool) {
+	move func(T, node.ID) bool) (movedSize int) {
 	nodeTasks := make(map[node.ID][]T)
 	for _, cf := range replicating {
 		nodeID := cf.GetNodeID()
@@ -115,10 +115,10 @@ func Balance[T Replication](batchSize int,
 		}
 	}
 	if len(victims) == 0 {
-		return false
+		return 0
 	}
 
-	movedSize := 0
+	movedSize = 0
 	// for each victim table, find the target for it
 	for idx, cf := range victims {
 		if idx >= batchSize {
@@ -139,7 +139,7 @@ func Balance[T Replication](batchSize int,
 	log.Info("balance done",
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
-	return len(victims) > batchSize
+	return movedSize
 }
 
 // BasicSchedule schedules the absent tasks to the available nodes

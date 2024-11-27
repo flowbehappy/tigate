@@ -46,11 +46,11 @@ func (gt groupTpye) String() string {
 	}
 }
 
-type groupID = int64
+type GroupID = int64
 
-const defaultGroupID groupID = 0
+const defaultGroupID GroupID = 0
 
-func getGroupID(gt groupTpye, tableID int64) groupID {
+func getGroupID(gt groupTpye, tableID int64) GroupID {
 	// use high 8 bits to store the group type
 	id := int64(gt) << 56
 	if gt == groupTable {
@@ -59,11 +59,11 @@ func getGroupID(gt groupTpye, tableID int64) groupID {
 	return id
 }
 
-func getGroupType(id groupID) groupTpye {
+func getGroupType(id GroupID) groupTpye {
 	return groupTpye(id >> 56)
 }
 
-func printGroupID(id groupID) string {
+func printGroupID(id GroupID) string {
 	gt := groupTpye(id >> 56)
 	if gt == groupTable {
 		return fmt.Sprintf("%s-%d", gt.String(), id&0x00FFFFFFFFFFFFFF)
@@ -71,9 +71,103 @@ func printGroupID(id groupID) string {
 	return gt.String()
 }
 
+func (db *ReplicationDB) GetGroups() []GroupID {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	groups := make([]GroupID, 0, len(db.taskGroups))
+	for id := range db.taskGroups {
+		groups = append(groups, id)
+	}
+	return groups
+}
+
+// GetAbsent returns the absent spans with the maxSize, push the spans to the buffer
+func (db *ReplicationDB) GetAbsent(buffer []*SpanReplication, maxSize int) []*SpanReplication {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	buffer = buffer[:0]
+	for _, g := range db.taskGroups {
+		for _, stm := range g.absent {
+			buffer = append(buffer, stm)
+			if len(buffer) >= maxSize {
+				break
+			}
+		}
+	}
+	return buffer
+}
+
+func (db *ReplicationDB) GetAbsentByGroup(id GroupID, buffer []*SpanReplication, maxSize int) []*SpanReplication {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	g := db.mustGetGroup(id)
+	for _, stm := range g.absent {
+		buffer = append(buffer, stm)
+		if len(buffer) >= maxSize {
+			break
+		}
+	}
+	return buffer
+}
+
+// GetReplicating returns the replicating spans
+func (db *ReplicationDB) GetReplicating() []*SpanReplication {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	var replicating = make([]*SpanReplication, 0)
+	for _, g := range db.taskGroups {
+		for _, stm := range g.replicating {
+			replicating = append(replicating, stm)
+		}
+	}
+	return replicating
+}
+
+func (db *ReplicationDB) GetReplicatingByGroup(id GroupID) []*SpanReplication {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	g := db.mustGetGroup(id)
+	var replicating = make([]*SpanReplication, 0)
+	for _, stm := range g.replicating {
+		replicating = append(replicating, stm)
+	}
+	return replicating
+}
+
+// GetTaskSizePerNode returns the size of the task per node
+func (db *ReplicationDB) GetTaskSizePerNode() map[node.ID]int {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	sizeMap := make(map[node.ID]int, len(db.mustGetGroup(defaultGroupID).GetNodeTasks()))
+	for _, g := range db.taskGroups {
+		for nodeID, tasks := range g.GetNodeTasks() {
+			sizeMap[nodeID] += len(tasks)
+		}
+	}
+	return sizeMap
+}
+
+func (db *ReplicationDB) GetTaskSizePerNodeByGroup(id GroupID) map[node.ID]int {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	g := db.mustGetGroup(id)
+	sizeMap := make(map[node.ID]int, len(g.GetNodeTasks()))
+	for nodeID, tasks := range g.GetNodeTasks() {
+		sizeMap[nodeID] += len(tasks)
+	}
+	return sizeMap
+}
+
 type replicationTaskGroup struct {
 	changefeedID common.ChangeFeedID
-	groupID      groupID
+	groupID      GroupID
 	groupName    string
 	// group the tasks by the node id for
 	nodeTasks map[node.ID]map[common.DispatcherID]*SpanReplication
@@ -83,7 +177,7 @@ type replicationTaskGroup struct {
 	absent      map[common.DispatcherID]*SpanReplication
 }
 
-func newReplicationTaskGroup(cfID common.ChangeFeedID, id groupID) *replicationTaskGroup {
+func newReplicationTaskGroup(cfID common.ChangeFeedID, id GroupID) *replicationTaskGroup {
 	return &replicationTaskGroup{
 		changefeedID: cfID,
 		groupID:      id,
@@ -95,7 +189,7 @@ func newReplicationTaskGroup(cfID common.ChangeFeedID, id groupID) *replicationT
 	}
 }
 
-func (g *replicationTaskGroup) mustVerifyGroupID(id groupID) {
+func (g *replicationTaskGroup) mustVerifyGroupID(id GroupID) {
 	if g.groupID != id {
 		log.Panic("group id not match", zap.Int64("group", g.groupID), zap.Int64("id", id))
 	}
@@ -217,6 +311,10 @@ func (g *replicationTaskGroup) RemoveSpan(span *SpanReplication) {
 	if len(nodeMap) == 0 {
 		delete(g.nodeTasks, span.GetNodeID())
 	}
+}
+
+func (g *replicationTaskGroup) IsEmpty() bool {
+	return len(g.replicating)+len(g.scheduling)+len(g.absent) == 0
 }
 
 func (g *replicationTaskGroup) GetTaskSizeByNodeID(nodeID node.ID) int {

@@ -34,7 +34,7 @@ type ReplicationDB struct {
 	tableTasks  map[int64]map[common.DispatcherID]*SpanReplication
 	// task group is used for tracking scheduling status, the ddl dispatcher is
 	// not included since it doesn't need to be scheduled
-	taskGroups map[groupID]*replicationTaskGroup
+	taskGroups map[GroupID]*replicationTaskGroup
 
 	ddlSpan *SpanReplication
 
@@ -161,38 +161,6 @@ func (db *ReplicationDB) GetReplicatingSize() int {
 	return sum
 }
 
-// GetReplicating returns the replicating spans
-func (db *ReplicationDB) GetReplicating() []*SpanReplication {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	var replicating = make([]*SpanReplication, 0)
-	for _, g := range db.taskGroups {
-		for _, stm := range g.replicating {
-			replicating = append(replicating, stm)
-		}
-	}
-	return replicating
-}
-
-// GetAbsent returns the absent spans with the maxSize, push the spans to the buffer
-func (db *ReplicationDB) GetAbsent(buffer []*SpanReplication, maxSize int) []*SpanReplication {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	size := 0
-	for _, g := range db.taskGroups {
-		for _, stm := range g.absent {
-			buffer = append(buffer, stm)
-			size++
-			if size >= maxSize {
-				break
-			}
-		}
-	}
-	return buffer
-}
-
 // GetTasksByTableIDs returns the spans by the table ids
 func (db *ReplicationDB) GetTasksByTableIDs(tableIDs ...int64) []*SpanReplication {
 	db.lock.RLock()
@@ -245,20 +213,6 @@ func (db *ReplicationDB) GetTaskByNodeID(id node.ID) []*SpanReplication {
 			zap.Stringer("node", id))
 	}
 	return stms
-}
-
-// GetTaskSizePerNode returns the size of the task per node
-func (db *ReplicationDB) GetTaskSizePerNode() map[node.ID]int {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	sizeMap := make(map[node.ID]int, len(db.mustGetGroup(defaultGroupID).GetNodeTasks()))
-	for _, g := range db.taskGroups {
-		for nodeID, tasks := range g.GetNodeTasks() {
-			sizeMap[nodeID] += len(tasks)
-		}
-	}
-	return sizeMap
 }
 
 // GetTaskSizeBySchemaID returns the size of the task by the schema id
@@ -439,7 +393,11 @@ func (db *ReplicationDB) addAbsentReplicaSetUnLock(tasks ...*SpanReplication) {
 // removeSpanUnLock removes the replica set from the db without lock
 func (db *ReplicationDB) removeSpanUnLock(spans ...*SpanReplication) {
 	for _, span := range spans {
-		db.mustGetGroup(span.groupID).RemoveSpan(span)
+		g := db.mustGetGroup(span.groupID)
+		g.RemoveSpan(span)
+		if g.groupID != defaultGroupID && g.IsEmpty() {
+			delete(db.taskGroups, span.groupID)
+		}
 		tableID := span.Span.TableID
 		schemaID := span.GetSchemaID()
 		delete(db.schemaTasks[schemaID], span.ID)
@@ -487,7 +445,7 @@ func (db *ReplicationDB) getOrCreateGroup(task *SpanReplication) *replicationTas
 	return g
 }
 
-func (db *ReplicationDB) mustGetGroup(groupID groupID) *replicationTaskGroup {
+func (db *ReplicationDB) mustGetGroup(groupID GroupID) *replicationTaskGroup {
 	g, ok := db.taskGroups[groupID]
 	if !ok {
 		log.Panic("group not found", zap.String("group", printGroupID(groupID)))
@@ -500,7 +458,7 @@ func (db *ReplicationDB) reset() {
 	db.schemaTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
 	db.tableTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
 	db.allTasks = make(map[common.DispatcherID]*SpanReplication)
-	db.taskGroups = make(map[groupID]*replicationTaskGroup)
+	db.taskGroups = make(map[GroupID]*replicationTaskGroup)
 	db.taskGroups[defaultGroupID] = newReplicationTaskGroup(db.changefeedID, defaultGroupID)
 	db.hotSpans = NewHotSpans()
 }

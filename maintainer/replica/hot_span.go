@@ -39,7 +39,7 @@ const (
 
 type HotSpans struct {
 	lock          sync.Mutex
-	hotSpanGroups map[groupID]map[common.DispatcherID]*hotSpan
+	hotSpanGroups map[GroupID]map[common.DispatcherID]*hotSpan
 }
 
 type hotSpan struct {
@@ -53,12 +53,12 @@ type hotSpan struct {
 
 func NewHotSpans() *HotSpans {
 	s := &HotSpans{
-		hotSpanGroups: make(map[groupID]map[common.DispatcherID]*hotSpan),
+		hotSpanGroups: make(map[GroupID]map[common.DispatcherID]*hotSpan),
 	}
 	return s
 }
 
-func (s *HotSpans) getOrCreateGroup(groupID groupID) map[common.DispatcherID]*hotSpan {
+func (s *HotSpans) getOrCreateGroup(groupID GroupID) map[common.DispatcherID]*hotSpan {
 	group, ok := s.hotSpanGroups[groupID]
 	if !ok {
 		group = make(map[common.DispatcherID]*hotSpan)
@@ -123,14 +123,14 @@ func (s *HotSpans) updateHotSpan(span *SpanReplication, status *heartbeatpb.Tabl
 	cache.lastUpdateTime = time.Now()
 }
 
-func (s *HotSpans) clearHotSpans(groupID groupID, spans ...*SpanReplication) {
+func (s *HotSpans) clearHotSpans(groupID GroupID, spans ...*SpanReplication) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	log.Info("clear outdated hot spans", zap.Int("count", len(spans)))
 	s.doClear(groupID, spans...)
 }
 
-func (s *HotSpans) doClear(groupID groupID, spans ...*SpanReplication) {
+func (s *HotSpans) doClear(groupID GroupID, spans ...*SpanReplication) {
 	hotSpanCache := s.getOrCreateGroup(groupID)
 	for _, span := range spans {
 		delete(hotSpanCache, span.ID)
