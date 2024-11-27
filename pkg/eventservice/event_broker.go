@@ -536,20 +536,18 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 				}
 			default:
 			}
+			// FIXME: the messages get from the channel should be in different group
 			messages, ok := messageCh.GetMultiple(buf)
 			if !ok {
 				continue
 			}
-			firstM := messages[0]
-			switch firstM.msgType {
-			case pevent.TypeResolvedEvent:
-				// The message is a watermark, we need to cache it, and send it to the dispatcher
-				// when cache is full to reduce the number of messages.
-				for _, m := range messages {
+			for _, m := range messages {
+				switch m.msgType {
+				case pevent.TypeResolvedEvent:
+					// The message is a watermark, we need to cache it, and send it to the dispatcher
+					// when cache is full to reduce the number of messages.
 					c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
-				}
-			case pevent.TypeHandshakeEvent:
-				for _, m := range messages {
+				case pevent.TypeHandshakeEvent:
 					// Check if the dispatcher is initialized, if so, ignore the handshake event.
 					// If the message is a handshake event, we need to reset the dispatcher.
 					d, ok := c.getDispatcher(m.getDispatcherID())
@@ -560,9 +558,12 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 						log.Info("Ignore handshake event since the dispatcher is initialized", zap.Any("dispatcherID", m.getDispatcherID()))
 						continue
 					}
-				}
-			default:
-				for _, m := range messages {
+					tMsg := messaging.NewSingleTargetMessage(
+						m.serverID,
+						messaging.EventCollectorTopic,
+						m.e)
+					c.sendMsg(ctx, tMsg, m.postSendFunc)
+				default:
 					tMsg := messaging.NewSingleTargetMessage(
 						m.serverID,
 						messaging.EventCollectorTopic,
@@ -573,6 +574,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 					c.sendMsg(ctx, tMsg, m.postSendFunc)
 				}
 			}
+			buf = buf[:0]
 		}
 	}()
 }

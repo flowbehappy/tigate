@@ -116,7 +116,7 @@ func (c *UnlimitedChannel[T, G]) GetMultiple(buffer []T, batchBytes ...int) ([]T
 		return c.sizer(v)
 	}
 
-	cap := cap(buffer)
+	capSize := cap(buffer)
 	bytes := 0
 
 	if c.grouper != nil {
@@ -132,7 +132,7 @@ func (c *UnlimitedChannel[T, G]) GetMultiple(buffer []T, batchBytes ...int) ([]T
 			}
 
 			curGroup := c.grouper(*v)
-			if curGroup != lastGroup && (len(buffer) >= cap || bytes >= maxBytes) {
+			if curGroup != lastGroup && (len(buffer) >= capSize || bytes >= maxBytes) {
 				break
 			}
 			lastGroup = curGroup
@@ -144,7 +144,7 @@ func (c *UnlimitedChannel[T, G]) GetMultiple(buffer []T, batchBytes ...int) ([]T
 		}
 	} else {
 		for {
-			if len(buffer) >= cap || bytes >= maxBytes {
+			if len(buffer) >= capSize || bytes >= maxBytes {
 				break
 			}
 			v, ok := c.queue.PopFront()
