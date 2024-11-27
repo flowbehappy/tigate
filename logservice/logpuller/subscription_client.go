@@ -357,6 +357,7 @@ func (s *SubscriptionClient) Run(ctx context.Context, consume func(e LogEvent) e
 // Close closes the client. Must be called after `Run` returns.
 func (s *SubscriptionClient) Close(ctx context.Context) error {
 	// FIXME: close and drain all channels
+	s.ds.Close()
 	return nil
 }
 

@@ -237,7 +237,10 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 			default:
 				log.Panic("unknown event type", zap.Any("event", event))
 			}
-			s.client.ds.In() <- regionEvent
+			s.client.ds.In(regionEventPath{
+				subID:    event.RequestId,
+				regionID: regionID,
+			}) <- regionEvent
 		} else {
 			log.Warn("region request worker receives a region event for an untracked region",
 				zap.Int("subscriptionClientID", int(s.client.id)),
@@ -254,7 +257,10 @@ func (s *regionRequestWorker) dispatchResolvedTsEvent(resolvedTsEvent *cdcpb.Res
 		if state := s.getRegionState(subscriptionID, regionID); state != nil {
 			// Update the resolvedTs of the region here for metrics.
 			state.region.subscribedSpan.resolvedTs.Store(resolvedTsEvent.Ts)
-			s.client.ds.In() <- regionEvent{
+			s.client.ds.In(regionEventPath{
+				subID:    resolvedTsEvent.RequestId,
+				regionID: regionID,
+			}) <- regionEvent{
 				state:      state,
 				resolvedTs: resolvedTsEvent.Ts,
 			}
