@@ -131,7 +131,9 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 			continue
 		}
 		stm.UpdateStatus(status)
-		c.schedulerController.UpdateStatus(stm, status)
+		if c.spanReplicationEnabled {
+			c.replicationDB.UpdateHotSpan(stm, status)
+		}
 	}
 }
 
@@ -358,19 +360,13 @@ func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, 
 	})
 }
 
-func (c *Controller) addNewSpans(schemaID int64,
-	tableSpans []*heartbeatpb.TableSpan, startTs uint64) {
-	for _, newSpan := range tableSpans {
+func (c *Controller) addNewSpans(schemaID int64, tableSpans []*heartbeatpb.TableSpan, startTs uint64) {
+	for _, span := range tableSpans {
 		dispatcherID := common.NewDispatcherID()
-		c.addNewSpan(dispatcherID, schemaID, newSpan, startTs)
+		replicaSet := replica.NewReplicaSet(c.changefeedID,
+			dispatcherID, c.tsoClient, schemaID, span, startTs)
+		c.replicationDB.AddAbsentReplicaSet(replicaSet)
 	}
-}
-
-func (c *Controller) addNewSpan(dispatcherID common.DispatcherID, schemaID int64,
-	span *heartbeatpb.TableSpan, startTs uint64) {
-	replicaSet := replica.NewReplicaSet(c.changefeedID,
-		dispatcherID, c.tsoClient, schemaID, span, startTs)
-	c.replicationDB.AddAbsentReplicaSet(replicaSet)
 }
 
 func (c *Controller) loadTables(startTs uint64) ([]commonEvent.Table, error) {

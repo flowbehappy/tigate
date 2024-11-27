@@ -14,6 +14,7 @@
 package replica
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/tiflow/pkg/retry"
+	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -64,11 +66,13 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 			CheckpointTs: checkpointTs,
 		}),
 	}
+	r.initGroupID()
 	log.Info("new replica set created",
 		zap.String("changefeed id", cfID.Name()),
 		zap.String("id", id.String()),
 		zap.Int64("schema id", SchemaID),
 		zap.Int64("table id", span.TableID),
+		zap.String("group id", printGroupID(r.groupID)),
 		zap.String("start", hex.EncodeToString(span.StartKey)),
 		zap.String("end", hex.EncodeToString(span.EndKey)))
 	return r
@@ -92,6 +96,7 @@ func NewWorkingReplicaSet(
 		status:       atomic.NewPointer(status),
 		tsoClient:    tsoClient,
 	}
+	r.initGroupID()
 	log.Info("new working replica set created",
 		zap.String("changefeed id", cfID.Name()),
 		zap.String("id", id.String()),
@@ -100,9 +105,20 @@ func NewWorkingReplicaSet(
 		zap.String("component status", status.ComponentStatus.String()),
 		zap.Int64("schema id", SchemaID),
 		zap.Int64("table id", span.TableID),
+		zap.String("group id", printGroupID(r.groupID)),
 		zap.String("start", hex.EncodeToString(span.StartKey)),
 		zap.String("end", hex.EncodeToString(span.EndKey)))
 	return r
+}
+
+func (r *SpanReplication) initGroupID() {
+	r.groupID = defaultGroupID
+	span := r.Span
+	// check if the table is split
+	tableSpan := spanz.TableIDToComparableSpan(span.TableID)
+	if !bytes.Equal(span.StartKey, tableSpan.StartKey) || !bytes.Equal(span.EndKey, tableSpan.EndKey) {
+		r.groupID = getGroupID(groupTable, span.TableID)
+	}
 }
 
 func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {

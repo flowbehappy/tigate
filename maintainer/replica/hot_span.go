@@ -19,13 +19,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
+	"go.uber.org/zap"
 )
 
 const (
 	HotSpanWriteThreshold = 1024 * 1024 // 1MB per second
 	HotSpanScoreThreshold = 10
+	HotSpanMaxLevel       = 1
 	clearTimeout          = 300 // seconds
 
 	// TODO: use the imbalance threshold to calculate the score.
@@ -35,8 +38,8 @@ const (
 )
 
 type HotSpans struct {
-	lock         sync.Mutex
-	hotSpanCache map[common.DispatcherID]*hotSpan
+	lock          sync.Mutex
+	hotSpanGroups map[groupID]map[common.DispatcherID]*hotSpan
 }
 
 type hotSpan struct {
@@ -49,12 +52,22 @@ type hotSpan struct {
 }
 
 func NewHotSpans() *HotSpans {
-	return &HotSpans{
-		hotSpanCache: make(map[common.DispatcherID]*hotSpan),
+	s := &HotSpans{
+		hotSpanGroups: make(map[groupID]map[common.DispatcherID]*hotSpan),
 	}
+	return s
 }
 
-func (s *HotSpans) GetBatch(cache []*SpanReplication) []*SpanReplication {
+func (s *HotSpans) getOrCreateGroup(groupID groupID) map[common.DispatcherID]*hotSpan {
+	group, ok := s.hotSpanGroups[groupID]
+	if !ok {
+		group = make(map[common.DispatcherID]*hotSpan)
+		s.hotSpanGroups[groupID] = group
+	}
+	return group
+}
+
+func (s *HotSpans) getBatch(cache []*SpanReplication) []*SpanReplication {
 	batchSize := cap(cache)
 	if batchSize == 0 {
 		batchSize = 1024
@@ -64,80 +77,108 @@ func (s *HotSpans) GetBatch(cache []*SpanReplication) []*SpanReplication {
 
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	hotSpanCache := s.getOrCreateGroup(defaultGroupID)
 	outdatedSpans := make([]*SpanReplication, 0)
-	for _, span := range s.hotSpanCache {
+	for _, span := range hotSpanCache {
 		if time.Since(span.lastUpdateTime) > clearTimeout*time.Second {
 			outdatedSpans = append(outdatedSpans, span.SpanReplication)
-		} else if span.score < HotSpanScoreThreshold {
+		} else if span.score >= HotSpanScoreThreshold {
 			cache = append(cache, span.SpanReplication)
 			if len(cache) >= batchSize {
 				break
 			}
 		}
 	}
-	s.doClear(outdatedSpans...)
+	s.doClear(defaultGroupID, outdatedSpans...)
 	return cache
 }
 
-func (s *HotSpans) UpdateHotSpan(span *SpanReplication, status *heartbeatpb.TableSpanStatus) {
+func (s *HotSpans) updateHotSpan(span *SpanReplication, status *heartbeatpb.TableSpanStatus) {
 	if status.ComponentStatus != heartbeatpb.ComponentState_Working {
 		return
 	}
 
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	hotSpanCache := s.getOrCreateGroup(span.groupID)
 	if status.EventSizePerSecond < HotSpanWriteThreshold {
-		span, ok := s.hotSpanCache[span.ID]
+		span, ok := hotSpanCache[span.ID]
 		if !ok {
 			return
 		}
 		span.score--
 		if span.score == 0 {
-			delete(s.hotSpanCache, span.ID)
+			delete(hotSpanCache, span.ID)
 		}
 	}
-
-	if _, ok := s.hotSpanCache[span.ID]; !ok {
-		s.hotSpanCache[span.ID] = &hotSpan{
+	cache, ok := hotSpanCache[span.ID]
+	if !ok {
+		cache = &hotSpan{
 			SpanReplication: span,
-			score:           1,
+			score:           0,
 		}
-	} else {
-		s.hotSpanCache[span.ID].score++
+		hotSpanCache[span.ID] = cache
 	}
+	cache.score++
+	cache.lastUpdateTime = time.Now()
 }
 
-func (s *HotSpans) ClearHotSpans(spans ...*SpanReplication) {
+func (s *HotSpans) clearHotSpans(groupID groupID, spans ...*SpanReplication) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	s.doClear(spans...)
+	log.Info("clear outdated hot spans", zap.Int("count", len(spans)))
+	s.doClear(groupID, spans...)
 }
 
-func (s *HotSpans) doClear(spans ...*SpanReplication) {
+func (s *HotSpans) doClear(groupID groupID, spans ...*SpanReplication) {
+	hotSpanCache := s.getOrCreateGroup(groupID)
 	for _, span := range spans {
-		delete(s.hotSpanCache, span.ID)
+		delete(hotSpanCache, span.ID)
 	}
 }
 
-func (s *HotSpans) String() string {
+func (s *HotSpans) stat() string {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	if len(s.hotSpanCache) == 0 {
+	var res strings.Builder
+	total := 0
+	for groupID, hotSpanCache := range s.hotSpanGroups {
+		res.WriteString("[")
+		res.WriteString(printGroupID(groupID))
+		cnt := [HotSpanScoreThreshold + 1]int{}
+		for _, span := range hotSpanCache {
+			score := min(HotSpanScoreThreshold, span.score)
+			cnt[score]++
+			total++
+		}
+		for i := 1; i <= 10; i++ {
+			res.WriteString("score ")
+			res.WriteString(strconv.Itoa(i))
+			res.WriteString("->")
+			res.WriteString(strconv.Itoa(cnt[i]))
+			res.WriteString("; ")
+		}
+		res.WriteString("]")
+	}
+	if total == 0 {
 		return "No hot spans"
 	}
-
-	cnt := [10]int{}
-	for _, span := range s.hotSpanCache {
-		cnt[span.score]++
-	}
-	var res strings.Builder
-	for i := 1; i <= 10; i++ {
-		res.WriteString("score ")
-		res.WriteString(strconv.Itoa(i))
-		res.WriteString("->")
-		res.WriteString(strconv.Itoa(cnt[i-1]))
-		res.WriteString("; ")
-	}
 	return res.String()
+}
+
+func (db *ReplicationDB) UpdateHotSpan(span *SpanReplication, status *heartbeatpb.TableSpanStatus) {
+	db.hotSpans.updateHotSpan(span, status)
+}
+
+func (db *ReplicationDB) ClearHotSpans(spans ...*SpanReplication) {
+	db.hotSpans.clearHotSpans(defaultGroupID, spans...)
+}
+
+func (db *ReplicationDB) GetHotSpans(cache []*SpanReplication) []*SpanReplication {
+	return db.hotSpans.getBatch(cache)
+}
+
+func (db *ReplicationDB) GetHotSpanStat() string {
+	return db.hotSpans.stat()
 }

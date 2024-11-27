@@ -32,13 +32,16 @@ type ReplicationDB struct {
 	// group the tasks by the schema id, and table id for fast access
 	schemaTasks map[int64]map[common.DispatcherID]*SpanReplication
 	tableTasks  map[int64]map[common.DispatcherID]*SpanReplication
-	// tasks within a group are evenly scheduled to each node
+	// task group is used for tracking scheduling status, the ddl dispatcher is
+	// not included since it doesn't need to be scheduled
 	taskGroups map[groupID]*replicationTaskGroup
 
 	ddlSpan *SpanReplication
 
 	// LOCK protects the above maps
 	lock sync.RWMutex
+
+	hotSpans *HotSpans
 }
 
 // NewReplicaSetDB creates a new ReplicationDB and initializes the maps
@@ -232,7 +235,7 @@ func (db *ReplicationDB) GetTaskByNodeID(id node.ID) []*SpanReplication {
 
 	var stms []*SpanReplication
 	for _, g := range db.taskGroups {
-		for _, value := range g.nodeTasks[id] {
+		for _, value := range g.GetNodeTasks()[id] {
 			stms = append(stms, value)
 		}
 	}
@@ -249,9 +252,9 @@ func (db *ReplicationDB) GetTaskSizePerNode() map[node.ID]int {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	sizeMap := make(map[node.ID]int, len(db.mustGetGroup(defaultGroupID).nodeTasks))
+	sizeMap := make(map[node.ID]int, len(db.mustGetGroup(defaultGroupID).GetNodeTasks()))
 	for _, g := range db.taskGroups {
-		for nodeID, tasks := range g.nodeTasks {
+		for nodeID, tasks := range g.GetNodeTasks() {
 			sizeMap[nodeID] += len(tasks)
 		}
 	}
@@ -298,14 +301,6 @@ func (db *ReplicationDB) GetTaskSizeByNodeID(id node.ID) int {
 	return sum
 }
 
-// AddAbsentReplicaSet adds the replica set to the absent map
-func (db *ReplicationDB) AddAbsentReplicaSet(tasks ...*SpanReplication) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
-	db.addAbsentReplicaSetUnLock(tasks...)
-}
-
 // ReplaceReplicaSet replaces the old replica set with the new spans
 func (db *ReplicationDB) ReplaceReplicaSet(old *SpanReplication, newSpans []*heartbeatpb.TableSpan, checkpointTs uint64) bool {
 	db.lock.Lock()
@@ -327,7 +322,6 @@ func (db *ReplicationDB) ReplaceReplicaSet(old *SpanReplication, newSpans []*hea
 			old.GetTsoClient(),
 			old.GetSchemaID(),
 			span, checkpointTs)
-		// TODO: init groupID
 		news = append(news, new)
 	}
 
@@ -343,7 +337,16 @@ func (db *ReplicationDB) AddReplicatingSpan(task *SpanReplication) {
 	defer db.lock.Unlock()
 	db.allTasks[task.ID] = task
 	db.addToSchemaAndTableMap(task)
-	db.mustGetGroup(task.groupID).AddReplicatingSpan(task)
+	g := db.getOrCreateGroup(task)
+	g.AddReplicatingSpan(task)
+}
+
+// AddAbsentReplicaSet adds the replica set to the absent map
+func (db *ReplicationDB) AddAbsentReplicaSet(tasks ...*SpanReplication) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	db.addAbsentReplicaSetUnLock(tasks...)
 }
 
 // MarkSpanAbsent move the span to the absent status
@@ -427,7 +430,8 @@ func (db *ReplicationDB) BindSpanToNode(old, new node.ID, task *SpanReplication)
 func (db *ReplicationDB) addAbsentReplicaSetUnLock(tasks ...*SpanReplication) {
 	for _, task := range tasks {
 		db.allTasks[task.ID] = task
-		db.mustGetGroup(task.groupID).AddAbsentReplicaSet(task)
+		g := db.getOrCreateGroup(task)
+		g.AddAbsentReplicaSet(task)
 		db.addToSchemaAndTableMap(task)
 	}
 }
@@ -471,14 +475,16 @@ func (db *ReplicationDB) addToSchemaAndTableMap(task *SpanReplication) {
 	tableMap[task.ID] = task
 }
 
-func (db *ReplicationDB) addTaskToGroupUnLock(task *SpanReplication, gt groupTpye) {
-	groupID := getGroupID(gt, task.Span.TableID)
+func (db *ReplicationDB) getOrCreateGroup(task *SpanReplication) *replicationTaskGroup {
+	groupID := task.groupID
 	g, ok := db.taskGroups[groupID]
 	if !ok {
 		g = newReplicationTaskGroup(db.changefeedID, groupID)
-		log.Info("create new task group", zap.Stringer("groupType", gt), zap.Int64("tableID", task.Span.TableID))
+		db.taskGroups[groupID] = g
+		log.Info("create new task group", zap.Stringer("groupType", getGroupType(groupID)),
+			zap.Int64("tableID", task.Span.TableID))
 	}
-	g.addTask(task)
+	return g
 }
 
 func (db *ReplicationDB) mustGetGroup(groupID groupID) *replicationTaskGroup {
@@ -489,12 +495,6 @@ func (db *ReplicationDB) mustGetGroup(groupID groupID) *replicationTaskGroup {
 	return g
 }
 
-// updateNodeMap updates the node map, it will remove the task from the old node and add it to the new node
-func (db *ReplicationDB) updateNodeMap(old, new node.ID, task *SpanReplication) {
-	g := db.mustGetGroup(task.groupID)
-	g.updateNodeMap(old, new, task)
-}
-
 // reset resets the maps of ReplicationDB
 func (db *ReplicationDB) reset() {
 	db.schemaTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
@@ -502,6 +502,7 @@ func (db *ReplicationDB) reset() {
 	db.allTasks = make(map[common.DispatcherID]*SpanReplication)
 	db.taskGroups = make(map[groupID]*replicationTaskGroup)
 	db.taskGroups[defaultGroupID] = newReplicationTaskGroup(db.changefeedID, defaultGroupID)
+	db.hotSpans = NewHotSpans()
 }
 
 func (db *ReplicationDB) putDDLDispatcher(ddlSpan *SpanReplication) {

@@ -27,7 +27,7 @@ type groupTpye int8
 
 const (
 	groupDefault groupTpye = iota
-	groupTableHeader
+	groupTable
 	groupHotLevel1
 )
 
@@ -39,10 +39,10 @@ func (gt groupTpye) String() string {
 	switch gt {
 	case groupDefault:
 		return "default"
-	case groupTableHeader:
-		return "tableHeader"
+	case groupTable:
+		return "table"
 	default:
-		return "groupHotLevel" + strconv.Itoa(int(gt-groupHotLevel1))
+		return "HotLevel" + strconv.Itoa(int(gt-groupHotLevel1))
 	}
 }
 
@@ -53,15 +53,19 @@ const defaultGroupID groupID = 0
 func getGroupID(gt groupTpye, tableID int64) groupID {
 	// use high 8 bits to store the group type
 	id := int64(gt) << 56
-	if gt == groupTableHeader {
+	if gt == groupTable {
 		return id | tableID
 	}
 	return id
 }
 
+func getGroupType(id groupID) groupTpye {
+	return groupTpye(id >> 56)
+}
+
 func printGroupID(id groupID) string {
 	gt := groupTpye(id >> 56)
-	if gt == groupTableHeader {
+	if gt == groupTable {
 		return fmt.Sprintf("%s-%d", gt.String(), id&0x00FFFFFFFFFFFFFF)
 	}
 	return gt.String()
@@ -97,13 +101,9 @@ func (g *replicationTaskGroup) mustVerifyGroupID(id groupID) {
 	}
 }
 
-func (g *replicationTaskGroup) addTask(task *SpanReplication) {
-	g.mustVerifyGroupID(task.groupID)
-	g.absent[task.ID] = task
-}
-
 // MarkSpanAbsent move the span to the absent status
 func (g *replicationTaskGroup) MarkSpanAbsent(span *SpanReplication) {
+	g.mustVerifyGroupID(span.groupID)
 	log.Info("marking span absent",
 		zap.String("changefeed", g.changefeedID.Name()),
 		zap.String("group", g.groupName),
@@ -120,6 +120,7 @@ func (g *replicationTaskGroup) MarkSpanAbsent(span *SpanReplication) {
 
 // MarkSpanScheduling move the span to the scheduling map
 func (g *replicationTaskGroup) MarkSpanScheduling(span *SpanReplication) {
+	g.mustVerifyGroupID(span.groupID)
 	log.Info("marking span scheduling",
 		zap.String("changefeed", g.changefeedID.Name()),
 		zap.String("group", g.groupName),
@@ -131,19 +132,21 @@ func (g *replicationTaskGroup) MarkSpanScheduling(span *SpanReplication) {
 }
 
 // AddReplicatingSpan adds a replicating the replicating map, that means the task is already scheduled to a dispatcher
-func (g *replicationTaskGroup) AddReplicatingSpan(task *SpanReplication) {
-	nodeID := task.GetNodeID()
+func (g *replicationTaskGroup) AddReplicatingSpan(span *SpanReplication) {
+	g.mustVerifyGroupID(span.groupID)
+	nodeID := span.GetNodeID()
 	log.Info("add an replicating span",
 		zap.String("changefeed", g.changefeedID.Name()),
 		zap.String("group", g.groupName),
 		zap.String("nodeID", nodeID.String()),
-		zap.String("span", task.ID.String()))
-	g.replicating[task.ID] = task
-	g.updateNodeMap("", nodeID, task)
+		zap.String("span", span.ID.String()))
+	g.replicating[span.ID] = span
+	g.updateNodeMap("", nodeID, span)
 }
 
 // MarkSpanReplicating move the span to the replicating map
 func (g *replicationTaskGroup) MarkSpanReplicating(span *SpanReplication) {
+	g.mustVerifyGroupID(span.groupID)
 	log.Info("marking span replicating",
 		zap.String("changefeed", g.changefeedID.Name()),
 		zap.String("group", g.groupName),
@@ -154,28 +157,29 @@ func (g *replicationTaskGroup) MarkSpanReplicating(span *SpanReplication) {
 	g.replicating[span.ID] = span
 }
 
-func (g *replicationTaskGroup) BindSpanToNode(old, new node.ID, task *SpanReplication) {
+func (g *replicationTaskGroup) BindSpanToNode(old, new node.ID, span *SpanReplication) {
+	g.mustVerifyGroupID(span.groupID)
 	log.Info("bind span to node",
 		zap.String("changefeed", g.changefeedID.Name()),
 		zap.String("group", g.groupName),
-		zap.String("span", task.ID.String()),
+		zap.String("span", span.ID.String()),
 		zap.String("oldNode", old.String()),
 		zap.String("node", new.String()))
 
-	task.SetNodeID(new)
-	delete(g.absent, task.ID)
-	delete(g.replicating, task.ID)
-	g.scheduling[task.ID] = task
-	g.updateNodeMap(old, new, task)
+	span.SetNodeID(new)
+	delete(g.absent, span.ID)
+	delete(g.replicating, span.ID)
+	g.scheduling[span.ID] = span
+	g.updateNodeMap(old, new, span)
 }
 
 // updateNodeMap updates the node map, it will remove the task from the old node and add it to the new node
-func (g *replicationTaskGroup) updateNodeMap(old, new node.ID, task *SpanReplication) {
+func (g *replicationTaskGroup) updateNodeMap(old, new node.ID, span *SpanReplication) {
 	//clear from the old node
 	if old != "" {
 		oldMap, ok := g.nodeTasks[old]
 		if ok {
-			delete(oldMap, task.ID)
+			delete(oldMap, span.ID)
 			if len(oldMap) == 0 {
 				delete(g.nodeTasks, old)
 			}
@@ -188,18 +192,18 @@ func (g *replicationTaskGroup) updateNodeMap(old, new node.ID, task *SpanReplica
 			newMap = make(map[common.DispatcherID]*SpanReplication)
 			g.nodeTasks[new] = newMap
 		}
-		newMap[task.ID] = task
+		newMap[span.ID] = span
 	}
 }
 
 // addAbsentReplicaSetUnLock adds the replica set to the absent map
-func (g *replicationTaskGroup) AddAbsentReplicaSet(tasks ...*SpanReplication) {
-	for _, task := range tasks {
-		g.absent[task.ID] = task
-	}
+func (g *replicationTaskGroup) AddAbsentReplicaSet(span *SpanReplication) {
+	g.mustVerifyGroupID(span.groupID)
+	g.absent[span.ID] = span
 }
 
 func (g *replicationTaskGroup) RemoveSpan(span *SpanReplication) {
+	g.mustVerifyGroupID(span.groupID)
 	log.Info("remove span",
 		zap.String("changefeed", g.changefeedID.Name()),
 		zap.String("group", g.groupName),
@@ -217,4 +221,8 @@ func (g *replicationTaskGroup) RemoveSpan(span *SpanReplication) {
 
 func (g *replicationTaskGroup) GetTaskSizeByNodeID(nodeID node.ID) int {
 	return len(g.nodeTasks[nodeID])
+}
+
+func (g *replicationTaskGroup) GetNodeTasks() map[node.ID]map[common.DispatcherID]*SpanReplication {
+	return g.nodeTasks
 }

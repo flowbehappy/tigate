@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/maintainer/split"
@@ -73,9 +72,9 @@ func (s *splitScheduler) Execute() time.Time {
 	}
 
 	log.Info("check split status", zap.String("changefeed", s.changefeedID.Name()),
-		zap.Stringer("hotSpans", s.hotSpans))
+		zap.String("hotSpans", s.db.GetHotSpanStat()))
 
-	cachedSpans := s.hotSpans.GetBatch(s.cachedSpans)
+	cachedSpans := s.db.GetHotSpans(s.cachedSpans)
 	checkedIndex, start := 0, time.Now()
 	for ; checkedIndex < len(cachedSpans); checkedIndex++ {
 		if time.Since(start) > s.maxCheckTime {
@@ -95,14 +94,10 @@ func (s *splitScheduler) Execute() time.Time {
 		}
 	}
 	s.lastCheckTime = time.Now()
-	s.hotSpans.ClearHotSpans(cachedSpans[:checkedIndex]...)
+	s.db.ClearHotSpans(cachedSpans[:checkedIndex]...)
 	return s.lastCheckTime.Add(s.checkInterval)
 }
 
 func (s *splitScheduler) Name() string {
 	return SplitScheduler
-}
-
-func (s *splitScheduler) updateSpanStatus(span *replica.SpanReplication, status *heartbeatpb.TableSpanStatus) {
-	s.hotSpans.UpdateHotSpan(span, status)
 }

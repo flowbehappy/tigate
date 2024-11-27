@@ -418,6 +418,7 @@ func TestDynamicSplitTableBasic(t *testing.T) {
 
 	totalSpan := spanz.TableIDToComparableSpan(1)
 	for i := 1; i <= 2; i++ {
+		totalSpan = spanz.TableIDToComparableSpan(int64(i))
 		span := &heartbeatpb.TableSpan{TableID: int64(i), StartKey: totalSpan.StartKey, EndKey: totalSpan.EndKey}
 		dispatcherID := common.NewDispatcherID()
 		spanReplica := replica.NewReplicaSet(cfID, dispatcherID, tsoClient, 1, span, 1)
@@ -440,7 +441,7 @@ func TestDynamicSplitTableBasic(t *testing.T) {
 
 	for _, task := range replicas {
 		for cnt := 0; cnt < replica.HotSpanScoreThreshold; cnt++ {
-			s.schedulerController.UpdateStatus(task, &heartbeatpb.TableSpanStatus{
+			s.replicationDB.UpdateHotSpan(task, &heartbeatpb.TableSpanStatus{
 				ID:                 task.ID.ToPB(),
 				ComponentStatus:    heartbeatpb.ComponentState_Working,
 				CheckpointTs:       10,
