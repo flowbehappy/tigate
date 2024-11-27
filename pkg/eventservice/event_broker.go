@@ -519,7 +519,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 
 func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int) {
 	c.wg.Add(1)
-	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 100)
+	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 1)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	messageCh := c.getMessageCh(workerIndex)
 	buf := make([]wrapEvent, 0, 8192)
@@ -537,7 +537,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 			default:
 			}
 			// FIXME: the messages get from the channel should be in different group
-			messages, ok := messageCh.GetMultiple(buf)
+			messages, ok := messageCh.GetMultipleSingleGroup(buf)
 			if !ok {
 				continue
 			}
