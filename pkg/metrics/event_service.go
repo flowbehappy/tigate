@@ -108,6 +108,13 @@ var (
 			Name:      "pending_scan_task_count",
 			Help:      "The number of pending scan tasks",
 		})
+	EventServiceMessageChannelLen = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "message_channel_len",
+			Help:      "The length of the message channel",
+		})
 )
 
 // InitMetrics registers all metrics in this file.
@@ -124,4 +131,5 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceScanTaskQueueDuration)
 	registry.MustRegister(EventServiceTaskHandleDuration)
 	registry.MustRegister(EventServicePendingScanTaskCount)
+	registry.MustRegister(EventServiceMessageChannelLen)
 }

@@ -643,7 +643,7 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
 	c.wg.Add(1)
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(10 * time.Second)
 	go func() {
 		defer c.wg.Done()
 		log.Info("update metrics goroutine is started")
@@ -684,6 +684,11 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 					c.metricEventServiceSentResolvedTs.Set(lag)
 				}
 
+				chLen := 0
+				for _, ch := range c.messageCh {
+					chLen += ch.Len()
+				}
+				metrics.EventServiceMessageChannelLen.Set(float64(chLen))
 				metricEventBrokerDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 				metricEventBrokerDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 				metricEventBrokerPendingScanTaskCount.Set(float64(len(c.taskQueue)))
