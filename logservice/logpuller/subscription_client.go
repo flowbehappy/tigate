@@ -66,6 +66,9 @@ var (
 	metricFeedRPCCtxUnavailable       = metrics.EventFeedErrorCounter.WithLabelValues("RPCCtxUnavailable")
 	metricStoreSendRequestErr         = metrics.EventFeedErrorCounter.WithLabelValues("SendRequestToStore")
 	metricKvIsBusyCounter             = metrics.EventFeedErrorCounter.WithLabelValues("KvIsBusy")
+
+	metricSubscriptionClientDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("subscription-client")
+	metricSubscriptionClientDSChannelSize     = metrics.DynamicStreamEventChanSize.WithLabelValues("subscription-client")
 )
 
 // To generate an ID for a new subscription.
@@ -272,6 +275,25 @@ func (s *SubscriptionClient) initMetrics() {
 	s.metrics.batchResolvedSize = metrics.BatchResolvedEventSize.WithLabelValues(id)
 }
 
+func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			dsMetrics := s.ds.GetMetrics()
+			if dsMetrics.MinHandledTS != 0 {
+				lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandledTS)) / 1e3
+				metrics.SubscriptionClientResolvedTsLagGauge.Set(lag)
+			}
+			metricSubscriptionClientDSChannelSize.Set(float64(dsMetrics.EventChanSize))
+			metricSubscriptionClientDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
+		}
+	}
+}
+
 // Subscribe the given table span.
 // NOTE: `span.TableID` must be set correctly.
 // It new a subscribedSpan and store it in `s.totalSpans`,
@@ -342,6 +364,7 @@ func (s *SubscriptionClient) Run(ctx context.Context, consume func(e LogEvent) e
 
 	g, ctx := errgroup.WithContext(ctx)
 
+	g.Go(func() error { return s.updateMetrics(ctx) })
 	g.Go(func() error { return s.handleRangeTasks(ctx) })
 	g.Go(func() error { return s.handleRegions(ctx, g) })
 	g.Go(func() error { return s.handleErrors(ctx) })
