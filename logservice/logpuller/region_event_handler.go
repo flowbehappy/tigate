@@ -129,6 +129,11 @@ func handleEventEntries(state *regionFeedState, worker *regionRequestWorker, ent
 	}
 
 	for _, entry := range entries.Entries.GetEntries() {
+		log.Info("handleEventEntries",
+			zap.Uint64("startTs", entry.StartTs),
+			zap.Uint64("commitTs", entry.CommitTs),
+			zap.Any("type", entry.Type),
+			zap.Any("opType", entry.OpType))
 		switch entry.Type {
 		case cdcpb.Event_INITIALIZED:
 			state.setInitialized()
