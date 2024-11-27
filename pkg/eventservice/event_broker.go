@@ -525,7 +525,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 
 func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int) {
 	c.wg.Add(1)
-	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 300)
+	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 1)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	go func() {
 		defer c.wg.Done()
