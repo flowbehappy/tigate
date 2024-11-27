@@ -15,7 +15,6 @@ package logpuller
 
 import (
 	"context"
-	"encoding/binary"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/pingcap/tiflow/pkg/util"
-	"github.com/pingcap/tiflow/pkg/util/seahash"
 	"github.com/pingcap/tiflow/pkg/version"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -59,16 +57,6 @@ type regionRequestWorker struct {
 
 		subscriptions map[SubscriptionID]regionFeedStates
 	}
-
-	tsBatches struct {
-		sync.Mutex
-		events []statefulEvent
-	}
-
-	// used to indicate whether there are new pending ts events for every processores in dispatchResolvedTs
-	boolCache []bool
-	// used to avoid repeated hash calculation in dispatchResolvedTs
-	slotCache map[uint64]int
 }
 
 func newRegionRequestWorker(
@@ -83,15 +71,8 @@ func newRegionRequestWorker(
 		client:     client,
 		store:      store,
 		requestsCh: make(chan regionInfo, 256), // 256 is an arbitrary number.
-
-		boolCache: make([]bool, len(client.changeEventProcessors)),
-		slotCache: make(map[uint64]int),
 	}
 	worker.requestedRegions.subscriptions = make(map[SubscriptionID]regionFeedStates)
-	worker.tsBatches.events = make([]statefulEvent, len(client.changeEventProcessors))
-	for i := range worker.tsBatches.events {
-		worker.tsBatches.events[i].worker = worker
-	}
 
 	waitForPreFetching := func() error {
 		if worker.preFetchForConnecting != nil {
@@ -126,9 +107,6 @@ func newRegionRequestWorker(
 			for _, m := range worker.clearRegionStates() {
 				for _, state := range m {
 					state.markStopped(&sendRequestToStoreErr{})
-					sfEvent := newEventItem(nil, state, worker)
-					slot := hashRegionID(state.region.verID.GetID(), len(client.changeEventProcessors))
-					_ = client.changeEventProcessors[slot].sendEvent(ctx, sfEvent)
 				}
 			}
 			// The store may fail forever, so we need try to re-schedule al pending regions.
@@ -194,7 +172,6 @@ func (s *regionRequestWorker) run(ctx context.Context, credential *security.Cred
 		return s.receiveAndDispatchChangeEventsToProcessor(gctx, cc)
 	})
 	g.Go(func() error { return s.processRegionSendTask(gctx, cc) })
-	g.Go(func() error { return s.sendBatchedResolvedTs(gctx) })
 	_ = g.Wait()
 	return isCanceled()
 }
@@ -220,13 +197,66 @@ func (s *regionRequestWorker) receiveAndDispatchChangeEventsToProcessor(
 			return errors.Trace(err)
 		}
 		if len(changeEvent.Events) > 0 {
-			if err := s.dispatchRegionChangeEvents(ctx, changeEvent.Events); err != nil {
-				return err
-			}
+			s.dispatchRegionChangeEvents(ctx, changeEvent.Events)
 		}
 		if changeEvent.ResolvedTs != nil {
-			if err := s.dispatchResolvedTs(changeEvent.ResolvedTs); err != nil {
-				return err
+			s.dispatchResolvedTsEvent(changeEvent.ResolvedTs)
+		}
+	}
+}
+
+func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, events []*cdcpb.Event) {
+	for _, event := range events {
+		regionID := event.RegionId
+		subscriptionID := SubscriptionID(event.RequestId)
+
+		state := s.getRegionState(subscriptionID, regionID)
+
+		if state != nil {
+			regionEvent := regionEvent{
+				state: state,
+			}
+			switch eventData := event.Event.(type) {
+			case *cdcpb.Event_Entries_:
+				regionEvent.entries = eventData
+			case *cdcpb.Event_Admin_:
+				// ignore
+			case *cdcpb.Event_Error:
+				log.Debug("region request worker receives a region error",
+					zap.Int("subscriptionClientID", int(s.client.id)),
+					zap.Uint64("workerID", s.workerID),
+					zap.Uint64("subscriptionID", uint64(subscriptionID)),
+					zap.Uint64("regionID", event.RegionId),
+					zap.Bool("stateIsNil", state == nil),
+					zap.Any("error", eventData.Error))
+				regionEvent.error = eventData
+			case *cdcpb.Event_ResolvedTs:
+				regionEvent.resolvedTs = eventData.ResolvedTs
+			case *cdcpb.Event_LongTxn_:
+				// ignore
+			default:
+				log.Panic("unknown event type", zap.Any("event", event))
+			}
+			s.client.ds.In() <- regionEvent
+		} else {
+			log.Warn("region request worker receives a region event for an untracked region",
+				zap.Int("subscriptionClientID", int(s.client.id)),
+				zap.Uint64("workerID", s.workerID),
+				zap.Uint64("subscriptionID", uint64(subscriptionID)),
+				zap.Uint64("regionID", event.RegionId))
+		}
+	}
+}
+
+func (s *regionRequestWorker) dispatchResolvedTsEvent(resolvedTsEvent *cdcpb.ResolvedTs) {
+	subscriptionID := SubscriptionID(resolvedTsEvent.RequestId)
+	for _, regionID := range resolvedTsEvent.Regions {
+		if state := s.getRegionState(subscriptionID, regionID); state != nil {
+			// Update the resolvedTs of the region here for metrics.
+			state.region.subscribedSpan.resolvedTs.Store(resolvedTsEvent.Ts)
+			s.client.ds.In() <- regionEvent{
+				state:      state,
+				resolvedTs: resolvedTsEvent.Ts,
 			}
 		}
 	}
@@ -289,11 +319,6 @@ func (s *regionRequestWorker) processRegionSendTask(
 			}
 			for _, state := range s.takeRegionStates(subID) {
 				state.markStopped(&sendRequestToStoreErr{})
-				sfEvent := newEventItem(nil, state, s)
-				slot := hashRegionID(state.region.verID.GetID(), len(s.client.changeEventProcessors))
-				if err := s.client.changeEventProcessors[slot].sendEvent(ctx, sfEvent); err != nil {
-					return errors.Trace(err)
-				}
 			}
 		} else if region.subscribedSpan.stopped.Load() {
 			// It can be skipped directly because there must be no pending states from
@@ -393,100 +418,4 @@ func (s *regionRequestWorker) clearPendingRegions() []regionInfo {
 		regions = append(regions, <-s.requestsCh)
 	}
 	return regions
-}
-
-func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, events []*cdcpb.Event) error {
-	for _, event := range events {
-		regionID := event.RegionId
-		subscriptionID := SubscriptionID(event.RequestId)
-
-		state := s.getRegionState(subscriptionID, regionID)
-		switch x := event.Event.(type) {
-		case *cdcpb.Event_Error:
-			log.Debug("region request worker receives a region error",
-				zap.Int("subscriptionClientID", int(s.client.id)),
-				zap.Uint64("workerID", s.workerID),
-				zap.Uint64("subscriptionID", uint64(subscriptionID)),
-				zap.Uint64("regionID", event.RegionId),
-				zap.Bool("stateIsNil", state == nil),
-				zap.Any("error", x.Error))
-		}
-		if state != nil {
-			sfEvent := newEventItem(event, state, s)
-			slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
-			if err := s.client.changeEventProcessors[slot].sendEvent(ctx, sfEvent); err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			log.Warn("region request worker receives a region event for an untracked region",
-				zap.Int("subscriptionClientID", int(s.client.id)),
-				zap.Uint64("workerID", s.workerID),
-				zap.Uint64("subscriptionID", uint64(subscriptionID)),
-				zap.Uint64("regionID", event.RegionId))
-		}
-	}
-	return nil
-}
-
-func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) error {
-	s.tsBatches.Lock()
-	defer s.tsBatches.Unlock()
-	subscriptionID := SubscriptionID(resolvedTs.RequestId)
-	for i := range s.boolCache {
-		s.boolCache[i] = false
-	}
-	regionsLen := len(resolvedTs.Regions)/len(s.client.changeEventProcessors) + 1 // an average number
-	s.client.metrics.batchResolvedSize.Observe(float64(len(resolvedTs.Regions)))
-	for i, regionID := range resolvedTs.Regions {
-		// We suppose that the length of changeEventProcessors is constant, so we can cache the hashes of the region
-		if _, exist := s.slotCache[regionID]; !exist {
-			s.slotCache[regionID] = hashRegionID(regionID, len(s.client.changeEventProcessors))
-		}
-		slot := s.slotCache[regionID]
-		if !s.boolCache[slot] {
-			s.tsBatches.events[slot].resolvedTsBatches = append(s.tsBatches.events[slot].resolvedTsBatches, resolvedTsBatch{
-				ts:      resolvedTs.Ts,
-				regions: make([]*regionFeedState, 0, min(len(resolvedTs.Regions)-i, regionsLen)),
-			})
-			s.boolCache[slot] = true
-		}
-		batch := &s.tsBatches.events[slot].resolvedTsBatches[len(s.tsBatches.events[slot].resolvedTsBatches)-1]
-		if state := s.getRegionState(subscriptionID, regionID); state != nil {
-			batch.regions = append(batch.regions, state)
-			// Update the resolvedTs of the region here for metrics.
-			state.region.subscribedSpan.resolvedTs.Store(resolvedTs.Ts)
-		}
-	}
-
-	return nil
-}
-
-func (s *regionRequestWorker) sendBatchedResolvedTs(ctx context.Context) error {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			s.tsBatches.Lock()
-			for i := range s.tsBatches.events {
-				event := &s.tsBatches.events[i]
-				if len(event.resolvedTsBatches) > 0 {
-					if err := s.client.changeEventProcessors[i].sendEvent(ctx, *event); err != nil {
-						// TODO: how to handle event.resolvedTsBatches when meet error?
-						s.tsBatches.Unlock()
-						return err
-					}
-					event.resolvedTsBatches = nil
-				}
-			}
-			s.tsBatches.Unlock()
-		}
-	}
-}
-
-func hashRegionID(regionID uint64, slots int) int {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, regionID)
-	return int(seahash.Sum64(b) % uint64(slots))
 }

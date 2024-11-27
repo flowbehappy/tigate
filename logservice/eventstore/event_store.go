@@ -200,8 +200,8 @@ func New(
 ) EventStore {
 	clientConfig := &logpuller.SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:   16,
-		ChangeEventProcessorNum:       64,
 		AdvanceResolvedTsIntervalInMs: 800,
+		StreamCount:                   4,
 	}
 	client := logpuller.NewSubscriptionClient(
 		logpuller.ClientIDEventStore,
@@ -282,7 +282,7 @@ func New(
 	store.dispatcherMeta.subscriptionStats = make(map[logpuller.SubscriptionID]*subscriptionStat)
 	store.dispatcherMeta.tableToDispatchers = make(map[int64]map[common.DispatcherID]bool)
 
-	consume := func(ctx context.Context, raw *common.RawKVEntry, subID logpuller.SubscriptionID) error {
+	consume := func(raw *common.RawKVEntry, subID logpuller.SubscriptionID) error {
 		if raw == nil {
 			log.Panic("should not happen: meet nil event")
 		}

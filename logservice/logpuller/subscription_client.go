@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/ticdc/logservice/txnutil"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/metrics"
+	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -143,11 +144,10 @@ type subscribedSpan struct {
 type SubscriptionClientConfig struct {
 	// The number of region request workers to send region task for every tikv store
 	RegionRequestWorkerPerStore uint
-	// The number of region change event processor to process region events
-	// TODO: add a metric for busy ratio?
-	ChangeEventProcessorNum uint
 	// The time interval to advance resolvedTs for a region
 	AdvanceResolvedTsIntervalInMs uint
+	// The stream count of dynamic stream
+	StreamCount int
 }
 
 type sharedClientMetrics struct {
@@ -175,6 +175,8 @@ type SubscriptionClient struct {
 	pdClock      pdutil.Clock
 	lockResolver txnutil.LockResolver
 
+	ds dynstream.DynamicStream[int, regionEventPath, regionEvent, *regionRequestWorker, *regionEventHandler]
+
 	// the credential to connect tikv
 	credential *security.Credential
 
@@ -182,8 +184,6 @@ type SubscriptionClient struct {
 		sync.RWMutex
 		spanMap map[SubscriptionID]*subscribedSpan
 	}
-
-	changeEventProcessors []*changeEventProcessor
 
 	// rangeTaskCh is used to receive range tasks.
 	// The tasks will be handled in `handleRangeTask` goroutine.
@@ -198,7 +198,7 @@ type SubscriptionClient struct {
 	// The errors will be handled in `handleErrors` goroutine.
 	errCache *errCache
 
-	consume func(ctx context.Context, e LogEvent) error
+	consume func(e LogEvent) error
 }
 
 // an identifier to distinguish log from different subscription clients.
@@ -233,6 +233,11 @@ func NewSubscriptionClient(
 	lockResolver txnutil.LockResolver,
 	credential *security.Credential,
 ) *SubscriptionClient {
+	option := dynstream.NewOption()
+	option.BatchCount = 1024
+	ds := dynstream.NewParallelDynamicStream(config.StreamCount, regionEventPathHasher{}, &regionEventHandler{}, option)
+	ds.Start()
+
 	s := &SubscriptionClient{
 		id:         id,
 		config:     config,
@@ -242,6 +247,8 @@ func NewSubscriptionClient(
 		regionCache:  regionCache,
 		pdClock:      pdClock,
 		lockResolver: lockResolver,
+
+		ds: ds,
 
 		credential: credential,
 
@@ -325,7 +332,7 @@ func (s *SubscriptionClient) RegionCount(subID SubscriptionID) uint64 {
 	return 0
 }
 
-func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.Context, e LogEvent) error) error {
+func (s *SubscriptionClient) Run(ctx context.Context, consume func(e LogEvent) error) error {
 	s.consume = consume
 	if s.pd == nil {
 		log.Warn("subsription client should be in test mode, skip run")
@@ -334,12 +341,6 @@ func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.C
 	s.clusterID = s.pd.GetClusterID(ctx)
 
 	g, ctx := errgroup.WithContext(ctx)
-	s.changeEventProcessors = make([]*changeEventProcessor, 0, s.config.ChangeEventProcessorNum)
-	for i := uint(0); i < s.config.ChangeEventProcessorNum; i++ {
-		processor := newChangeEventProcessor(i, s)
-		g.Go(func() error { return processor.run(ctx) })
-		s.changeEventProcessors = append(s.changeEventProcessors, processor)
-	}
 
 	g.Go(func() error { return s.handleRangeTasks(ctx) })
 	g.Go(func() error { return s.handleRegions(ctx, g) })
@@ -387,6 +388,11 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 
 // Note: don't block the caller, otherwise there may be deadlock
 func (s *SubscriptionClient) onRegionFail(errInfo regionErrorInfo) {
+	// TODO: the path may not be added, is there better place to call RemovePath?
+	s.ds.RemovePath(regionEventPath{
+		subID:    uint64(errInfo.subscribedSpan.subID),
+		regionID: errInfo.verID.GetID(),
+	})
 	s.errCache.add(errInfo)
 }
 
@@ -456,6 +462,10 @@ func (s *SubscriptionClient) handleRegions(ctx context.Context, eg *errgroup.Gro
 
 			store := getStore(region.rpcCtx.Peer.StoreId, region.rpcCtx.Addr)
 			worker := store.getRequestWorker()
+			s.ds.AddPath(regionEventPath{
+				subID:    uint64(region.subscribedSpan.subID),
+				regionID: region.verID.GetID(),
+			}, worker, dynstream.AreaSettings{})
 			worker.requestsCh <- region
 
 			log.Debug("subscription client will request a region",

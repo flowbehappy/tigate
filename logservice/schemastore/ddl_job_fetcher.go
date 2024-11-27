@@ -15,6 +15,7 @@ package schemastore
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -38,7 +39,9 @@ import (
 type ddlJobFetcher struct {
 	puller *logpuller.LogPullerMultiSpan
 
-	writeDDLEvent     func(ddlEvent DDLJobWithCommitTs)
+	mutex         sync.Mutex
+	writeDDLEvent func(ddlEvent DDLJobWithCommitTs) // guard by mutex
+
 	advanceResolvedTs func(resolvedTS uint64)
 
 	// ddlTableInfo is initialized when receive the first concurrent DDL job.
@@ -58,8 +61,8 @@ func newDDLJobFetcher(
 ) *ddlJobFetcher {
 	clientConfig := &logpuller.SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:   1,
-		ChangeEventProcessorNum:       1, // must be 1, because ddlJobFetcher.input cannot be called concurrently
 		AdvanceResolvedTsIntervalInMs: 100,
+		StreamCount:                   1,
 	}
 	client := logpuller.NewSubscriptionClient(
 		logpuller.ClientIDSchemaStore,
@@ -90,12 +93,14 @@ func (p *ddlJobFetcher) close(ctx context.Context) error {
 	return p.puller.Close(ctx)
 }
 
-func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) error {
+func (p *ddlJobFetcher) input(rawEvent *common.RawKVEntry) error {
 	if rawEvent.IsResolved() {
 		p.advanceResolvedTs(uint64(rawEvent.CRTs))
 		return nil
 	}
 
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
 	job, err := p.unmarshalDDL(rawEvent)
 	if err != nil {
 		return errors.Trace(err)

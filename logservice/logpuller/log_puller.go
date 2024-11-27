@@ -52,7 +52,7 @@ type spanProgress struct {
 		// removed while consuming events.
 		sync.RWMutex
 		removed bool
-		f       func(context.Context, *common.RawKVEntry, SubscriptionID) error
+		f       func(*common.RawKVEntry, SubscriptionID) error
 	}
 }
 
@@ -74,7 +74,7 @@ func (p *spanProgress) resolveLock(currentTime time.Time) {
 type LogPuller struct {
 	client  *SubscriptionClient
 	pdClock pdutil.Clock
-	consume func(context.Context, *common.RawKVEntry, SubscriptionID) error
+	consume func(*common.RawKVEntry, SubscriptionID) error
 
 	subscriptions struct {
 		sync.RWMutex
@@ -89,7 +89,7 @@ type LogPuller struct {
 func NewLogPuller(
 	client *SubscriptionClient,
 	pdClock pdutil.Clock,
-	consume func(context.Context, *common.RawKVEntry, SubscriptionID) error,
+	consume func(*common.RawKVEntry, SubscriptionID) error,
 ) *LogPuller {
 	puller := &LogPuller{
 		client:  client,
@@ -127,7 +127,7 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 		log.Info("LogPuller exits", zap.Error(err))
 	}()
 
-	consumeLogEvent := func(ctx context.Context, e LogEvent) error {
+	consumeLogEvent := func(e LogEvent) error {
 		progress := p.getProgress(e.SubscriptionID)
 		// There is a chance that some stale events are received after
 		// the subscription is removed. We can just ignore them.
@@ -148,7 +148,7 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 			p.CounterKv.Inc()
 		}
 
-		if err := progress.consume.f(ctx, e.Val, e.SubscriptionID); err != nil {
+		if err := progress.consume.f(e.Val, e.SubscriptionID); err != nil {
 			log.Info("consume error", zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -185,14 +185,13 @@ func (p *LogPuller) Subscribe(
 	}
 
 	progress.consume.f = func(
-		ctx context.Context,
 		raw *common.RawKVEntry,
 		subID SubscriptionID,
 	) error {
 		progress.consume.RLock()
 		defer progress.consume.RUnlock()
 		if !progress.consume.removed {
-			return p.consume(ctx, raw, subID)
+			return p.consume(raw, subID)
 		}
 		return nil
 	}
