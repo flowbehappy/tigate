@@ -541,9 +541,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 						// The message is a watermark, we need to cache it, and send it to the dispatcher
 						// when cache is full to reduce the number of messages.
 						c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
-						for serverID, cache := range resolvedTsCacheMap {
-							c.flushResolvedTs(ctx, cache, serverID)
-						}
 					case pevent.TypeHandshakeEvent:
 						// Check if the dispatcher is initialized, if so, ignore the handshake event.
 						// If the message is a handshake event, we need to reset the dispatcher.
@@ -567,10 +564,17 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 							m.e)
 						// Note: we need to flush the resolvedTs cache before sending the message
 						// to keep the order of the resolvedTs and the message.
-						//c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
+						// c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
 						c.sendMsg(ctx, tMsg, m.postSendFunc)
 					}
 				}
+
+				if messages[0].msgType == pevent.TypeResolvedEvent {
+					for serverID, cache := range resolvedTsCacheMap {
+						c.flushResolvedTs(ctx, cache, serverID)
+					}
+				}
+
 				buf = buf[:0]
 			}
 		}
