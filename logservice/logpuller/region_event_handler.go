@@ -98,6 +98,8 @@ func (h *regionEventHandler) GetTimestamp(event regionEvent) dynstream.Timestamp
 	} else {
 		return dynstream.Timestamp(event.resolvedTs)
 	}
+	log.Panic("unknown event type", zap.Any("event", event))
+	return 0
 }
 func (h *regionEventHandler) IsPaused(event regionEvent) bool { return false }
 
