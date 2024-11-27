@@ -519,65 +519,60 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 
 func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int) {
 	c.wg.Add(1)
-	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 1)
+	getMessageTicker := time.NewTicker(time.Millisecond * 1)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	messageCh := c.getMessageCh(workerIndex)
-	buf := make([]wrapEvent, 0, 8192)
+	buf := make([]wrapEvent, 0, 1024)
 	go func() {
 		defer c.wg.Done()
-		defer flushResolvedTsTicker.Stop()
+		defer getMessageTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-flushResolvedTsTicker.C:
-				for serverID, cache := range resolvedTsCacheMap {
-					c.flushResolvedTs(ctx, cache, serverID)
+			case <-getMessageTicker.C:
+				messages, ok := messageCh.GetMultipleSingleGroup(buf)
+				if !ok {
+					continue
 				}
-			default:
-			}
-			// FIXME: the messages get from the channel should be in different group
-			messages, ok := messageCh.GetMultipleSingleGroup(buf)
-			if !ok {
-				continue
-			}
-			for _, m := range messages {
-				switch m.msgType {
-				case pevent.TypeResolvedEvent:
-					// The message is a watermark, we need to cache it, and send it to the dispatcher
-					// when cache is full to reduce the number of messages.
-					c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
-					for serverID, cache := range resolvedTsCacheMap {
-						c.flushResolvedTs(ctx, cache, serverID)
+				for _, m := range messages {
+					switch m.msgType {
+					case pevent.TypeResolvedEvent:
+						// The message is a watermark, we need to cache it, and send it to the dispatcher
+						// when cache is full to reduce the number of messages.
+						c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
+						for serverID, cache := range resolvedTsCacheMap {
+							c.flushResolvedTs(ctx, cache, serverID)
+						}
+					case pevent.TypeHandshakeEvent:
+						// Check if the dispatcher is initialized, if so, ignore the handshake event.
+						// If the message is a handshake event, we need to reset the dispatcher.
+						d, ok := c.getDispatcher(m.getDispatcherID())
+						if !ok {
+							log.Warn("Get dispatcher failed", zap.Any("dispatcherID", m.getDispatcherID()))
+							continue
+						} else if d.isInitialized.Load() {
+							log.Info("Ignore handshake event since the dispatcher is initialized", zap.Any("dispatcherID", m.getDispatcherID()))
+							continue
+						}
+						tMsg := messaging.NewSingleTargetMessage(
+							m.serverID,
+							messaging.EventCollectorTopic,
+							m.e)
+						c.sendMsg(ctx, tMsg, m.postSendFunc)
+					default:
+						tMsg := messaging.NewSingleTargetMessage(
+							m.serverID,
+							messaging.EventCollectorTopic,
+							m.e)
+						// Note: we need to flush the resolvedTs cache before sending the message
+						// to keep the order of the resolvedTs and the message.
+						//c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
+						c.sendMsg(ctx, tMsg, m.postSendFunc)
 					}
-				case pevent.TypeHandshakeEvent:
-					// Check if the dispatcher is initialized, if so, ignore the handshake event.
-					// If the message is a handshake event, we need to reset the dispatcher.
-					d, ok := c.getDispatcher(m.getDispatcherID())
-					if !ok {
-						log.Warn("Get dispatcher failed", zap.Any("dispatcherID", m.getDispatcherID()))
-						continue
-					} else if d.isInitialized.Load() {
-						log.Info("Ignore handshake event since the dispatcher is initialized", zap.Any("dispatcherID", m.getDispatcherID()))
-						continue
-					}
-					tMsg := messaging.NewSingleTargetMessage(
-						m.serverID,
-						messaging.EventCollectorTopic,
-						m.e)
-					c.sendMsg(ctx, tMsg, m.postSendFunc)
-				default:
-					tMsg := messaging.NewSingleTargetMessage(
-						m.serverID,
-						messaging.EventCollectorTopic,
-						m.e)
-					// Note: we need to flush the resolvedTs cache before sending the message
-					// to keep the order of the resolvedTs and the message.
-					c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
-					c.sendMsg(ctx, tMsg, m.postSendFunc)
 				}
+				buf = buf[:0]
 			}
-			buf = buf[:0]
 		}
 	}()
 }
