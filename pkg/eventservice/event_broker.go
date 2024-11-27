@@ -322,7 +322,7 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	if task.resetTs.Load() == 0 {
 		remoteID := node.ID(task.info.GetServerID())
 		c.sendReadyEvent(remoteID, task)
-		log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.id))
+		//log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.id))
 		return false, common.DataRange{}
 	}
 
@@ -390,7 +390,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 			task.isInitialized.Store(true)
 		},
 	}
-	log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.id))
+	//log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.id))
 	c.getMessageCh(task.workerIndex).Push(wrapE)
 }
 
@@ -535,13 +535,20 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 				if !ok {
 					continue
 				}
-				for _, m := range messages {
-					switch m.msgType {
-					case pevent.TypeResolvedEvent:
+				switch messages[0].msgType {
+				case pevent.TypeResolvedEvent:
+					for _, m := range messages {
 						// The message is a watermark, we need to cache it, and send it to the dispatcher
 						// when cache is full to reduce the number of messages.
 						c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
-					case pevent.TypeHandshakeEvent:
+					}
+					if messages[0].msgType == pevent.TypeResolvedEvent {
+						for serverID, cache := range resolvedTsCacheMap {
+							c.flushResolvedTs(ctx, cache, serverID)
+						}
+					}
+				case pevent.TypeHandshakeEvent:
+					for _, m := range messages {
 						// Check if the dispatcher is initialized, if so, ignore the handshake event.
 						// If the message is a handshake event, we need to reset the dispatcher.
 						d, ok := c.getDispatcher(m.getDispatcherID())
@@ -557,7 +564,9 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 							messaging.EventCollectorTopic,
 							m.e)
 						c.sendMsg(ctx, tMsg, m.postSendFunc)
-					default:
+					}
+				default:
+					for _, m := range messages {
 						tMsg := messaging.NewSingleTargetMessage(
 							m.serverID,
 							messaging.EventCollectorTopic,
@@ -568,13 +577,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 						c.sendMsg(ctx, tMsg, m.postSendFunc)
 					}
 				}
-
-				if messages[0].msgType == pevent.TypeResolvedEvent {
-					for serverID, cache := range resolvedTsCacheMap {
-						c.flushResolvedTs(ctx, cache, serverID)
-					}
-				}
-
 				buf = buf[:0]
 			}
 		}
