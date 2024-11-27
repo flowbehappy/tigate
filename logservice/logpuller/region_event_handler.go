@@ -27,14 +27,12 @@ import (
 const (
 	DataGroupResolvedTs = 1
 	DataGroupEntries    = 2
-	DataGroupError      = 3
 )
 
 type regionEvent struct {
 	state *regionFeedState
-	// only one of the following three fields will be set
+	// only one of the following two fields will be set
 	entries    *cdcpb.Event_Entries_
-	error      *cdcpb.Event_Error
 	resolvedTs uint64
 }
 
@@ -64,15 +62,12 @@ func (h *regionEventHandler) Path(event regionEvent) regionEventPath {
 func (h *regionEventHandler) Handle(worker *regionRequestWorker, events ...regionEvent) bool {
 	for _, event := range events {
 		if event.state.isStale() {
-			handleRegionError(event.state, worker)
+			worker.handleRegionError(event.state)
 			continue
 		}
 		if event.entries != nil {
 			// TODO: need block? and how to wake?
 			handleEventEntries(event.state, worker, event.entries)
-		} else if event.error != nil {
-			event.state.markStopped(&eventError{err: event.error.Error})
-			handleRegionError(event.state, worker)
 		} else if event.resolvedTs != 0 {
 			handleResolvedTs(event.state, worker, event.resolvedTs)
 		} else {
@@ -95,8 +90,6 @@ func (h *regionEventHandler) IsPaused(event regionEvent) bool { return false }
 func (h *regionEventHandler) GetType(event regionEvent) dynstream.EventType {
 	if event.entries != nil {
 		return dynstream.EventType{DataGroup: DataGroupEntries, Property: dynstream.BatchableData}
-	} else if event.error != nil {
-		return dynstream.EventType{DataGroup: DataGroupError, Property: dynstream.BatchableData}
 	} else if event.resolvedTs != 0 {
 		return dynstream.EventType{DataGroup: DataGroupResolvedTs, Property: dynstream.PeriodicSignal}
 	} else {
@@ -204,24 +197,6 @@ func handleEventEntries(state *regionFeedState, worker *regionRequestWorker, ent
 			}
 			state.matcher.rollbackRow(entry)
 		}
-	}
-}
-
-func handleRegionError(state *regionFeedState, worker *regionRequestWorker) {
-	stepsToRemoved := state.markRemoved()
-	err := state.takeError()
-	if err != nil {
-		log.Debug("region change event processor get a region error",
-			zap.Int("subscriptionClientID", int(worker.client.id)),
-			zap.Uint64("workerID", worker.workerID),
-			zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
-			zap.Uint64("regionID", state.region.verID.GetID()),
-			zap.Bool("reschedule", stepsToRemoved),
-			zap.Error(err))
-	}
-	if stepsToRemoved {
-		worker.takeRegionState(SubscriptionID(state.requestID), state.getRegionID())
-		worker.client.onRegionFail(newRegionErrorInfo(state.getRegionInfo(), err))
 	}
 }
 

@@ -229,7 +229,9 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 					zap.Uint64("regionID", event.RegionId),
 					zap.Bool("stateIsNil", state == nil),
 					zap.Any("error", eventData.Error))
-				regionEvent.error = eventData
+				state.markStopped(&eventError{err: eventData.Error})
+				s.handleRegionError(state)
+				continue
 			case *cdcpb.Event_ResolvedTs:
 				regionEvent.resolvedTs = eventData.ResolvedTs
 			case *cdcpb.Event_LongTxn_:
@@ -266,6 +268,24 @@ func (s *regionRequestWorker) dispatchResolvedTsEvent(resolvedTsEvent *cdcpb.Res
 				resolvedTs: resolvedTsEvent.Ts,
 			}
 		}
+	}
+}
+
+func (s *regionRequestWorker) handleRegionError(state *regionFeedState) {
+	stepsToRemoved := state.markRemoved()
+	err := state.takeError()
+	if err != nil {
+		log.Debug("region change event processor get a region error",
+			zap.Int("subscriptionClientID", int(s.client.id)),
+			zap.Uint64("workerID", s.workerID),
+			zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
+			zap.Uint64("regionID", state.region.verID.GetID()),
+			zap.Bool("reschedule", stepsToRemoved),
+			zap.Error(err))
+	}
+	if stepsToRemoved {
+		s.takeRegionState(SubscriptionID(state.requestID), state.getRegionID())
+		s.client.onRegionFail(newRegionErrorInfo(state.getRegionInfo(), err))
 	}
 }
 
