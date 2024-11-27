@@ -83,7 +83,21 @@ func (h *regionEventHandler) GetArea(path regionEventPath, dest *regionRequestWo
 }
 func (h *regionEventHandler) GetTimestamp(event regionEvent) dynstream.Timestamp {
 	// TODO: it is hard to get timestamp of *cdcpb.Event_Entries_
-	return 0
+	if event.entries != nil {
+		entries := event.entries.Entries.GetEntries()
+		switch entries[0].Type {
+		case cdcpb.Event_INITIALIZED:
+			// FIXME: is this ok?
+			return 0
+		case cdcpb.Event_COMMITTED,
+			cdcpb.Event_PREWRITE,
+			cdcpb.Event_COMMIT,
+			cdcpb.Event_ROLLBACK:
+			return dynstream.Timestamp(entries[0].CommitTs)
+		}
+	} else {
+		return dynstream.Timestamp(event.resolvedTs)
+	}
 }
 func (h *regionEventHandler) IsPaused(event regionEvent) bool { return false }
 
