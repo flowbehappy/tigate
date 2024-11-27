@@ -14,6 +14,8 @@
 package eventstore
 
 import (
+	"sync/atomic"
+
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/utils/dynstream"
@@ -25,6 +27,8 @@ const (
 )
 
 type eventsHandler struct {
+	// Used to generate a unique batchSeq for events
+	batchSeq atomic.Uint64
 }
 
 func (h *eventsHandler) Path(event kvEvent) logpuller.SubscriptionID {
@@ -45,9 +49,13 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) boo
 		return false
 	}
 	subStat.maxEventCommitTs.Store(events[len(events)-1].raw.CRTs)
+
+	batchSeq := h.batchSeq.Add(1)
 	for i := range events {
 		events[i].tableID = subStat.tableID
+		events[i].batchSeq = batchSeq
 	}
+
 	subStat.eventCh.Push(events...)
 	return true
 }
