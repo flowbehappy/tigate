@@ -140,7 +140,7 @@ func encodeDDLEvent(e *commonEvent.DDLEvent, config *newcommon.Config) ([]byte, 
 	keyOutput.Write(key)
 
 	valueOutput := new(bytes.Buffer)
-	valueOutput.Write(versionByte[:])
+	valueOutput.Write(valueLenByte[:])
 	valueOutput.Write(value)
 
 	return keyOutput.Bytes(), valueOutput.Bytes(), nil

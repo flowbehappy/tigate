@@ -603,6 +603,7 @@ func (c *JSONRowEventEncoder) EncodeDDLEvent(e *commonEvent.DDLEvent) (*ticommon
 		Protocol: config.ProtocolCanalJSON,
 		Table:    &e.TableName,
 		Schema:   &e.SchemaName,
+		Ts:       e.GetCommitTs(),
 	}, nil
 }
 

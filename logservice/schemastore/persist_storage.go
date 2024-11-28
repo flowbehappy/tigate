@@ -24,6 +24,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/bloom"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -32,6 +33,9 @@ import (
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	cerror "github.com/pingcap/tiflow/pkg/errors"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -697,6 +701,51 @@ func (p *persistentStorage) handleDDLJob(job *model.Job) error {
 	return nil
 }
 
+// transform ddl query based on sql mode.
+func transformDDLJobQuery(job *model.Job) (string, error) {
+	p := parser.New()
+	// We need to use the correct SQL mode to parse the DDL query.
+	// Otherwise, the parser may fail to parse the DDL query.
+	// For example, it is needed to parse the following DDL query:
+	//  `alter table "t" add column "c" int default 1;`
+	// by adding `ANSI_QUOTES` to the SQL mode.
+	p.SetSQLMode(job.SQLMode)
+	stms, _, err := p.Parse(job.Query, job.Charset, job.Collate)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if len(stms) != 1 {
+		log.Error("invalid ddlQuery statement size",
+			zap.String("ddlQuery", job.Query))
+		return "", cerror.ErrUnexpected.FastGenByArgs("invalid ddlQuery statement size")
+	}
+	var sb strings.Builder
+	// translate TiDB feature to special comment
+	restoreFlags := format.RestoreTiDBSpecialComment
+	// escape the keyword
+	restoreFlags |= format.RestoreNameBackQuotes
+	// upper case keyword
+	restoreFlags |= format.RestoreKeyWordUppercase
+	// wrap string with single quote
+	restoreFlags |= format.RestoreStringSingleQuotes
+	// remove placement rule
+	restoreFlags |= format.SkipPlacementRuleForRestore
+	// force disable ttl
+	restoreFlags |= format.RestoreWithTTLEnableOff
+	if err = stms[0].Restore(format.NewRestoreCtx(restoreFlags, &sb)); err != nil {
+		return "", errors.Trace(err)
+	}
+
+	result := sb.String()
+	log.Info("transform ddl query to result",
+		zap.String("DDL", job.Query),
+		zap.String("charset", job.Charset),
+		zap.String("collate", job.Collate),
+		zap.String("result", result))
+
+	return result, nil
+}
+
 func buildPersistedDDLEventFromJob(
 	job *model.Job,
 	databaseMap map[int64]*BasicDatabaseInfo,
@@ -728,12 +777,15 @@ func buildPersistedDDLEventFromJob(
 		return tableInfo.SchemaID
 	}
 
+	// TODO: handle err
+	query, _ := transformDDLJobQuery(job)
+
 	event := PersistedDDLEvent{
 		ID:              job.ID,
 		Type:            byte(job.Type),
 		CurrentSchemaID: job.SchemaID,
 		CurrentTableID:  job.TableID,
-		Query:           job.Query,
+		Query:           query,
 		SchemaVersion:   job.BinlogInfo.SchemaVersion,
 		DBInfo:          job.BinlogInfo.DBInfo,
 		TableInfo:       job.BinlogInfo.TableInfo,

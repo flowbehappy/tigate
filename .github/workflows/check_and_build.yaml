@@ -140,6 +140,11 @@ jobs:
           go test --tags=intest
           cd ../worker
           go test ./... --tags=intest
+          cd ../../pkg/sink/codec
+          cd open
+          go test  --tags=intest
+          cd ../canal
+          go test  --tags=intest
 
   maintainer_unit_test:
     runs-on: ubuntu-latest 

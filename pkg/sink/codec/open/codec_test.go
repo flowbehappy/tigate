@@ -3,12 +3,12 @@ package open
 import (
 	"testing"
 
-	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common/columnselector"
 	pevent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/config"
 	ticonfig "github.com/pingcap/ticdc/pkg/config"
 	newcommon "github.com/pingcap/ticdc/pkg/sink/codec/common"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tiflow/pkg/config"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +37,7 @@ func TestBasicType(t *testing.T) {
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          row,
-		ColumnSelector: common.NewDefaultColumnSelector(),
+		ColumnSelector: columnselector.NewDefaultColumnSelector(),
 		Callback:       func() {}}
 
 	protocolConfig := newcommon.NewConfig(config.ProtocolOpen)
@@ -69,7 +69,7 @@ func TestDMLEvent(t *testing.T) {
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
-		ColumnSelector: common.NewDefaultColumnSelector(),
+		ColumnSelector: columnselector.NewDefaultColumnSelector(),
 		Callback:       func() {}}
 
 	key, value, length, err := encodeRowChangedEvent(insertRowEvent, protocolConfig, false, "")
@@ -90,7 +90,7 @@ func TestDMLEvent(t *testing.T) {
 		TableInfo:      tableInfo,
 		CommitTs:       2,
 		Event:          updateRow,
-		ColumnSelector: common.NewDefaultColumnSelector(),
+		ColumnSelector: columnselector.NewDefaultColumnSelector(),
 		Callback:       func() {}}
 
 	key, value, _, err = encodeRowChangedEvent(updateRowEvent, protocolConfig, false, "")
@@ -110,7 +110,7 @@ func TestDMLEvent(t *testing.T) {
 			TableInfo:      tableInfo,
 			CommitTs:       3,
 			Event:          deleteRow,
-			ColumnSelector: common.NewDefaultColumnSelector(),
+			ColumnSelector: columnselector.NewDefaultColumnSelector(),
 			Callback:       func() {}}
 
 		key, value, _, err := encodeRowChangedEvent(updateRowEvent, protocolConfig, false, "")
@@ -145,7 +145,7 @@ func TestOnlyOutputUpdatedEvent(t *testing.T) {
 			TableInfo:      tableInfo,
 			CommitTs:       1,
 			Event:          row,
-			ColumnSelector: common.NewDefaultColumnSelector(),
+			ColumnSelector: columnselector.NewDefaultColumnSelector(),
 			Callback:       func() {}}
 
 		_, value, _, err := encodeRowChangedEvent(updateRowEvent, protocolConfig, false, "")
@@ -177,7 +177,7 @@ func TestHandleOnlyEvent(t *testing.T) {
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
-		ColumnSelector: common.NewDefaultColumnSelector(),
+		ColumnSelector: columnselector.NewDefaultColumnSelector(),
 		Callback:       func() {}}
 
 	key, value, _, err := encodeRowChangedEvent(insertRowEvent, protocolConfig, true, "")
@@ -233,7 +233,7 @@ func TestEncodeWithColumnSelector(t *testing.T) {
 			Columns: []string{"a*"},
 		},
 	}
-	selectors, err := common.NewColumnSelectors(&sinkConfig)
+	selectors, err := columnselector.NewColumnSelectors(&sinkConfig)
 	require.NoError(t, err)
 	selector := selectors.GetSelector("test", "t")
 
