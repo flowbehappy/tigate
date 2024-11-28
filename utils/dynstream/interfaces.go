@@ -185,7 +185,7 @@ type Option struct {
 
 	EnableMemoryControl bool // Enable the memory control. By default false.
 
-	UseBuffer bool // Use buffers inside the dynamic stream. By default true. TODO:  maybe we should disable it by default.
+	UseBuffer bool // Use buffers inside the dynamic stream. By default false.
 
 	handleWait *sync.WaitGroup // For testing. Don't handle events until this wait group is done.
 }
@@ -196,7 +196,7 @@ func NewOption() Option {
 		ReportInterval:    DefaultReportInterval,
 		StreamCount:       0,
 		BatchCount:        1,
-		UseBuffer:         true,
+		UseBuffer:         false,
 	}
 }
 
