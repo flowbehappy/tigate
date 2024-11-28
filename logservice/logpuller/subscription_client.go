@@ -298,7 +298,7 @@ func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
 			dsMetrics := s.ds.GetMetrics()
 			if dsMetrics.MinHandledTS != 0 {
 				lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandledTS)) / 1e3
-				metrics.SubscriptionClientResolvedTsLagGauge.Set(lag)
+				metrics.EventStoreResolvedTsLagGauge.Set(lag)
 			}
 			metricSubscriptionClientDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 			metricSubscriptionClientDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
@@ -887,7 +887,7 @@ func (s *SubscriptionClient) newSubscribedSpan(
 		advanceResolvedTs: advanceResolvedTs,
 		advanceInterval:   advanceInterval,
 
-		kvEventsCache: make([]common.RawKVEntry, 0, 4096),
+		kvEventsCache: make([]common.RawKVEntry, 0, 100),
 	}
 	rt.resolvedTs.Store(startTs)
 
