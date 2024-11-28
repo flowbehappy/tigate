@@ -85,8 +85,7 @@ func (h *regionEventHandler) GetTimestamp(event regionEvent) dynstream.Timestamp
 		entries := event.entries.Entries.GetEntries()
 		switch entries[0].Type {
 		case cdcpb.Event_INITIALIZED:
-			// FIXME: is this ok?
-			return 0
+			return dynstream.Timestamp(event.state.region.subscribedSpan.startTs)
 		case cdcpb.Event_COMMITTED,
 			cdcpb.Event_PREWRITE,
 			cdcpb.Event_COMMIT,
