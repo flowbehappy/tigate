@@ -128,6 +128,7 @@ func (w *KafkaDDLWorker) WriteBlockEvent(event *event.DDLEvent) error {
 			topics = append(topics, topic)
 		}
 	} else {
+		log.Info("hyy encode ddl event", zap.Any("event", event))
 		message, err := w.encoder.EncodeDDLEvent(event)
 		if err != nil {
 			return errors.Trace(err)
@@ -139,6 +140,7 @@ func (w *KafkaDDLWorker) WriteBlockEvent(event *event.DDLEvent) error {
 
 	for i, message := range messages {
 		topic := topics[i]
+		log.Info("hyy generate message", zap.Any("message", message), zap.String("topic", topic), zap.Any("message key", message.Key), zap.Any("message value", message.Value), zap.Any("message Ts", message.Ts), zap.Any("message Type", message.Type))
 		partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
 		if err != nil {
 			return errors.Trace(err)

@@ -146,7 +146,9 @@ func (w *KafkaDMLWorker) calculateKeyPartitions() error {
 				var calledCount atomic.Uint64
 				// The callback of the last row will trigger the callback of the txn.
 				return func() {
+					log.Info("hyy into row callback")
 					if calledCount.Inc() == totalCount {
+						log.Info("hyy ready do row callback")
 						for _, callback := range postTxnFlushed {
 							callback()
 						}
