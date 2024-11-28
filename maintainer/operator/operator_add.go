@@ -109,6 +109,7 @@ func (m *AddDispatcherOperator) PostFinish() {
 	if !m.removed.Load() {
 		m.db.MarkSpanReplicating(m.replicaSet)
 	} else {
+		// Question: maybe mark the span as absent
 		m.db.ForceRemove(m.replicaSet.ID)
 	}
 }

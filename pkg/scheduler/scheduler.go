@@ -91,9 +91,10 @@ func Balance[T Replication](batchSize int,
 			})
 			continue
 		} else {
+			// Is it dummy logic? Since a node can not hold more than upperLimitPerCapture tasks.
 			priorityQueue.AddOrUpdate(&Item{
 				Node: nodeID,
-				Load: len(tasks) - tableNum2Remove,
+				Load: upperLimitPerCapture,
 			})
 		}
 

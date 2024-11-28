@@ -72,7 +72,7 @@ func (s *splitScheduler) Execute() time.Time {
 	}
 
 	log.Info("check split status", zap.String("changefeed", s.changefeedID.Name()),
-		zap.String("hotSpans", s.db.GetHotSpanStat()))
+		zap.String("hotSpans", s.db.GetHotSpanStat()), zap.String("groupDistribution", s.db.GetGroupStat()))
 
 	cachedSpans := s.db.GetHotSpans(s.cachedSpans)
 	checkedIndex, start := 0, time.Now()

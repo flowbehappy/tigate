@@ -81,35 +81,56 @@ func (s *balanceScheduler) Execute() time.Time {
 		return now.Add(s.checkBalanceInterval)
 	}
 
-	groupBalanced, batch := true, s.batchSize
-	for _, group := range s.replicationDB.GetGroups() {
-		moved := s.schedulerGroup(group, batch)
-		if moved != 0 {
-			groupBalanced = false
-		}
-		batch -= moved
-		if batch <= 0 {
-			break
-		}
+	groupReplicatings, moved := s.schedulerGroup()
+	if moved == 0 {
+		// all groups are balanced, safe to do the global balance
+		moved = s.schedulerGlobal(groupReplicatings)
 	}
-	if groupBalanced {
-		s.schedulerGlobal()
-	}
+
+	s.forceBalance = moved >= s.batchSize
 	s.lastRebalanceTime = now
 	return now.Add(s.checkBalanceInterval)
 }
 
-func (s *balanceScheduler) schedulerGroup(id replica.GroupID, batch int) (consumed int) {
-	consumed = scheduler.Balance(batch, s.random, s.nodeManager.GetAliveNodes(),
-		s.replicationDB.GetReplicatingByGroup(id), func(replication *replica.SpanReplication, id node.ID) bool {
-			op := operator.NewMoveDispatcherOperator(s.replicationDB, replication, replication.GetNodeID(), id)
-			return s.operatorController.AddOperator(op)
-		})
-	return
+func (s *balanceScheduler) schedulerGroup() (map[replica.GroupID][]*replica.SpanReplication, int) {
+	batch, moved := s.batchSize, 0
+	groupReplicatings := make(map[replica.GroupID][]*replica.SpanReplication)
+	for _, group := range s.replicationDB.GetGroups() {
+		replicas := s.replicationDB.GetReplicatingByGroup(group)
+		moved += scheduler.Balance(
+			batch, s.random, s.nodeManager.GetAliveNodes(), replicas,
+			func(replication *replica.SpanReplication, id node.ID) bool {
+				op := operator.NewMoveDispatcherOperator(s.replicationDB, replication, replication.GetNodeID(), id)
+				return s.operatorController.AddOperator(op)
+			},
+		)
+		if len(replicas) > 0 {
+			groupReplicatings[group] = replicas
+		}
+		if moved >= batch {
+			break
+		}
+	}
+	return groupReplicatings, moved
 }
 
-func (s *balanceScheduler) schedulerGlobal() {
+func (s *balanceScheduler) schedulerGlobal(groupReplicatings map[replica.GroupID][]*replica.SpanReplication) int {
 	// implement it
+	activeNodes := s.nodeManager.GetAliveNodes()
+
+	groupNodesTask := make(map[replica.GroupID]map[node.ID]int)
+	for group, replicas := range groupReplicatings {
+		nodeTasks := make(map[node.ID]*replica.SpanReplication)
+		for _, r := range replicas {
+			nodeID := r.GetNodeID()
+			if _, ok := nodeTasks[nodeID]; !ok {
+				nodeTasks[nodeID] = r
+			}
+		}
+
+	}
+
+	return 0
 }
 
 func (s *balanceScheduler) Name() string {

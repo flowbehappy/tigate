@@ -144,8 +144,11 @@ func (s *HotSpans) stat() string {
 	var res strings.Builder
 	total := 0
 	for groupID, hotSpanCache := range s.hotSpanGroups {
-		res.WriteString("[")
+		if total > 0 {
+			res.WriteString(" ")
+		}
 		res.WriteString(printGroupID(groupID))
+		res.WriteString(": [")
 		cnt := [HotSpanScoreThreshold + 1]int{}
 		for _, span := range hotSpanCache {
 			score := min(HotSpanScoreThreshold, span.score)
@@ -153,6 +156,9 @@ func (s *HotSpans) stat() string {
 			total++
 		}
 		for i := 1; i <= 10; i++ {
+			// if cnt[i] == 0 {
+			// 	continue
+			// }
 			res.WriteString("score ")
 			res.WriteString(strconv.Itoa(i))
 			res.WriteString("->")

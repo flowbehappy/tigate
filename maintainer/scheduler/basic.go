@@ -74,7 +74,7 @@ func (s *basicScheduler) Execute() time.Time {
 	return time.Now().Add(time.Millisecond * 500)
 }
 
-func (s *basicScheduler) schedule(id replica.GroupID, availableSize int) (consumed int) {
+func (s *basicScheduler) schedule(id replica.GroupID, availableSize int) (scheduled int) {
 	absent := s.replicationDB.GetAbsentByGroup(id, s.absent, availableSize)
 	nodeSize := s.replicationDB.GetTaskSizePerNodeByGroup(id)
 	// add the absent node to the node size map
@@ -86,7 +86,7 @@ func (s *basicScheduler) schedule(id replica.GroupID, availableSize int) (consum
 	scheduler.BasicSchedule(availableSize, absent, nodeSize, func(replication *replica.SpanReplication, id node.ID) bool {
 		return s.operatorController.AddOperator(operator.NewAddDispatcherOperator(s.replicationDB, replication, id))
 	})
-	consumed = len(absent)
+	scheduled = len(absent)
 	s.absent = absent[:0]
 	return
 }

@@ -16,6 +16,7 @@ package replica
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -132,7 +133,7 @@ func (db *ReplicationDB) GetReplicatingByGroup(id GroupID) []*SpanReplication {
 	defer db.lock.RUnlock()
 
 	g := db.mustGetGroup(id)
-	var replicating = make([]*SpanReplication, 0)
+	var replicating = make([]*SpanReplication, 0, len(g.replicating))
 	for _, stm := range g.replicating {
 		replicating = append(replicating, stm)
 	}
@@ -163,6 +164,26 @@ func (db *ReplicationDB) GetTaskSizePerNodeByGroup(id GroupID) map[node.ID]int {
 		sizeMap[nodeID] += len(tasks)
 	}
 	return sizeMap
+}
+
+func (db *ReplicationDB) GetGroupStat() string {
+	distribute := strings.Builder{}
+	total := 0
+	for _, group := range db.GetGroups() {
+		if total > 0 {
+			distribute.WriteString(" ")
+		}
+		distribute.WriteString(printGroupID(group))
+		distribute.WriteString(": [")
+		for nodeID, size := range db.GetTaskSizePerNodeByGroup(group) {
+			distribute.WriteString(nodeID.String())
+			distribute.WriteString("->")
+			distribute.WriteString(strconv.Itoa(size))
+			distribute.WriteString("; ")
+		}
+		distribute.WriteString("]")
+	}
+	return distribute.String()
 }
 
 type replicationTaskGroup struct {
