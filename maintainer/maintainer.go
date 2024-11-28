@@ -466,8 +466,8 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 		return
 	}
 	req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
-	// update the checkpoint ts only there is no processing block events
-	if req.Watermark != nil && !m.barrier.ShouldBlockCheckpointTs() {
+	// update the checkpoint ts
+	if req.Watermark != nil && req.Size() == m.controller.GetTaskSizeByNodeID(msg.From) {
 		m.checkpointTsByCapture[msg.From] = *req.Watermark
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
