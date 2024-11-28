@@ -43,8 +43,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var metricEventStoreDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-store")
-var metricEventStoreDSChannelSize = metrics.DynamicStreamEventChanSize.WithLabelValues("event-store")
+var (
+	CounterKv       = metrics.EventStoreReceivedEventCount.WithLabelValues("kv")
+	CounterResolved = metrics.EventStoreReceivedEventCount.WithLabelValues("resolved")
+)
 
 type ResolvedTsNotifier func(watermark uint64)
 
@@ -435,6 +437,7 @@ func (e *eventStore) RegisterDispatcher(
 		for _, notifier := range subStat.dispatchers.notifiers {
 			notifier(ts)
 		}
+		CounterResolved.Inc()
 	}
 	// Note: don't hold any lock when call Subscribe
 	e.subClient.Subscribe(stat.subID, *tableSpan, startTs, consumeKVEvents, advanceResolvedTs, 600)
@@ -610,6 +613,7 @@ func (e *eventStore) writeEvents(db *pebble.DB, events []kvEventsAndCallback) er
 			}
 		}
 	}
+	CounterKv.Add(float64(kvCount))
 	metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(kvCount))
 	metrics.EventStoreWriteBatchSizeHist.Observe(float64(batch.Len()))
 	metrics.EventStoreWriteBytes.Add(float64(batch.Len()))
