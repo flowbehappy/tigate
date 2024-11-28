@@ -66,11 +66,11 @@ var (
 	metricStoreSendRequestErr         = metrics.EventFeedErrorCounter.WithLabelValues("SendRequestToStore")
 	metricKvIsBusyCounter             = metrics.EventFeedErrorCounter.WithLabelValues("KvIsBusy")
 
-	metricSubscriptionClientDSChannelSize     = metrics.DynamicStreamEventChanSize.WithLabelValues("subscription-client")
-	metricSubscriptionClientDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("subscription-client")
-	metricEventStoreDSAddPathNum              = metrics.DynamicStreamAddPathNum.WithLabelValues("subscription-client")
-	metricEventStoreDSRemovePathNum           = metrics.DynamicStreamRemovePathNum.WithLabelValues("subscription-client")
-	metricEventStoreDSArrageStreamNum         = metrics.DynamicStreamArrangeStreamNum.WithLabelValues("subscription-client")
+	metricSubscriptionClientDSChannelSize     = metrics.DynamicStreamEventChanSize.WithLabelValues("event-store")
+	metricSubscriptionClientDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-store")
+	metricEventStoreDSAddPathNum              = metrics.DynamicStreamAddPathNum.WithLabelValues("event-store")
+	metricEventStoreDSRemovePathNum           = metrics.DynamicStreamRemovePathNum.WithLabelValues("event-store")
+	metricEventStoreDSArrageStreamNum         = metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-store")
 )
 
 // To generate an ID for a new subscription.
