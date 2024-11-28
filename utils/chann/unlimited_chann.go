@@ -87,13 +87,15 @@ func (c *UnlimitedChannel[T, G]) Get() (T, bool) {
 	return v, true
 }
 
-// Get multiple elements from the channel.
-// If grouper is provided, it will return all consecutive elements that in the same group,
-// even if they already exceeds the cap(buffer) and batchBytes; And then it try to fill the buffer and the batch bytes.
-// If grouper is not provided, it will return up to cap(buffer) elements or batchBytes bytes.
-// Return the original buffer and a boolean indicating whether the channel is available.
-// Return false if the channel is closed.
-func (c *UnlimitedChannel[T, G]) GetMultiple(buffer []T, batchBytes ...int) ([]T, bool) {
+type getMultType int
+
+const (
+	getMultNoGroup getMultType = iota
+	getMultMixdGroupCons
+	getMultSingleGroup
+)
+
+func (c *UnlimitedChannel[T, G]) getMultiple(gmt getMultType, buffer []T, batchBytes ...int) ([]T, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -119,7 +121,20 @@ func (c *UnlimitedChannel[T, G]) GetMultiple(buffer []T, batchBytes ...int) ([]T
 	cap := cap(buffer)
 	bytes := 0
 
-	if c.grouper != nil {
+	switch gmt {
+	case getMultNoGroup:
+		for {
+			if len(buffer) >= cap || bytes >= maxBytes {
+				break
+			}
+			v, ok := c.queue.PopFront()
+			if !ok {
+				break
+			}
+			buffer = append(buffer, v)
+			bytes += getBytes(v)
+		}
+	case getMultMixdGroupCons, getMultSingleGroup:
 		first, ok := c.queue.FrontRef()
 		if !ok {
 			panic("unreachable")
@@ -132,7 +147,9 @@ func (c *UnlimitedChannel[T, G]) GetMultiple(buffer []T, batchBytes ...int) ([]T
 			}
 
 			curGroup := c.grouper(*v)
-			if curGroup != lastGroup && (len(buffer) >= cap || bytes >= maxBytes) {
+			if gmt == getMultSingleGroup && (curGroup != lastGroup || (len(buffer) >= cap || bytes >= maxBytes)) {
+				break
+			} else if curGroup != lastGroup && (len(buffer) >= cap || bytes >= maxBytes) {
 				break
 			}
 			lastGroup = curGroup
@@ -142,21 +159,39 @@ func (c *UnlimitedChannel[T, G]) GetMultiple(buffer []T, batchBytes ...int) ([]T
 
 			c.queue.PopFront()
 		}
-	} else {
-		for {
-			if len(buffer) >= cap || bytes >= maxBytes {
-				break
-			}
-			v, ok := c.queue.PopFront()
-			if !ok {
-				break
-			}
-			buffer = append(buffer, v)
-			bytes += getBytes(v)
-		}
 	}
 
 	return buffer, true
+}
+
+// Get multiple elements from the channel.
+func (c *UnlimitedChannel[T, G]) GetMultipleNoGroup(buffer []T, batchBytes ...int) ([]T, bool) {
+	return c.getMultiple(getMultNoGroup, buffer, batchBytes...)
+}
+
+// Get multiple elements from the channel. Grouper must be provided.
+//
+// It returns ALL consecutive elements that in the same group, even if they already exceeds the cap(buffer) and batchBytes;
+// And then it try to fill the buffer and the batch bytes.
+//
+// Return the original buffer and a boolean indicating whether the channel is available.
+// Return false if the channel is closed.
+// Note that different groups could be mixed in the result.
+func (c *UnlimitedChannel[T, G]) GetMultipleMixdGroupConsecutive(buffer []T, batchBytes ...int) ([]T, bool) {
+	if c.grouper == nil {
+		panic("grouper is required")
+	}
+	return c.getMultiple(getMultMixdGroupCons, buffer, batchBytes...)
+}
+
+// Get multiple elements from the channel. Grouper must be provided.
+//
+// Note that it only returns the elements in the same group, and tries to fill the buffer and the batch bytes.
+func (c *UnlimitedChannel[T, G]) GetMultipleSingleGroup(buffer []T, batchBytes ...int) ([]T, bool) {
+	if c.grouper == nil {
+		panic("grouper is required")
+	}
+	return c.getMultiple(getMultSingleGroup, buffer, batchBytes...)
 }
 
 func (c *UnlimitedChannel[T, G]) Len() int {

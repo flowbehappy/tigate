@@ -127,14 +127,15 @@ type subscriptionStat struct {
 }
 
 type kvEvent struct {
-	raw     *common.RawKVEntry
-	subID   logpuller.SubscriptionID
-	tableID int64
+	raw      *common.RawKVEntry
+	subID    logpuller.SubscriptionID
+	tableID  int64
+	batchSeq uint64
 }
 
-func kvEventGrouper(e kvEvent) uint64 { return uint64(e.subID) }
+func kvEventGrouper(e kvEvent) uint64 { return e.batchSeq }
 
-func kvEventSizer(_ kvEvent) int { return 0 }
+func kvEventSizer(e kvEvent) int { return int(e.raw.KeyLen + e.raw.ValueLen + e.raw.OldValueLen) }
 
 type eventStore struct {
 	pdClock pdutil.Clock
@@ -326,7 +327,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 			defer p.store.wg.Done()
 			buffer := make([]kvEvent, 0, 8192)
 			for {
-				events, ok := p.dataCh.GetMultiple(buffer)
+				events, ok := p.dataCh.GetMultipleMixdGroupConsecutive(buffer, 1<<20 /* 1MB */)
 				if !ok {
 					return
 				}

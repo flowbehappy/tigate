@@ -174,7 +174,7 @@ const DefaultMaxPendingSize = 128 * (1 << 20) // 128 MB
 const DefaultFeedbackInterval = 1000 * time.Millisecond
 
 type Option struct {
-	InputBufferSize int // The buffer size of the input channel. By default 0, means 1024.
+	InputChanSize int // The buffer size of the input channel. By default 0, means 1024.
 
 	SchedulerInterval time.Duration // The interval of the scheduler. The scheduler is used to balance the paths between streams.
 	ReportInterval    time.Duration // The interval of reporting the status of stream, the status is used by the scheduler.
@@ -185,6 +185,8 @@ type Option struct {
 
 	EnableMemoryControl bool // Enable the memory control. By default false.
 
+	UseBuffer bool // Use buffers inside the dynamic stream. By default true. TODO:  maybe we should disable it by default.
+
 	handleWait *sync.WaitGroup // For testing. Don't handle events until this wait group is done.
 }
 
@@ -194,12 +196,13 @@ func NewOption() Option {
 		ReportInterval:    DefaultReportInterval,
 		StreamCount:       0,
 		BatchCount:        1,
+		UseBuffer:         true,
 	}
 }
 
 func (o *Option) fix() {
-	if o.InputBufferSize <= 0 {
-		o.InputBufferSize = DefaultInputBufferSize
+	if o.InputChanSize <= 0 {
+		o.InputChanSize = DefaultInputBufferSize
 	}
 	if o.StreamCount == 0 {
 		o.StreamCount = runtime.NumCPU()
