@@ -15,6 +15,7 @@ package replica
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -138,6 +139,58 @@ func (db *ReplicationDB) GetReplicatingByGroup(id GroupID) []*SpanReplication {
 		replicating = append(replicating, stm)
 	}
 	return replicating
+}
+
+func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodesNum int) (groups map[GroupID]map[node.ID]*SpanReplication, valid bool) {
+	groups = make(map[GroupID]map[node.ID]*SpanReplication, len(db.taskGroups))
+
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+	for _, g := range db.taskGroups {
+		nodesTasks := g.GetNodeTasks()
+		if !g.IsStable() || len(nodesTasks) != nodesNum {
+			return nil, false
+		}
+
+		totalSpan := 0
+		for _, tasks := range nodesTasks {
+			totalSpan += len(tasks)
+		}
+		if totalSpan == 0 {
+			log.Warn("meet empty group", zap.String("changefeed", g.changefeedID.Name()), zap.String("group", g.groupName))
+			delete(db.taskGroups, g.groupID)
+			continue
+		}
+
+		// calc imbalance state for stable group
+		upperLimitPerNode := int(math.Ceil(float64(totalSpan) / float64(nodesNum)))
+		groupMap := make(map[node.ID]*SpanReplication, nodesNum)
+		limitCnt := 0
+		for nodeID, tasks := range nodesTasks {
+			switch len(tasks) {
+			case upperLimitPerNode:
+				limitCnt++
+				for _, stm := range tasks {
+					groupMap[nodeID] = stm
+					break
+				}
+			case upperLimitPerNode - 1:
+				groupMap[nodeID] = nil
+			default:
+				// len(tasks) > upperLimitPerNode || len(tasks) < upperLimitPerNode-1
+				log.Panic("invalid group state",
+					zap.String("changefeed", g.changefeedID.Name()),
+					zap.String("group", g.groupName), zap.Int("totalSpan", totalSpan),
+					zap.Int("nodesNum", nodesNum), zap.Int("upperLimitPerNode", upperLimitPerNode),
+					zap.String("node", nodeID.String()), zap.Int("nodeTaskSize", len(tasks)))
+			}
+		}
+		if limitCnt < nodesNum {
+			// only record imbalance group
+			groups[g.groupID] = groupMap
+		}
+	}
+	return groups, true
 }
 
 // GetTaskSizePerNode returns the size of the task per node
@@ -336,6 +389,10 @@ func (g *replicationTaskGroup) RemoveSpan(span *SpanReplication) {
 
 func (g *replicationTaskGroup) IsEmpty() bool {
 	return len(g.replicating)+len(g.scheduling)+len(g.absent) == 0
+}
+
+func (g *replicationTaskGroup) IsStable() bool {
+	return len(g.scheduling)+len(g.absent) == 0
 }
 
 func (g *replicationTaskGroup) GetTaskSizeByNodeID(nodeID node.ID) int {

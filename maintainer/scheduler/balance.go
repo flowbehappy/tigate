@@ -14,6 +14,7 @@
 package scheduler
 
 import (
+	"math"
 	"math/rand"
 	"time"
 
@@ -74,17 +75,11 @@ func (s *balanceScheduler) Execute() time.Time {
 		return now.Add(s.checkBalanceInterval)
 	}
 
-	// fast path, check the balance status
-	moveSize := scheduler.CheckBalanceStatus(s.replicationDB.GetTaskSizePerNode(), s.nodeManager.GetAliveNodes())
-	if moveSize <= 0 {
-		// no need to do the balance, skip
-		return now.Add(s.checkBalanceInterval)
-	}
-
-	groupReplicatings, moved := s.schedulerGroup()
+	nodes := s.nodeManager.GetAliveNodes()
+	moved := s.schedulerGroup(nodes)
 	if moved == 0 {
 		// all groups are balanced, safe to do the global balance
-		moved = s.schedulerGlobal(groupReplicatings)
+		moved = s.schedulerGlobal(nodes)
 	}
 
 	s.forceBalance = moved >= s.batchSize
@@ -92,45 +87,91 @@ func (s *balanceScheduler) Execute() time.Time {
 	return now.Add(s.checkBalanceInterval)
 }
 
-func (s *balanceScheduler) schedulerGroup() (map[replica.GroupID][]*replica.SpanReplication, int) {
+func (s *balanceScheduler) schedulerGroup(nodes map[node.ID]*node.Info) int {
 	batch, moved := s.batchSize, 0
-	groupReplicatings := make(map[replica.GroupID][]*replica.SpanReplication)
 	for _, group := range s.replicationDB.GetGroups() {
-		replicas := s.replicationDB.GetReplicatingByGroup(group)
-		moved += scheduler.Balance(
-			batch, s.random, s.nodeManager.GetAliveNodes(), replicas,
-			func(replication *replica.SpanReplication, id node.ID) bool {
-				op := operator.NewMoveDispatcherOperator(s.replicationDB, replication, replication.GetNodeID(), id)
-				return s.operatorController.AddOperator(op)
-			},
-		)
-		if len(replicas) > 0 {
-			groupReplicatings[group] = replicas
+		// fast path, check the balance status
+		moveSize := scheduler.CheckBalanceStatus(s.replicationDB.GetTaskSizePerNodeByGroup(group), nodes)
+		if moveSize <= 0 {
+			// no need to do the balance, skip
+			continue
 		}
+		replicas := s.replicationDB.GetReplicatingByGroup(group)
+		moved += scheduler.Balance(batch, s.random, nodes, replicas, s.doMove)
 		if moved >= batch {
 			break
 		}
 	}
-	return groupReplicatings, moved
+	return moved
 }
 
-func (s *balanceScheduler) schedulerGlobal(groupReplicatings map[replica.GroupID][]*replica.SpanReplication) int {
-	// implement it
-	activeNodes := s.nodeManager.GetAliveNodes()
+// TODO: refactor and simplify the implementation and limit max group size
+func (s *balanceScheduler) schedulerGlobal(nodes map[node.ID]*node.Info) int {
+	// fast path, check the balance status
+	moveSize := scheduler.CheckBalanceStatus(s.replicationDB.GetTaskSizePerNode(), nodes)
+	if moveSize <= 0 {
+		// no need to do the balance, skip
+		return 0
+	}
+	groupNodetasks, valid := s.replicationDB.GetImbalanceGroupNodeTask(len(nodes))
+	if !valid {
+		// no need to do the balance, skip
+		return 0
+	}
 
-	groupNodesTask := make(map[replica.GroupID]map[node.ID]int)
-	for group, replicas := range groupReplicatings {
-		nodeTasks := make(map[node.ID]*replica.SpanReplication)
-		for _, r := range replicas {
-			nodeID := r.GetNodeID()
-			if _, ok := nodeTasks[nodeID]; !ok {
-				nodeTasks[nodeID] = r
+	// complexity note: len(nodes) * len(groups)
+	totalTasks := 0
+	sizePerNode := make(map[node.ID]int, len(nodes))
+	for _, nodeTasks := range groupNodetasks {
+		for id, task := range nodeTasks {
+			if task != nil {
+				totalTasks++
+				sizePerNode[id]++
+			}
+		}
+	}
+	upperLimitPerNode := int(math.Ceil(float64(totalTasks) / float64(len(nodes))))
+	limitCnt := 0
+	for _, size := range sizePerNode {
+		if size == upperLimitPerNode {
+			limitCnt++
+		}
+	}
+	if limitCnt == len(nodes) {
+		// all nodes are global balanced
+		return 0
+	}
+
+	moved := 0
+	for _, nodeTasks := range groupNodetasks {
+		victims, availableNodes, next := map[node.ID]*replica.SpanReplication{}, []node.ID{}, 0
+		for id, task := range nodeTasks {
+			if task != nil && sizePerNode[id] > upperLimitPerNode {
+				victims[id] = task
+			} else if task == nil && sizePerNode[id] < upperLimitPerNode {
+				availableNodes = append(availableNodes, id)
 			}
 		}
 
+		for old, victim := range victims {
+			if next >= len(availableNodes) {
+				break
+			}
+			new := availableNodes[next]
+			if s.doMove(victim, new) {
+				sizePerNode[old]--
+				sizePerNode[new]++
+				next++
+				moved++
+			}
+		}
 	}
+	return moved
+}
 
-	return 0
+func (s *balanceScheduler) doMove(replication *replica.SpanReplication, id node.ID) bool {
+	op := operator.NewMoveDispatcherOperator(s.replicationDB, replication, replication.GetNodeID(), id)
+	return s.operatorController.AddOperator(op)
 }
 
 func (s *balanceScheduler) Name() string {
