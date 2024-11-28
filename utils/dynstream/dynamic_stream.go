@@ -119,6 +119,9 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	memControl *memControl[A, P, T, D, H]
 
+	// Fields if UseBuffer is true
+	// inChan -> buffer -> outChan(eventChan) ->  streams
+	//        ^ receiver                      ^ distributor
 	bufferCount atomic.Int64
 	inChan      chan T // The channel to receive the incoming events by receiver
 	outChan     chan T // The channel to send the events to the streams by distributor
@@ -126,6 +129,11 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 	wakeBufferCount atomic.Int64
 	wakeInChan      chan P // The channel to receive the wake signal by receiver
 	wakeOutChan     chan P // The channel to send the wake signal to the streams by distributor
+
+	// The channel used to receive and send the events by the distributor
+	// It is inChan when UseBuffer is false, and outChan when UseBuffer is true
+	eventChan chan T
+	wakeChan  chan P
 
 	feedbackChan chan Feedback[A, P, D] // The channel to report the feedback to outside listener
 
@@ -180,12 +188,6 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		trackTopPaths:   TrackTopPaths,
 		baseStreamCount: option.StreamCount,
 
-		inChan:  make(chan T, option.InputBufferSize),
-		outChan: make(chan T, 64),
-
-		wakeInChan:  make(chan P, 64),
-		wakeOutChan: make(chan P, 64),
-
 		reportChan: make(chan streamStat[A, P, T, D, H], 64),
 		cmdToSched: make(chan *command, 64),
 		cmdToDist:  make(chan *command, option.StreamCount),
@@ -193,6 +195,18 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		streamInfos:    make([]*streamInfo[A, P, T, D, H], 0, option.StreamCount),
 		eventExtraSize: eventExtraSize,
 		startTime:      time.Now(),
+	}
+	if option.UseBuffer {
+		ds.inChan = make(chan T, option.InputChanSize)
+		ds.outChan = make(chan T, 64)
+		ds.wakeInChan = make(chan P, 64)
+		ds.wakeOutChan = make(chan P, 64)
+
+		ds.eventChan = ds.outChan
+		ds.wakeChan = ds.wakeOutChan
+	} else {
+		ds.eventChan = make(chan T, option.InputChanSize)
+		ds.wakeChan = make(chan P, 64)
 	}
 	if option.EnableMemoryControl {
 		if len(feedbackChan) == 0 {
@@ -206,11 +220,19 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) In(path ...P) chan<- T {
-	return d.inChan
+	if d.option.UseBuffer {
+		return d.inChan
+	} else {
+		return d.eventChan
+	}
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Wake(path ...P) chan<- P {
-	return d.wakeInChan
+	if d.option.UseBuffer {
+		return d.wakeInChan
+	} else {
+		return d.wakeChan
+	}
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
@@ -218,8 +240,10 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
-	go receiver(d.inChan, d.outChan, &d.bufferCount)
-	go receiver(d.wakeInChan, d.wakeOutChan, &d.wakeBufferCount)
+	if d.option.UseBuffer {
+		go receiver(d.inChan, d.outChan, &d.bufferCount)
+		go receiver(d.wakeInChan, d.wakeOutChan, &d.wakeBufferCount)
+	}
 
 	d.schedWg.Add(1)
 	go d.scheduler()
@@ -229,8 +253,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Close() {
 	if d.hasClosed.CompareAndSwap(false, true) {
-		close(d.inChan)
-		close(d.wakeInChan)
+		if d.option.UseBuffer {
+			close(d.inChan)
+			close(d.wakeInChan)
+		} else {
+			close(d.eventChan)
+			close(d.wakeChan)
+		}
 		close(d.cmdToSched)
 		if d.feedbackChan != nil {
 			close(d.feedbackChan)
@@ -772,7 +801,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 
 	for {
 		select {
-		case e, ok := <-d.outChan:
+		case e, ok := <-d.eventChan:
 			if !ok {
 				return
 			}
@@ -795,7 +824,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				// Otherwise, drop the event and notify the handler
 				d.handler.OnDrop(e)
 			}
-		case p, ok := <-d.wakeOutChan:
+		case p, ok := <-d.wakeChan:
 			if !ok {
 				return
 			}
