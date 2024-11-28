@@ -113,7 +113,7 @@ func (s *balanceScheduler) schedulerGlobal(nodes map[node.ID]*node.Info) int {
 		// no need to do the balance, skip
 		return 0
 	}
-	groupNodetasks, valid := s.replicationDB.GetImbalanceGroupNodeTask(len(nodes))
+	groupNodetasks, valid := s.replicationDB.GetImbalanceGroupNodeTask(nodes)
 	if !valid {
 		// no need to do the balance, skip
 		return 0

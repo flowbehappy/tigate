@@ -141,18 +141,18 @@ func (db *ReplicationDB) GetReplicatingByGroup(id GroupID) []*SpanReplication {
 	return replicating
 }
 
-func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodesNum int) (groups map[GroupID]map[node.ID]*SpanReplication, valid bool) {
+func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info) (groups map[GroupID]map[node.ID]*SpanReplication, valid bool) {
 	groups = make(map[GroupID]map[node.ID]*SpanReplication, len(db.taskGroups))
+	nodesNum := len(nodes)
 
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 	for _, g := range db.taskGroups {
-		nodesTasks := g.GetNodeTasks()
-		if !g.IsStable() || len(nodesTasks) != nodesNum {
+		if !g.IsStable() {
 			return nil, false
 		}
 
-		totalSpan := 0
+		totalSpan, nodesTasks := 0, g.GetNodeTasks()
 		for _, tasks := range nodesTasks {
 			totalSpan += len(tasks)
 		}
@@ -186,6 +186,11 @@ func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodesNum int) (groups map[Gro
 			}
 		}
 		if limitCnt < nodesNum {
+			for nodeID := range nodes {
+				if _, ok := groupMap[nodeID]; !ok {
+					groupMap[nodeID] = nil
+				}
+			}
 			// only record imbalance group
 			groups[g.groupID] = groupMap
 		}
@@ -388,11 +393,11 @@ func (g *replicationTaskGroup) RemoveSpan(span *SpanReplication) {
 }
 
 func (g *replicationTaskGroup) IsEmpty() bool {
-	return len(g.replicating)+len(g.scheduling)+len(g.absent) == 0
+	return g.IsStable() && len(g.replicating) == 0
 }
 
 func (g *replicationTaskGroup) IsStable() bool {
-	return len(g.scheduling)+len(g.absent) == 0
+	return len(g.scheduling) == 0 && len(g.absent) == 0
 }
 
 func (g *replicationTaskGroup) GetTaskSizeByNodeID(nodeID node.ID) int {
