@@ -18,7 +18,6 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/sink/codec/internal" // nolint:staticcheck
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	canal "github.com/pingcap/tiflow/proto/canal"
-	"go.uber.org/zap"
 )
 
 func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, flag *common.ColumnFlagType) (string, internal.JavaSQLType, error) {
@@ -37,7 +35,6 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 	var value string
 	var javaType internal.JavaSQLType
 
-	log.Info("hyy colType", zap.Any("colType", colType))
 	switch colType {
 	case mysql.TypeBit:
 		javaType = internal.JavaSQLTypeBIT

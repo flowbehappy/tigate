@@ -7,11 +7,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common/columnselector"
 	pevent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/config"
 	newcommon "github.com/pingcap/ticdc/pkg/sink/codec/common"
 	"github.com/pingcap/ticdc/pkg/sink/codec/encoder"
-	"github.com/pingcap/tiflow/pkg/config"
 	ticonfig "github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/stretchr/testify/require"
@@ -58,7 +58,7 @@ func TestEncoderOneMessage(t *testing.T) {
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
-		ColumnSelector: common.NewDefaultColumnSelector(),
+		ColumnSelector: columnselector.NewDefaultColumnSelector(),
 		Callback:       func() { count += 1 }}
 
 	err = batchEncoder.AppendRowChangedEvent(ctx, "", insertRowEvent)
@@ -111,7 +111,7 @@ func TestEncoderMultipleMessage(t *testing.T) {
 			TableInfo:      tableInfo,
 			CommitTs:       1,
 			Event:          insertRow,
-			ColumnSelector: common.NewDefaultColumnSelector(),
+			ColumnSelector: columnselector.NewDefaultColumnSelector(),
 			Callback:       func() { count += 1 }}
 
 		err = batchEncoder.AppendRowChangedEvent(ctx, "", insertRowEvent)
@@ -180,7 +180,7 @@ func TestLargeMessage(t *testing.T) {
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
-		ColumnSelector: common.NewDefaultColumnSelector(),
+		ColumnSelector: columnselector.NewDefaultColumnSelector(),
 		Callback:       func() { count += 1 }}
 
 	err = batchEncoder.AppendRowChangedEvent(ctx, "", insertRowEvent)
@@ -211,7 +211,7 @@ func TestLargeMessageWithHandle(t *testing.T) {
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
-		ColumnSelector: common.NewDefaultColumnSelector(),
+		ColumnSelector: columnselector.NewDefaultColumnSelector(),
 		Callback:       func() {}}
 
 	err = batchEncoder.AppendRowChangedEvent(ctx, "", insertRowEvent)
@@ -255,7 +255,7 @@ func TestLargeMessageWithoutHandle(t *testing.T) {
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
-		ColumnSelector: common.NewDefaultColumnSelector(),
+		ColumnSelector: columnselector.NewDefaultColumnSelector(),
 		Callback:       func() {}}
 
 	err = batchEncoder.AppendRowChangedEvent(ctx, "", insertRowEvent)

@@ -275,14 +275,12 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 			block = true
 			dml := event.(*commonEvent.DMLEvent)
 			dml.ReplicatingTs = d.creatationPDTs
-			log.Info("dispatcher receive dml event", zap.Any("dml", dml))
 			dml.AssembleRows(d.tableInfo)
 			dml.AddPostFlushFunc(func() {
 				// Considering dml event in sink may be write to downstream not in order,
 				// thus, we use tableProgress.Empty() to ensure these events are flushed to downstream completely
 				// and wake dynamic stream to handle the next events.
 				if d.tableProgress.Empty() {
-					log.Info("hyy table progress is empty, wake dynamic stream")
 					wakeCallback()
 				}
 			})
@@ -602,6 +600,5 @@ func (d *Dispatcher) GetEventSizePerSecond() float32 {
 }
 
 func (d *Dispatcher) HandleCheckpointTs(checkpointTs uint64) {
-	log.Info("hyy Dispatcher HandleCheckpointTs", zap.Uint64("checkpointTs", checkpointTs))
 	d.sink.AddCheckpointTs(checkpointTs)
 }
