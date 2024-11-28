@@ -233,7 +233,11 @@ func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 }
 
 func (s *stream[A, P, T, D, H]) getPendingSize() int {
-	return len(s.inChan) + int(s.bufferCount.Load()) + len(s.outChan) + int(s.eventQueue.totalPendingLength.Load())
+	if s.option.UseBuffer {
+		return len(s.inChan) + int(s.bufferCount.Load()) + len(s.outChan) + int(s.eventQueue.totalPendingLength.Load())
+	} else {
+		return len(s.eventChan) + int(s.eventQueue.totalPendingLength.Load())
+	}
 }
 
 func (s *stream[A, P, T, D, H]) in() chan eventWrap[A, P, T, D, H] {

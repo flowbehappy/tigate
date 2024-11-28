@@ -131,7 +131,7 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 	wakeOutChan     chan P // The channel to send the wake signal to the streams by distributor
 
 	// The channel used to receive and send the events by the distributor
-	// It is inChan when UseBuffer is false, and outChan when UseBuffer is true
+	// It is the same as the outChan if UseBuffer is true
 	eventChan chan T
 	wakeChan  chan P
 
@@ -318,14 +318,19 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings Area
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
-	return Metrics{
-		EventChanSize:   int(d.bufferCount.Load()) + len(d.inChan) + len(d.outChan),
+	m := Metrics{
 		PendingQueueLen: int(d._statAllStreamPendingLen.Load()),
 		MinHandledTS:    d._statMinHandledTS.Load(),
 		AddPath:         int(d._statAddPathCount.Load()),
 		RemovePath:      int(d._statRemovePathCount.Load()),
 		ArrangeStream:   int(d._statArrangeStreamCount.Load()),
 	}
+	if d.option.UseBuffer {
+		m.EventChanSize = int(d.bufferCount.Load()) + len(d.inChan) + len(d.outChan)
+	} else {
+		m.EventChanSize = len(d.eventChan)
+	}
+	return m
 }
 
 // Make the scheduler to balance immediately. Only used for test.
