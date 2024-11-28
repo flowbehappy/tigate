@@ -61,35 +61,54 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		}
 
 		if flag.IsBinary() {
-			javaType = internal.JavaSQLTypeBLOB
 			decoded, err := bytesDecoder.Bytes(bytesValue)
 			if err != nil {
 				return "", 0, err
 			}
 			value = string(decoded)
 		} else {
-			javaType = internal.JavaSQLTypeCLOB
 			value = string(bytesValue)
 		}
 	case mysql.TypeVarchar, mysql.TypeVarString:
+		bytesValue := row.GetBytes(idx)
 		if flag.IsBinary() {
 			javaType = internal.JavaSQLTypeBLOB
 		} else {
 			javaType = internal.JavaSQLTypeVARCHAR
 		}
-		value = string(row.GetBytes(idx))
-		if value == "" {
+
+		if string(bytesValue) == "" {
 			value = "null"
+			break
+		}
+		if flag.IsBinary() {
+			decoded, err := bytesDecoder.Bytes(bytesValue)
+			if err != nil {
+				return "", 0, err
+			}
+			value = string(decoded)
+		} else {
+			value = string(bytesValue)
 		}
 	case mysql.TypeString:
+		bytesValue := row.GetBytes(idx)
 		if flag.IsBinary() {
 			javaType = internal.JavaSQLTypeBLOB
 		} else {
 			javaType = internal.JavaSQLTypeCHAR
 		}
-		value = string(row.GetBytes(idx))
-		if value == "" {
+		if string(bytesValue) == "" {
 			value = "null"
+			break
+		}
+		if flag.IsBinary() {
+			decoded, err := bytesDecoder.Bytes(bytesValue)
+			if err != nil {
+				return "", 0, err
+			}
+			value = string(decoded)
+		} else {
+			value = string(bytesValue)
 		}
 	case mysql.TypeEnum:
 		javaType = internal.JavaSQLTypeINTEGER

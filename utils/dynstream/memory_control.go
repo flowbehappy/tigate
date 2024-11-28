@@ -86,16 +86,16 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(
 	eventQueue *eventQueue[A, P, T, D, H],
 ) {
 	replaced := false
-	if isPeriodicSignal(event) {
-		back, ok := path.pendingQueue.BackRef()
-		if ok && isPeriodicSignal(*back) {
-			// Replace the repeated signal.
-			// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
-			*back = event
-			replaced = true
-			eventQueue.updateHeapAfterUpdatePath(path)
-		}
-	}
+	// if isPeriodicSignal(event) {
+	// 	back, ok := path.pendingQueue.BackRef()
+	// 	if ok && isPeriodicSignal(*back) {
+	// 		// Replace the repeated signal.
+	// 		// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
+	// 		*back = event
+	// 		replaced = true
+	// 		eventQueue.updateHeapAfterUpdatePath(path)
+	// 	}
+	// }
 
 	if !replaced {
 		if as.shouldDropEvent(path, event, handler, eventQueue) {

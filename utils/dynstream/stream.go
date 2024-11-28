@@ -177,9 +177,13 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	eventBlockAllocator *deque.BlockAllocator[eventWrap[A, P, T, D, H]] // The allocator for blocks to store eventWraps in the pendingQueue.
 
-	inChan      chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
+	// The fields when UseBuffer is true.
 	bufferCount atomic.Int64
+	inChan      chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
 	outChan     chan eventWrap[A, P, T, D, H] // The buffer channel to send the events.
+
+	// The channel used by the handleLoop to receive the events.
+	eventChan chan eventWrap[A, P, T, D, H]
 
 	eventQueue eventQueue[A, P, T, D, H]    // The queue to store the pending events.
 	doneChan   chan doneInfo[A, P, T, D, H] // The channel to receive the done events.
@@ -208,14 +212,20 @@ func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 	s := &stream[A, P, T, D, H]{
 		id:                  id,
 		handler:             handler,
-		inChan:              make(chan eventWrap[A, P, T, D, H], 64),
-		outChan:             make(chan eventWrap[A, P, T, D, H], 64),
 		eventQueue:          newEventQueue(option, handler),
 		doneChan:            make(chan doneInfo[A, P, T, D, H], 64),
 		reportNow:           make(chan struct{}, 1),
 		reportChan:          reportChan,
 		maxBusyPathsToTrack: maxBusyPathsToTrack,
 		option:              option,
+	}
+	if option.UseBuffer {
+		s.inChan = make(chan eventWrap[A, P, T, D, H], 64)
+		s.outChan = make(chan eventWrap[A, P, T, D, H], 64)
+
+		s.eventChan = s.outChan
+	} else {
+		s.eventChan = make(chan eventWrap[A, P, T, D, H], 64)
 	}
 	a := deque.NewBlockAllocator[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 64)
 	s.eventBlockAllocator = &a
@@ -227,7 +237,12 @@ func (s *stream[A, P, T, D, H]) getPendingSize() int {
 }
 
 func (s *stream[A, P, T, D, H]) in() chan eventWrap[A, P, T, D, H] {
-	return s.inChan
+	if s.option.UseBuffer {
+		return s.inChan
+	} else {
+		return s.eventChan
+	}
+
 }
 
 // Start the stream.
@@ -235,10 +250,16 @@ func (s *stream[A, P, T, D, H]) start(acceptedPaths []*pathInfo[A, P, T, D, H], 
 	if s.isClosed.Load() {
 		panic("The stream has been closed.")
 	}
-	go s.reciever()
+	if s.option.UseBuffer {
+		go s.reciever()
+	}
 
 	s.handleWg.Add(1)
-	go s.handleLoop(acceptedPaths, formerStreams)
+	if s.option.UseBuffer {
+		go s.handleLoop(acceptedPaths, formerStreams)
+	} else {
+		go s.handleLoop(acceptedPaths, formerStreams)
+	}
 
 	s.reportWg.Add(1)
 	go s.reportStatLoop()
@@ -248,7 +269,11 @@ func (s *stream[A, P, T, D, H]) start(acceptedPaths []*pathInfo[A, P, T, D, H], 
 // wait is by default true, which means to wait for the goroutines to exit.
 func (s *stream[A, P, T, D, H]) close(wait ...bool) {
 	if s.isClosed.CompareAndSwap(false, true) {
-		close(s.inChan)
+		if s.option.UseBuffer {
+			close(s.inChan)
+		} else {
+			close(s.eventChan)
+		}
 	}
 	if len(wait) == 0 || wait[0] {
 		s.handleWg.Wait()
@@ -316,8 +341,8 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 		}
 		close(s.doneChan)
 
-		// Move remaining events in the outChan to pendingQueue.
-		for e := range s.outChan {
+		// Move remaining events in the eventChan to pendingQueue.
+		for e := range s.eventChan {
 			pushToPendingQueue(e)
 		}
 
@@ -360,12 +385,12 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 		s.option.handleWait.Wait()
 	}
 
-	// 1. Drain the outChan to pendingQueue.
+	// 1. Drain the eventChan to pendingQueue.
 	// 2. Pop events from the eventQueue and handle them.
 Loop:
 	for {
 		if eventQueueEmpty {
-			e, ok := <-s.outChan
+			e, ok := <-s.eventChan
 			if !ok {
 				// The stream is closed.
 				return
@@ -374,7 +399,7 @@ Loop:
 			eventQueueEmpty = false
 		} else {
 			select {
-			case e, ok := <-s.outChan:
+			case e, ok := <-s.eventChan:
 				if !ok {
 					return
 				}
