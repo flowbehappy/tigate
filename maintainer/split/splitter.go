@@ -34,9 +34,9 @@ const (
 	// baseSpanNumberCoefficient is the base coefficient that use to
 	// multiply the number of captures to get the number of spans.
 	baseSpanNumberCoefficient = 3
-	// maxSpanNumber is the maximum number of spans that can be split
+	// defaultMaxSpanNumber is the maximum number of spans that can be split
 	// in single batch.
-	maxSpanNumber = 100
+	defaultMaxSpanNumber = 100
 )
 
 // RegionCache is a simplified interface of tikv.RegionCache.
@@ -52,7 +52,7 @@ type RegionCache interface {
 
 type splitter interface {
 	split(
-		ctx context.Context, span *heartbeatpb.TableSpan, totalCaptures int,
+		ctx context.Context, span *heartbeatpb.TableSpan, totalCaptures int, maxSpanNum int,
 	) []*heartbeatpb.TableSpan
 }
 
@@ -80,10 +80,14 @@ func NewSplitter(
 
 func (s *Splitter) SplitSpans(ctx context.Context,
 	span *heartbeatpb.TableSpan,
-	totalCaptures int) []*heartbeatpb.TableSpan {
+	totalCaptures int,
+	maxSpanNum int) []*heartbeatpb.TableSpan {
 	spans := []*heartbeatpb.TableSpan{span}
+	if maxSpanNum <= 0 {
+		maxSpanNum = defaultMaxSpanNumber
+	}
 	for _, sp := range s.splitters {
-		spans = sp.split(ctx, span, totalCaptures)
+		spans = sp.split(ctx, span, totalCaptures, maxSpanNum)
 		if len(spans) > 1 {
 			return spans
 		}

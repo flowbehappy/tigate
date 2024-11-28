@@ -41,7 +41,7 @@ type ReplicationDB struct {
 	// LOCK protects the above maps
 	lock sync.RWMutex
 
-	hotSpans *HotSpans
+	hotSpans *hotSpans
 }
 
 // NewReplicaSetDB creates a new ReplicationDB and initializes the maps
