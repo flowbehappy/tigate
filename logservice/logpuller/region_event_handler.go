@@ -160,7 +160,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 		case cdcpb.Event_COMMITTED:
 			resolvedTs := state.getLastResolvedTs()
 			if entry.CommitTs <= resolvedTs {
-				log.Panic("The CommitTs must be greater than the resolvedTs",
+				log.Fatal("The CommitTs must be greater than the resolvedTs",
 					zap.String("EventType", "COMMITTED"),
 					zap.Uint64("CommitTs", entry.CommitTs),
 					zap.Uint64("resolvedTs", resolvedTs),
@@ -176,7 +176,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 					state.matcher.cacheCommitRow(entry)
 					continue
 				}
-				log.Panic("prewrite not match",
+				log.Fatal("prewrite not match",
 					zap.String("key", hex.EncodeToString(entry.GetKey())),
 					zap.Uint64("startTs", entry.GetStartTs()),
 					zap.Uint64("commitTs", entry.GetCommitTs()),
@@ -194,7 +194,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 			// NOTE: state.getLastResolvedTs() will never less than startTs.
 			resolvedTs := state.getLastResolvedTs()
 			if entry.CommitTs <= resolvedTs {
-				log.Panic("The CommitTs must be greater than the resolvedTs",
+				log.Fatal("The CommitTs must be greater than the resolvedTs",
 					zap.String("EventType", "COMMIT"),
 					zap.Uint64("CommitTs", entry.CommitTs),
 					zap.Uint64("resolvedTs", resolvedTs),
