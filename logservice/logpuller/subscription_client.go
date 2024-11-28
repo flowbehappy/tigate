@@ -155,8 +155,6 @@ type subscribedSpan struct {
 type SubscriptionClientConfig struct {
 	// The number of region request workers to send region task for every tikv store
 	RegionRequestWorkerPerStore uint
-	// The time interval to advance resolvedTs for a region
-	AdvanceResolvedTsIntervalInMs uint
 	// The stream count of dynamic stream
 	StreamCount int
 }

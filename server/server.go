@@ -130,9 +130,8 @@ func (c *server) initialize(ctx context.Context) error {
 		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
 	subscriptionClient := logpuller.NewSubscriptionClient(
 		&logpuller.SubscriptionClientConfig{
-			RegionRequestWorkerPerStore:   16,
-			AdvanceResolvedTsIntervalInMs: 800,
-			StreamCount:                   4,
+			RegionRequestWorkerPerStore: 16,
+			StreamCount:                 4,
 		},
 		c.pdClient,
 		c.RegionCache,
