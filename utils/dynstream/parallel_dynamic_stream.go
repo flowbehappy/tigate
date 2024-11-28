@@ -71,7 +71,7 @@ func (s *parallelDynamicStream[A, P, T, D, H]) SetAreaSettings(area A, settings 
 
 func (s *parallelDynamicStream[A, P, T, D, H]) GetMetrics() Metrics {
 	metrics := Metrics{}
-	metrics.MinHandledTS = math.MaxUint64
+	metrics.MinHandleTS = math.MaxUint64
 	for _, ds := range s.dynamicStreams {
 		subMetrics := ds.GetMetrics()
 		metrics.EventChanSize += subMetrics.EventChanSize
@@ -79,8 +79,9 @@ func (s *parallelDynamicStream[A, P, T, D, H]) GetMetrics() Metrics {
 		metrics.AddPath += subMetrics.AddPath
 		metrics.RemovePath += subMetrics.RemovePath
 		metrics.ArrangeStream += subMetrics.ArrangeStream
-		if subMetrics.MinHandledTS < metrics.MinHandledTS {
-			metrics.MinHandledTS = subMetrics.MinHandledTS
+		if subMetrics.MinHandleTS < metrics.MinHandleTS {
+			metrics.MinHandleTS = subMetrics.MinHandleTS
+			metrics.SinceMinHandleTS = subMetrics.SinceMinHandleTS
 		}
 	}
 	return metrics

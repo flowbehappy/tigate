@@ -199,7 +199,10 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	handleWg sync.WaitGroup
 	reportWg sync.WaitGroup
 
+	startTime time.Time
+
 	_statMinHandledTS atomic.Uint64
+	_statSinceStart   atomic.Int64 // To avoid storing an atomic Time
 }
 
 func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
@@ -218,6 +221,7 @@ func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 		reportChan:          reportChan,
 		maxBusyPathsToTrack: maxBusyPathsToTrack,
 		option:              option,
+		startTime:           time.Now(),
 	}
 	if option.UseBuffer {
 		s.inChan = make(chan eventWrap[A, P, T, D, H], 64)
@@ -238,6 +242,11 @@ func (s *stream[A, P, T, D, H]) getPendingSize() int {
 	} else {
 		return len(s.eventChan) + int(s.eventQueue.totalPendingLength.Load())
 	}
+}
+
+func (s *stream[A, P, T, D, H]) getMinHandledTS() (uint64, int64) {
+	return s._statMinHandledTS.Load(),
+		int64(time.Since(s.startTime)) - s._statSinceStart.Load()
 }
 
 func (s *stream[A, P, T, D, H]) in() chan eventWrap[A, P, T, D, H] {
@@ -415,9 +424,10 @@ Loop:
 					eventQueueEmpty = true
 					continue Loop
 				}
-				now := time.Now()
+				beginTime := time.Now()
 				path.blocking = s.handler.Handle(path.dest, eventBuf...)
-				s.doneChan <- doneInfo[A, P, T, D, H]{pathInfo: path, handleTime: time.Since(now)}
+				doneTime := time.Now()
+				s.doneChan <- doneInfo[A, P, T, D, H]{pathInfo: path, handleTime: doneTime.Sub(beginTime)}
 
 				if path.blocking {
 					s.eventQueue.blockPath(path)
@@ -426,6 +436,7 @@ Loop:
 					minTS := s.eventQueue.onHandledTS(path)
 					if minTS > 0 {
 						s._statMinHandledTS.Store(uint64(minTS))
+						s._statSinceStart.Store(int64(doneTime.Sub(s.startTime)))
 					}
 				}
 				cleanUpEventBuf()

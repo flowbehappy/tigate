@@ -155,6 +155,7 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	_statAllStreamPendingLen atomic.Int64
 	_statMinHandledTS        atomic.Uint64
+	_statSinceMinHandleTS    atomic.Int64 // The duration since the min handled ts is updated
 	_statAddPathCount        atomic.Uint64
 	_statRemovePathCount     atomic.Uint64
 	_statArrangeStreamCount  atomic.Uint64
@@ -319,11 +320,12 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings Area
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
 	m := Metrics{
-		PendingQueueLen: int(d._statAllStreamPendingLen.Load()),
-		MinHandledTS:    d._statMinHandledTS.Load(),
-		AddPath:         int(d._statAddPathCount.Load()),
-		RemovePath:      int(d._statRemovePathCount.Load()),
-		ArrangeStream:   int(d._statArrangeStreamCount.Load()),
+		PendingQueueLen:  int(d._statAllStreamPendingLen.Load()),
+		MinHandleTS:      d._statMinHandledTS.Load(),
+		SinceMinHandleTS: time.Duration(d._statSinceMinHandleTS.Load()),
+		AddPath:          int(d._statAddPathCount.Load()),
+		RemovePath:       int(d._statRemovePathCount.Load()),
+		ArrangeStream:    int(d._statArrangeStreamCount.Load()),
 	}
 	if d.option.UseBuffer {
 		m.EventChanSize = int(d.bufferCount.Load()) + len(d.inChan) + len(d.outChan)
@@ -785,16 +787,19 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				d.memControl.updateMetrics()
 			}
 			allStreamPendingLen := 0
-			minHandledTS := uint64(0)
+			minHandleTS := uint64(0)
+			sinceMinHandleTS := int64(0)
 			for _, si := range d.streamInfos {
 				allStreamPendingLen += si.stream.getPendingSize()
-				handledTs := si.stream._statMinHandledTS.Load()
-				if minHandledTS == 0 || (minHandledTS > handledTs && handledTs != 0) {
-					minHandledTS = handledTs
+				handledTs, since := si.stream.getMinHandledTS()
+				if minHandleTS == 0 || (minHandleTS > handledTs && handledTs != 0) {
+					minHandleTS = handledTs
+					sinceMinHandleTS = since
 				}
 			}
 			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
-			d._statMinHandledTS.Store(minHandledTS)
+			d._statMinHandledTS.Store(minHandleTS)
+			d._statSinceMinHandleTS.Store(int64(sinceMinHandleTS))
 		}
 	}
 }
