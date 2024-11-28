@@ -32,7 +32,7 @@ import (
 // 4. maintainer wait for the selected dispatcher reporting event(write) done message (resend logic is needed)
 // 5. maintainer send pass action to all other dispatchers. (resend logic is needed)
 // 6. maintainer wait for all dispatchers reporting event(pass) done message
-// 7. maintainer clear the event
+// 7. maintainer clear the event, and schedule block event? todo: what if we schedule first then wait for all dispatchers?
 type Barrier struct {
 	blockedTs         map[eventKey]*BarrierEvent
 	controller        *Controller
@@ -147,6 +147,18 @@ func (b *Barrier) Resend() []*messaging.TargetMessage {
 	return msgs
 }
 
+// ShouldBlockCheckpointTs returns ture there is a block event need block the checkpoint ts forwarding
+// currently, when the block event is a create table event, we should block the checkpoint ts forwarding
+// because on the
+func (b *Barrier) ShouldBlockCheckpointTs() bool {
+	for _, event := range b.blockedTs {
+		if event.hasNewTable {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *Barrier) handleOneStatus(changefeedID *heartbeatpb.ChangefeedID, status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
 	cfID := common.NewChangefeedIDFromPB(changefeedID)
 	dispatcherID := common.NewDispatcherIDFromPB(status.ID)
@@ -183,6 +195,7 @@ func (b *Barrier) handleEventDone(changefeedID common.ChangeFeedID, dispatcherID
 	// the writer already synced ddl to downstream
 	if event.writerDispatcher == dispatcherID {
 		// the pass action will be sent periodically in resend logic if not acked
+		// todo: schedule the block event here?
 		event.writerDispatcherAdvanced = true
 	}
 
