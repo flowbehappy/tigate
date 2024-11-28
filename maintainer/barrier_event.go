@@ -289,6 +289,7 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 				zap.Bool("selected", be.selected),
 				zap.Bool("writerDispatcherAdvanced", be.writerDispatcherAdvanced),
 				zap.String("coverage", be.rangeChecker.Detail()),
+				zap.Any("blocker", be.blockedDispatchers),
 				zap.Any("resend", msgs),
 			)
 			be.lastWarningLogTime = time.Now()
