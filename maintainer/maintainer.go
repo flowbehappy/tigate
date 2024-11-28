@@ -406,6 +406,9 @@ func (m *Maintainer) calCheckpointTs() {
 	if !m.controller.ScheduleFinished() {
 		return
 	}
+	if m.barrier.ShouldBlockCheckpointTs() {
+		return
+	}
 	newWatermark := heartbeatpb.NewMaxWatermark()
 	// if there is no tables, there must be a table trigger dispatcher
 	for id := range m.bootstrapper.GetAllNodes() {
@@ -463,7 +466,8 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 		return
 	}
 	req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
-	if req.Watermark != nil {
+	// update the checkpoint ts only there is no processing block events
+	if req.Watermark != nil && !m.barrier.ShouldBlockCheckpointTs() {
 		m.checkpointTsByCapture[msg.From] = *req.Watermark
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
