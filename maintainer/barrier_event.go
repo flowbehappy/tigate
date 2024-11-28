@@ -29,10 +29,11 @@ import (
 // BarrierEvent is a barrier event that reported by dispatchers, note is a block multiple dispatchers
 // all of these dispatchers should report the same event
 type BarrierEvent struct {
-	cfID       common.ChangeFeedID
-	commitTs   uint64
-	controller *Controller
-	selected   bool
+	cfID        common.ChangeFeedID
+	commitTs    uint64
+	controller  *Controller
+	selected    bool
+	hasNewTable bool
 	// table trigger event dispatcher reported the block event, we should use it as the writer
 	tableTriggerDispatcherRelated bool
 	writerDispatcher              common.DispatcherID
@@ -58,6 +59,7 @@ func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
 	event := &BarrierEvent{
 		controller:          controller,
 		selected:            false,
+		hasNewTable:         len(status.NeedAddedTables) > 0,
 		cfID:                cfID,
 		commitTs:            status.BlockTs,
 		blockedDispatchers:  status.BlockTables,
@@ -287,6 +289,7 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 				zap.Bool("selected", be.selected),
 				zap.Bool("writerDispatcherAdvanced", be.writerDispatcherAdvanced),
 				zap.String("coverage", be.rangeChecker.Detail()),
+				zap.Any("blocker", be.blockedDispatchers),
 				zap.Any("resend", msgs),
 			)
 			be.lastWarningLogTime = time.Now()
