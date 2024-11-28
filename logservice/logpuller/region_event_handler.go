@@ -36,40 +36,37 @@ type regionEvent struct {
 	resolvedTs uint64
 }
 
-type regionEventPath struct {
-	subID    uint64
-	regionID uint64
+type pathHasher struct {
 }
 
-type regionEventPathHasher struct {
-}
-
-func (h regionEventPathHasher) HashPath(path regionEventPath) uint64 {
-	// Combine the two parts using XOR and a bit shift
-	return path.regionID ^ (path.subID << 1)
+func (h pathHasher) HashPath(subID SubscriptionID) uint64 {
+	return uint64(subID)
 }
 
 type regionEventHandler struct {
+	subClient *SubscriptionClient
 }
 
-func (h *regionEventHandler) Path(event regionEvent) regionEventPath {
-	return regionEventPath{
-		subID:    event.state.requestID,
-		regionID: event.state.getRegionID(),
-	}
+func (h *regionEventHandler) Path(event regionEvent) SubscriptionID {
+	return SubscriptionID(event.state.requestID)
 }
 
-func (h *regionEventHandler) Handle(worker *regionRequestWorker, events ...regionEvent) bool {
+func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent) bool {
 	for _, event := range events {
 		if event.state.isStale() {
-			worker.handleRegionError(event.state)
+			// TODO: do we need handle it here?
 			continue
 		}
 		if event.entries != nil {
-			// TODO: need block? and how to wake?
-			handleEventEntries(event.state, worker, event.entries)
+			handleEventEntries(span, event.state, event.entries)
+			if len(span.kvEventsCache) > 0 {
+				span.consumeKVEvents(span.kvEventsCache, func() {
+					h.subClient.wakeSubscription(span.subID)
+				})
+				return true
+			}
 		} else if event.resolvedTs != 0 {
-			handleResolvedTs(event.state, worker, event.resolvedTs)
+			handleResolvedTs(span, event.state, event.resolvedTs)
 		} else {
 			log.Panic("should not reach", zap.Any("event", event), zap.Any("events", events))
 		}
@@ -78,7 +75,7 @@ func (h *regionEventHandler) Handle(worker *regionRequestWorker, events ...regio
 }
 
 func (h *regionEventHandler) GetSize(event regionEvent) int { return 0 }
-func (h *regionEventHandler) GetArea(path regionEventPath, dest *regionRequestWorker) int {
+func (h *regionEventHandler) GetArea(path SubscriptionID, dest *subscribedSpan) int {
 	return 0
 }
 func (h *regionEventHandler) GetTimestamp(event regionEvent) dynstream.Timestamp {
@@ -116,10 +113,9 @@ func (h *regionEventHandler) GetType(event regionEvent) dynstream.EventType {
 
 func (h *regionEventHandler) OnDrop(event regionEvent) {}
 
-func handleEventEntries(state *regionFeedState, worker *regionRequestWorker, entries *cdcpb.Event_Entries_) {
+func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *cdcpb.Event_Entries_) {
 	regionID, _, _ := state.getRegionMeta()
-	span := state.region.subscribedSpan
-	assembleRowEvent := func(regionID uint64, entry *cdcpb.Event_Row) *common.RawKVEntry {
+	assembleRowEvent := func(regionID uint64, entry *cdcpb.Event_Row) common.RawKVEntry {
 		var opType common.OpType
 		switch entry.GetOpType() {
 		case cdcpb.Event_Row_DELETE:
@@ -129,7 +125,7 @@ func handleEventEntries(state *regionFeedState, worker *regionRequestWorker, ent
 		default:
 			log.Panic("meet unknown op type", zap.Any("entry", entry))
 		}
-		return &common.RawKVEntry{
+		return common.RawKVEntry{
 			OpType:   opType,
 			Key:      entry.Key,
 			Value:    entry.GetValue(),
@@ -139,11 +135,9 @@ func handleEventEntries(state *regionFeedState, worker *regionRequestWorker, ent
 			OldValue: entry.GetOldValue(),
 		}
 	}
-	emit := func(val *common.RawKVEntry) {
-		e := newLogEvent(val, span)
-		worker.client.consume(e)
-	}
 
+	// TODO: check the cap and release it if it is too large
+	span.kvEventsCache = span.kvEventsCache[:0]
 	for _, entry := range entries.Entries.GetEntries() {
 		// log.Info("handleEventEntries",
 		// 	zap.Uint64("startTs", entry.StartTs),
@@ -160,8 +154,7 @@ func handleEventEntries(state *regionFeedState, worker *regionRequestWorker, ent
 				zap.Stringer("span", &state.region.span))
 
 			for _, cachedEvent := range state.matcher.matchCachedRow(true) {
-				revent := assembleRowEvent(regionID, cachedEvent)
-				emit(revent)
+				span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, cachedEvent))
 			}
 			state.matcher.matchCachedRollbackRow(true)
 		case cdcpb.Event_COMMITTED:
@@ -173,8 +166,7 @@ func handleEventEntries(state *regionFeedState, worker *regionRequestWorker, ent
 					zap.Uint64("resolvedTs", resolvedTs),
 					zap.Uint64("regionID", regionID))
 			}
-			revent := assembleRowEvent(regionID, entry)
-			emit(revent)
+			span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, entry))
 		case cdcpb.Event_PREWRITE:
 			state.matcher.putPrewriteRow(entry)
 		case cdcpb.Event_COMMIT:
@@ -209,8 +201,7 @@ func handleEventEntries(state *regionFeedState, worker *regionRequestWorker, ent
 					zap.Uint64("regionID", regionID))
 				return
 			}
-			revent := assembleRowEvent(regionID, entry)
-			emit(revent)
+			span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, entry))
 		case cdcpb.Event_ROLLBACK:
 			if !state.isInitialized() {
 				state.matcher.cacheRollbackRow(entry)
@@ -221,7 +212,7 @@ func handleEventEntries(state *regionFeedState, worker *regionRequestWorker, ent
 	}
 }
 
-func handleResolvedTs(state *regionFeedState, worker *regionRequestWorker, resolvedTs uint64) {
+func handleResolvedTs(span *subscribedSpan, state *regionFeedState, resolvedTs uint64) {
 	if state.isStale() || !state.isInitialized() {
 		return
 	}
@@ -229,8 +220,7 @@ func handleResolvedTs(state *regionFeedState, worker *regionRequestWorker, resol
 	regionID := state.getRegionID()
 	lastResolvedTs := state.getLastResolvedTs()
 	if resolvedTs < lastResolvedTs {
-		log.Info("The resolvedTs is fallen back in kvclient",
-			zap.Int("subscriptionClientID", int(worker.client.id)),
+		log.Info("The resolvedTs is fallen back in subscription client",
 			zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
 			zap.Uint64("regionID", regionID),
 			zap.Uint64("resolvedTs", resolvedTs),
@@ -239,17 +229,12 @@ func handleResolvedTs(state *regionFeedState, worker *regionRequestWorker, resol
 	}
 	state.updateResolvedTs(resolvedTs)
 
-	span := state.region.subscribedSpan
 	now := time.Now().UnixMilli()
 	lastAdvance := span.lastAdvanceTime.Load()
 	if now-lastAdvance > span.advanceInterval && span.lastAdvanceTime.CompareAndSwap(lastAdvance, now) {
 		ts := span.rangeLock.ResolvedTs()
 		if ts > span.startTs {
-			e := newLogEvent(&common.RawKVEntry{
-				OpType: common.OpTypeResolved,
-				CRTs:   ts,
-			}, span)
-			worker.client.consume(e)
+			span.advanceResolvedTs(ts)
 		}
 	}
 }

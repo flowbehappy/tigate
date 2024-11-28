@@ -15,7 +15,6 @@ package logpuller
 
 import (
 	"context"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,9 +26,9 @@ import (
 	"github.com/pingcap/ticdc/logservice/logpuller/regionlock"
 	"github.com/pingcap/ticdc/logservice/txnutil"
 	"github.com/pingcap/ticdc/pkg/common"
+	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/utils/dynstream"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/security"
@@ -67,8 +66,11 @@ var (
 	metricStoreSendRequestErr         = metrics.EventFeedErrorCounter.WithLabelValues("SendRequestToStore")
 	metricKvIsBusyCounter             = metrics.EventFeedErrorCounter.WithLabelValues("KvIsBusy")
 
-	metricSubscriptionClientDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("subscription-client")
 	metricSubscriptionClientDSChannelSize     = metrics.DynamicStreamEventChanSize.WithLabelValues("subscription-client")
+	metricSubscriptionClientDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("subscription-client")
+	metricEventStoreDSAddPathNum              = metrics.DynamicStreamAddPathNum.WithLabelValues("subscription-client")
+	metricEventStoreDSRemovePathNum           = metrics.DynamicStreamRemovePathNum.WithLabelValues("subscription-client")
+	metricEventStoreDSArrageStreamNum         = metrics.DynamicStreamArrangeStreamNum.WithLabelValues("subscription-client")
 )
 
 // To generate an ID for a new subscription.
@@ -121,7 +123,7 @@ type rangeTask struct {
 // the startTs of the table, and the output event channel.
 type subscribedSpan struct {
 	subID   SubscriptionID
-	startTs tablepb.Ts
+	startTs uint64
 
 	// The target span
 	span heartbeatpb.TableSpan
@@ -130,14 +132,20 @@ type subscribedSpan struct {
 	// and it also used to calculate this table's resolvedTs.
 	rangeLock *regionlock.RangeLock
 
+	consumeKVEvents func(events []common.RawKVEntry, wakeCallback func())
+
+	advanceResolvedTs func(ts uint64)
+
+	advanceInterval int64
+
+	kvEventsCache []common.RawKVEntry
+
 	// To handle span removing.
 	stopped atomic.Bool
 
 	// To handle stale lock resolvings.
 	tryResolveLock     func(regionID uint64, state *regionlock.LockedRangeState)
 	staleLocksTargetTs atomic.Uint64
-
-	advanceInterval int64
 
 	lastAdvanceTime atomic.Int64
 	// This is used to calculate the resolvedTs lag for metrics.
@@ -178,7 +186,7 @@ type SubscriptionClient struct {
 	pdClock      pdutil.Clock
 	lockResolver txnutil.LockResolver
 
-	ds dynstream.DynamicStream[int, regionEventPath, regionEvent, *regionRequestWorker, *regionEventHandler]
+	ds dynstream.DynamicStream[int, SubscriptionID, regionEvent, *subscribedSpan, *regionEventHandler]
 
 	// the credential to connect tikv
 	credential *security.Credential
@@ -236,12 +244,7 @@ func NewSubscriptionClient(
 	lockResolver txnutil.LockResolver,
 	credential *security.Credential,
 ) *SubscriptionClient {
-	option := dynstream.NewOption()
-	option.BatchCount = 1024
-	ds := dynstream.NewParallelDynamicStream(config.StreamCount, regionEventPathHasher{}, &regionEventHandler{}, option)
-	ds.Start()
-
-	s := &SubscriptionClient{
+	subClient := &SubscriptionClient{
 		id:         id,
 		config:     config,
 		filterLoop: false, // FIXME
@@ -251,8 +254,6 @@ func NewSubscriptionClient(
 		pdClock:      pdClock,
 		lockResolver: lockResolver,
 
-		ds: ds,
-
 		credential: credential,
 
 		rangeTaskCh:       make(chan rangeTask, 1024),
@@ -260,9 +261,20 @@ func NewSubscriptionClient(
 		resolveLockTaskCh: make(chan resolveLockTask, 1024),
 		errCache:          newErrCache(),
 	}
-	s.totalSpans.spanMap = make(map[SubscriptionID]*subscribedSpan)
-	s.initMetrics()
-	return s
+	subClient.totalSpans.spanMap = make(map[SubscriptionID]*subscribedSpan)
+
+	option := dynstream.NewOption()
+	option.BatchCount = 1024
+	ds := dynstream.NewParallelDynamicStream(config.StreamCount, pathHasher{}, &regionEventHandler{subClient: subClient}, option)
+	ds.Start()
+	subClient.ds = ds
+
+	subClient.initMetrics()
+	return subClient
+}
+
+func (s *SubscriptionClient) Name() string {
+	return appcontext.SubscriptionClient
 }
 
 // AllocsubscriptionID gets an ID can be used in `Subscribe`.
@@ -290,6 +302,9 @@ func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
 			}
 			metricSubscriptionClientDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 			metricSubscriptionClientDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
+			metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))
+			metricEventStoreDSRemovePathNum.Set(float64(dsMetrics.RemovePath))
+			metricEventStoreDSArrageStreamNum.Set(float64(dsMetrics.ArrangeStream))
 		}
 	}
 }
@@ -299,15 +314,25 @@ func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
 // It new a subscribedSpan and store it in `s.totalSpans`,
 // and send a rangeTask to `s.rangeTaskCh`.
 // The rangeTask will be handled in `handleRangeTasks` goroutine.
-func (s *SubscriptionClient) Subscribe(subID SubscriptionID, span heartbeatpb.TableSpan, startTs uint64) {
+func (s *SubscriptionClient) Subscribe(
+	subID SubscriptionID,
+	span heartbeatpb.TableSpan,
+	startTs uint64,
+	consumeKVEvents func(raw []common.RawKVEntry, wakeCallback func()),
+	advanceResolvedTs func(ts uint64),
+	advanceInterval int64,
+) {
 	if span.TableID == 0 {
 		log.Panic("subscription client subscribe with zero TableID")
+		return
 	}
 
-	rt := s.newSubscribedSpan(subID, span, startTs)
+	rt := s.newSubscribedSpan(subID, span, startTs, consumeKVEvents, advanceResolvedTs, advanceInterval)
 	s.totalSpans.Lock()
 	s.totalSpans.spanMap[subID] = rt
 	s.totalSpans.Unlock()
+
+	s.ds.AddPath(rt.subID, rt, dynstream.AreaSettings{})
 
 	s.rangeTaskCh <- rangeTask{span: span, subscribedSpan: rt}
 	log.Info("subscribes span success",
@@ -323,14 +348,21 @@ func (s *SubscriptionClient) Unsubscribe(subID SubscriptionID) {
 	s.totalSpans.Lock()
 	rt := s.totalSpans.spanMap[subID]
 	s.totalSpans.Unlock()
-	if rt != nil {
-		s.setTableStopped(rt)
+	if rt == nil {
+		log.Warn("unknown subscription", zap.Uint64("subscriptionID", uint64(subID)))
+		return
 	}
+	s.ds.RemovePath(rt.subID)
+	s.setTableStopped(rt)
 
 	log.Info("unsubscribe span success",
 		zap.Int("subscriptionClientID", int(s.id)),
 		zap.Uint64("subscriptionID", uint64(rt.subID)),
 		zap.Bool("exists", rt != nil))
+}
+
+func (s *SubscriptionClient) wakeSubscription(subID SubscriptionID) {
+	s.ds.Wake(subID) <- subID
 }
 
 // ResolveLock is a function. If outsider subscribers find a span resolved timestamp is
@@ -354,8 +386,8 @@ func (s *SubscriptionClient) RegionCount(subID SubscriptionID) uint64 {
 	return 0
 }
 
-func (s *SubscriptionClient) Run(ctx context.Context, consume func(e LogEvent) error) error {
-	s.consume = consume
+func (s *SubscriptionClient) Run(ctx context.Context) error {
+	// s.consume = consume
 	if s.pd == nil {
 		log.Warn("subsription client should be in test mode, skip run")
 		return nil
@@ -412,11 +444,6 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 
 // Note: don't block the caller, otherwise there may be deadlock
 func (s *SubscriptionClient) onRegionFail(errInfo regionErrorInfo) {
-	// TODO: the path may not be added, is there better place to call RemovePath?
-	s.ds.RemovePath(regionEventPath{
-		subID:    uint64(errInfo.subscribedSpan.subID),
-		regionID: errInfo.verID.GetID(),
-	})
 	s.errCache.add(errInfo)
 }
 
@@ -486,10 +513,6 @@ func (s *SubscriptionClient) handleRegions(ctx context.Context, eg *errgroup.Gro
 
 			store := getStore(region.rpcCtx.Peer.StoreId, region.rpcCtx.Addr)
 			worker := store.getRequestWorker()
-			s.ds.AddPath(regionEventPath{
-				subID:    uint64(region.subscribedSpan.subID),
-				regionID: region.verID.GetID(),
-			}, worker, dynstream.AreaSettings{})
 			worker.requestsCh <- region
 
 			log.Debug("subscription client will request a region",
@@ -848,15 +871,23 @@ func (s *SubscriptionClient) newSubscribedSpan(
 	subID SubscriptionID,
 	span heartbeatpb.TableSpan,
 	startTs uint64,
+	consumeKVEvents func(raw []common.RawKVEntry, wakeCallback func()),
+	advanceResolvedTs func(ts uint64),
+	advanceInterval int64,
 ) *subscribedSpan {
 	rangeLock := regionlock.NewRangeLock(uint64(subID), span.StartKey, span.EndKey, startTs)
 
 	rt := &subscribedSpan{
-		subID:           subID,
-		span:            span,
-		startTs:         startTs,
-		rangeLock:       rangeLock,
-		advanceInterval: int64(s.config.AdvanceResolvedTsIntervalInMs)/4*3 + int64(rand.Intn(int(s.config.AdvanceResolvedTsIntervalInMs)/4)),
+		subID:     subID,
+		span:      span,
+		startTs:   startTs,
+		rangeLock: rangeLock,
+
+		consumeKVEvents:   consumeKVEvents,
+		advanceResolvedTs: advanceResolvedTs,
+		advanceInterval:   advanceInterval,
+
+		kvEventsCache: make([]common.RawKVEntry, 0, 4096),
 	}
 	rt.resolvedTs.Store(startTs)
 

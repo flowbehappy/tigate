@@ -24,29 +24,21 @@ import (
 	"time"
 
 	"github.com/pingcap/ticdc/logservice/logservicepb"
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/pingcap/ticdc/utils/chann"
-	"github.com/pingcap/ticdc/utils/dynstream"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/logservice/logpuller"
-	"github.com/pingcap/ticdc/logservice/txnutil"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
-	"github.com/pingcap/tiflow/pkg/security"
-	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -117,7 +109,7 @@ type subscriptionStat struct {
 
 	dbIndex int
 
-	eventCh *chann.UnlimitedChannel[kvEvent, uint64]
+	eventCh *chann.UnlimitedChannel[kvEventsAndCallback, uint64]
 	// data <= checkpointTs can be deleted
 	checkpointTs atomic.Uint64
 	// the resolveTs persisted in the store
@@ -126,24 +118,22 @@ type subscriptionStat struct {
 	maxEventCommitTs atomic.Uint64
 }
 
-type kvEvent struct {
-	raw     *common.RawKVEntry
-	subID   logpuller.SubscriptionID
-	tableID int64
+type kvEventsAndCallback struct {
+	subID    logpuller.SubscriptionID
+	tableID  int64
+	kvs      []common.RawKVEntry
+	callback func()
 }
 
-func kvEventGrouper(e kvEvent) uint64 { return uint64(e.subID) }
-
-func kvEventSizer(_ kvEvent) int { return 0 }
+func kvEventsAndCallbackSizer(_ kvEventsAndCallback) int { return 0 }
 
 type eventStore struct {
-	pdClock pdutil.Clock
+	pdClock   pdutil.Clock
+	subClient *logpuller.SubscriptionClient
 
 	dbs            []*pebble.DB
-	chs            []*chann.UnlimitedChannel[kvEvent, uint64]
+	chs            []*chann.UnlimitedChannel[kvEventsAndCallback, uint64]
 	writeTaskPools []*writeTaskPool
-
-	puller *logpuller.LogPuller
 
 	gcManager *gcManager
 
@@ -153,8 +143,6 @@ type eventStore struct {
 		sync.RWMutex
 		id node.ID
 	}
-
-	ds dynstream.DynamicStream[int, logpuller.SubscriptionID, kvEvent, *subscriptionStat, *eventsHandler]
 
 	// To manage background goroutines.
 	wg sync.WaitGroup
@@ -170,10 +158,6 @@ type eventStore struct {
 
 	encoder *zstd.Encoder
 	decoder *zstd.Decoder
-
-	metricEventStoreDSAddPathNum      prometheus.Gauge
-	metricEventStoreDSRemovePathNum   prometheus.Gauge
-	metricEventStoreDSArrageStreamNum prometheus.Gauge
 }
 
 const (
@@ -193,26 +177,9 @@ func (h pathHasher) HashPath(subID logpuller.SubscriptionID) uint64 {
 func New(
 	ctx context.Context,
 	root string,
-	pdCli pd.Client,
-	regionCache *tikv.RegionCache,
+	subClient *logpuller.SubscriptionClient,
 	pdClock pdutil.Clock,
-	kvStorage kv.Storage,
 ) EventStore {
-	clientConfig := &logpuller.SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:   16,
-		AdvanceResolvedTsIntervalInMs: 800,
-		StreamCount:                   4,
-	}
-	client := logpuller.NewSubscriptionClient(
-		logpuller.ClientIDEventStore,
-		clientConfig,
-		pdCli,
-		regionCache,
-		pdClock,
-		txnutil.NewLockerResolver(kvStorage.(tikv.Storage)),
-		&security.Credential{},
-	)
-
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
 
 	// FIXME: avoid remove
@@ -231,27 +198,17 @@ func New(
 		log.Panic("Failed to create zstd decoder", zap.Error(err))
 	}
 
-	option := dynstream.NewOption()
-	option.BatchCount = 4096
-	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
-	ds.Start()
-
 	store := &eventStore{
-		pdClock: pdClock,
+		pdClock:   pdClock,
+		subClient: subClient,
 
 		dbs:            make([]*pebble.DB, 0, dbCount),
-		chs:            make([]*chann.UnlimitedChannel[kvEvent, uint64], 0, dbCount),
+		chs:            make([]*chann.UnlimitedChannel[kvEventsAndCallback, uint64], 0, dbCount),
 		writeTaskPools: make([]*writeTaskPool, 0, dbCount),
-
-		ds: ds,
 
 		gcManager: newGCManager(),
 		encoder:   encoder,
 		decoder:   decoder,
-
-		metricEventStoreDSAddPathNum:      metrics.DynamicStreamAddPathNum.WithLabelValues("event-store"),
-		metricEventStoreDSRemovePathNum:   metrics.DynamicStreamRemovePathNum.WithLabelValues("event-store"),
-		metricEventStoreDSArrageStreamNum: metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-store"),
 	}
 	// TODO: update pebble options
 	for i := 0; i < dbCount; i++ {
@@ -275,25 +232,12 @@ func New(
 			log.Fatal("open db failed", zap.Error(err))
 		}
 		store.dbs = append(store.dbs, db)
-		store.chs = append(store.chs, chann.NewUnlimitedChannel[kvEvent, uint64](kvEventGrouper, kvEventSizer))
+		store.chs = append(store.chs, chann.NewUnlimitedChannel[kvEventsAndCallback, uint64](nil, kvEventsAndCallbackSizer))
 		store.writeTaskPools = append(store.writeTaskPools, newWriteTaskPool(store, store.dbs[i], store.chs[i], writeWorkerNumPerDB))
 	}
 	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]*dispatcherStat)
 	store.dispatcherMeta.subscriptionStats = make(map[logpuller.SubscriptionID]*subscriptionStat)
 	store.dispatcherMeta.tableToDispatchers = make(map[int64]map[common.DispatcherID]bool)
-
-	consume := func(raw *common.RawKVEntry, subID logpuller.SubscriptionID) error {
-		if raw == nil {
-			log.Panic("should not happen: meet nil event")
-		}
-		store.ds.In(subID) <- kvEvent{
-			raw:   raw,
-			subID: subID,
-		}
-		return nil
-	}
-	puller := logpuller.NewLogPuller(client, pdClock, consume)
-	store.puller = puller
 
 	// recv and handle messages
 	messageCenter := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
@@ -306,11 +250,11 @@ func New(
 type writeTaskPool struct {
 	store     *eventStore
 	db        *pebble.DB
-	dataCh    *chann.UnlimitedChannel[kvEvent, uint64]
+	dataCh    *chann.UnlimitedChannel[kvEventsAndCallback, uint64]
 	workerNum int
 }
 
-func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[kvEvent, uint64], workerNum int) *writeTaskPool {
+func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[kvEventsAndCallback, uint64], workerNum int) *writeTaskPool {
 	return &writeTaskPool{
 		store:     store,
 		db:        db,
@@ -324,30 +268,20 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			buffer := make([]kvEvent, 0, 8192)
+			buffer := make([]kvEventsAndCallback, 0, 1024)
 			for {
 				events, ok := p.dataCh.GetMultiple(buffer)
 				if !ok {
 					return
 				}
-				metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(len(events)))
 				p.store.writeEvents(p.db, events)
-				prevSubID := logpuller.InvalidSubscriptionID
 				for i := range events {
-					// wake once for every subscription. otherwise there may be new events between two wakeups.
-					if events[i].subID != prevSubID {
-						p.store.wakeSubscription(events[i].subID)
-						prevSubID = events[i].subID
-					}
+					events[i].callback()
 				}
 				buffer = buffer[:0]
 			}
 		}()
 	}
-}
-
-func (e *eventStore) wakeSubscription(subID logpuller.SubscriptionID) {
-	e.ds.Wake(subID) <- subID
 }
 
 func (e *eventStore) Name() string {
@@ -365,21 +299,9 @@ func (e *eventStore) Run(ctx context.Context) error {
 		})
 	}
 
-	eg.Go(func() error {
-		return e.puller.Run(ctx)
-	})
-
-	eg.Go(func() error {
-		return e.puller.Run(ctx)
-	})
-
 	// TODO: manage gcManager exit
 	eg.Go(func() error {
 		return e.gcManager.run(ctx, e.deleteEvents)
-	})
-
-	eg.Go(func() error {
-		return e.updateMetrics(ctx)
 	})
 
 	eg.Go(func() error {
@@ -390,11 +312,6 @@ func (e *eventStore) Run(ctx context.Context) error {
 }
 
 func (e *eventStore) Close(ctx context.Context) error {
-	if err := e.puller.Close(ctx); err != nil {
-		log.Error("failed to close log puller", zap.Error(err))
-	}
-	e.ds.Close()
-
 	e.wg.Wait()
 
 	for _, db := range e.dbs {
@@ -478,31 +395,22 @@ func (e *eventStore) RegisterDispatcher(
 	// (if we finally decide not to reuse data after restart, use round robin instead)
 	// But if we need to share data for sub span, we need hash table id instead.
 	chIndex := common.HashTableSpan(tableSpan, len(e.chs))
-
-	// Note: don't hold any lock when call Subscribe
-	// TODO: if puller event come before we initialize dispatcherStat,
-	// maxEventCommitTs may not be updated correctly and cause data loss.(lost resolved ts is harmless)
-	// To fix it, we need to alloc subID and initialize dispatcherStat before puller may send events.
-	// That is allocate subID in a separate method.
-	stat.subID = e.puller.Subscribe(*tableSpan, startTs)
-	metrics.EventStoreSubscriptionGauge.Inc()
-
-	e.dispatcherMeta.Lock()
-	defer e.dispatcherMeta.Unlock()
-	e.dispatcherMeta.dispatcherStats[dispatcherID] = stat
+	stat.subID = e.subClient.AllocSubscriptionID()
 	subStat := &subscriptionStat{
 		subID:   stat.subID,
 		tableID: tableSpan.TableID,
 		dbIndex: chIndex,
 		eventCh: e.chs[chIndex],
 	}
+
+	e.dispatcherMeta.Lock()
+	e.dispatcherMeta.dispatcherStats[dispatcherID] = stat
 	subStat.dispatchers.notifiers = make(map[common.DispatcherID]ResolvedTsNotifier)
 	subStat.dispatchers.notifiers[dispatcherID] = notifier
 	subStat.checkpointTs.Store(startTs)
 	subStat.resolvedTs.Store(startTs)
 	subStat.maxEventCommitTs.Store(startTs)
 	e.dispatcherMeta.subscriptionStats[stat.subID] = subStat
-	e.ds.AddPath(stat.subID, subStat, dynstream.AreaSettings{})
 
 	dispatchersForSameTable, ok := e.dispatcherMeta.tableToDispatchers[tableSpan.TableID]
 	if !ok {
@@ -510,6 +418,27 @@ func (e *eventStore) RegisterDispatcher(
 	} else {
 		dispatchersForSameTable[dispatcherID] = true
 	}
+	e.dispatcherMeta.Unlock()
+
+	consumeKVEvents := func(kvs []common.RawKVEntry, finishCallback func()) {
+		subStat.eventCh.Push(kvEventsAndCallback{
+			subID:    subStat.subID,
+			tableID:  subStat.tableID,
+			kvs:      kvs,
+			callback: finishCallback,
+		})
+	}
+	advanceResolvedTs := func(ts uint64) {
+		subStat.resolvedTs.Store(ts)
+		subStat.dispatchers.RLock()
+		defer subStat.dispatchers.RUnlock()
+		for _, notifier := range subStat.dispatchers.notifiers {
+			notifier(ts)
+		}
+	}
+	// Note: don't hold any lock when call Subscribe
+	e.subClient.Subscribe(stat.subID, *tableSpan, startTs, consumeKVEvents, advanceResolvedTs, 600)
+	metrics.EventStoreSubscriptionGauge.Inc()
 	return true, nil
 }
 
@@ -537,7 +466,7 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 	if len(subscriptionStat.dispatchers.notifiers) == 0 {
 		delete(e.dispatcherMeta.subscriptionStats, subID)
 		// TODO: do we need unlock before puller.Unsubscribe?
-		e.puller.Unsubscribe(subID)
+		e.subClient.Unsubscribe(subID)
 		metrics.EventStoreSubscriptionGauge.Dec()
 	}
 
@@ -549,7 +478,6 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 	delete(dispatchersForSameTable, dispatcherID)
 	if len(dispatchersForSameTable) == 0 {
 		delete(e.dispatcherMeta.tableToDispatchers, tableID)
-		e.ds.RemovePath(subID)
 	}
 
 	return nil
@@ -665,71 +593,24 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	}, nil
 }
 
-func (e *eventStore) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			e.updateMetricsOnce()
-		}
-	}
-}
-
-func (e *eventStore) updateMetricsOnce() {
-	// currentTime := e.pdClock.CurrentTime()
-	// currentPhyTs := oracle.GetPhysical(currentTime)
-	// minResolvedTs := uint64(0)
-	// e.dispatcherMeta.RLock()
-	// for _, subscriptionStat := range e.dispatcherMeta.subscriptionStats {
-	// 	// resolved ts lag
-	// 	resolvedTs := subscriptionStat.resolvedTs.Load()
-	// 	resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
-	// 	resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
-	// 	metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
-	// 	if minResolvedTs == 0 || resolvedTs < minResolvedTs {
-	// 		minResolvedTs = resolvedTs
-	// 	}
-	// 	// checkpoint ts lag
-	// 	checkpointTs := subscriptionStat.checkpointTs.Load()
-	// 	watermarkPhyTs := oracle.ExtractPhysical(checkpointTs)
-	// 	watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
-	// 	metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
-	// }
-	// e.dispatcherMeta.RUnlock()
-	// if minResolvedTs == 0 {
-	// 	return
-	// }
-	// minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
-	// eventStoreResolvedTsLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
-	// metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
-	dsMetrics := e.ds.GetMetrics()
-	if dsMetrics.MinHandledTS != 0 {
-		lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandledTS)) / 1e3
-		metrics.EventStoreResolvedTsLagGauge.Set(lag)
-	}
-	metricEventStoreDSChannelSize.Set(float64(dsMetrics.EventChanSize))
-	metricEventStoreDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
-	e.metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))
-	e.metricEventStoreDSRemovePathNum.Set(float64(dsMetrics.RemovePath))
-	e.metricEventStoreDSArrageStreamNum.Set(float64(dsMetrics.ArrangeStream))
-}
-
-func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvent) error {
+func (e *eventStore) writeEvents(db *pebble.DB, events []kvEventsAndCallback) error {
 	metrics.EventStoreWriteRequestsCount.Inc()
 	batch := db.NewBatch()
+	kvCount := 0
 	for _, event := range events {
-		item := event.raw
-		key := EncodeKey(uint64(event.subID), event.tableID, item)
-		value := item.Encode()
-		compressedValue := e.encoder.EncodeAll(value, nil)
-		ratio := float64(len(value)) / float64(len(compressedValue))
-		metrics.EventStoreCompressRatio.Set(ratio)
-		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
-			log.Panic("failed to update pebble batch", zap.Error(err))
+		for _, kv := range event.kvs {
+			kvCount += 1
+			key := EncodeKey(uint64(event.subID), event.tableID, &kv)
+			value := kv.Encode()
+			compressedValue := e.encoder.EncodeAll(value, nil)
+			ratio := float64(len(value)) / float64(len(compressedValue))
+			metrics.EventStoreCompressRatio.Set(ratio)
+			if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
+				log.Panic("failed to update pebble batch", zap.Error(err))
+			}
 		}
 	}
+	metrics.EventStoreWriteBatchEventsCountHist.Observe(float64(kvCount))
 	metrics.EventStoreWriteBatchSizeHist.Observe(float64(batch.Len()))
 	metrics.EventStoreWriteBytes.Add(float64(batch.Len()))
 	start := time.Now()
