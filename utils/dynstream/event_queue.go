@@ -250,16 +250,16 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 
 	// Shortcut when memory control is disabled.
 	replaced := false
-	if event.eventType.Property == PeriodicSignal {
-		back, ok := path.pendingQueue.BackRef()
-		if ok && back.eventType.Property == PeriodicSignal {
-			// Replace the repeated signal.
-			// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
-			*back = event
-			replaced = true
-			q.updateHeapAfterUpdatePath(path)
-		}
-	}
+	// if event.eventType.Property == PeriodicSignal {
+	// 	back, ok := path.pendingQueue.BackRef()
+	// 	if ok && back.eventType.Property == PeriodicSignal {
+	// 		// Replace the repeated signal.
+	// 		// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
+	// 		*back = event
+	// 		replaced = true
+	// 		q.updateHeapAfterUpdatePath(path)
+	// 	}
+	// }
 	if !replaced {
 		path.pendingQueue.PushBack(event)
 		q.updateHeapAfterUpdatePath(path)
@@ -307,6 +307,7 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				log.Panic("firstEvent is nil, it should not happen")
 			}
 			firstGroup := firstEvent.eventType.DataGroup
+			firstProperty := firstEvent.eventType.Property
 			appendToBufAndUpdateState(firstEvent, path)
 			count := 1
 
@@ -326,6 +327,14 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 			}
 
 			q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(path))
+
+			if count != 1 && firstProperty == PeriodicSignal {
+				// If the first event is a periodic signal, we only need to return the latest event
+				buf[0] = buf[count-1]
+				buf = buf[:1]
+				return buf, path, lastTS
+			}
+
 			return buf, path, lastTS
 		}
 	}
