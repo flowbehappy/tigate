@@ -55,7 +55,7 @@ func NewLogPullerMultiSpan(
 	pdClock pdutil.Clock,
 	spans []heartbeatpb.TableSpan,
 	startTs uint64,
-	consume func([]common.RawKVEntry, func()),
+	consume func([]common.RawKVEntry, func()) bool,
 	advanceResolveTs func(ts uint64),
 ) *LogPullerMultiSpan {
 	if len(spans) <= 1 {

@@ -132,7 +132,7 @@ type subscribedSpan struct {
 	// and it also used to calculate this table's resolvedTs.
 	rangeLock *regionlock.RangeLock
 
-	consumeKVEvents func(events []common.RawKVEntry, wakeCallback func())
+	consumeKVEvents func(events []common.RawKVEntry, wakeCallback func()) bool
 
 	advanceResolvedTs func(ts uint64)
 
@@ -290,7 +290,7 @@ func (s *SubscriptionClient) Subscribe(
 	subID SubscriptionID,
 	span heartbeatpb.TableSpan,
 	startTs uint64,
-	consumeKVEvents func(raw []common.RawKVEntry, wakeCallback func()),
+	consumeKVEvents func(raw []common.RawKVEntry, wakeCallback func()) bool,
 	advanceResolvedTs func(ts uint64),
 	advanceInterval int64,
 ) {
@@ -825,7 +825,7 @@ func (s *SubscriptionClient) newSubscribedSpan(
 	subID SubscriptionID,
 	span heartbeatpb.TableSpan,
 	startTs uint64,
-	consumeKVEvents func(raw []common.RawKVEntry, wakeCallback func()),
+	consumeKVEvents func(raw []common.RawKVEntry, wakeCallback func()) bool,
 	advanceResolvedTs func(ts uint64),
 	advanceInterval int64,
 ) *subscribedSpan {

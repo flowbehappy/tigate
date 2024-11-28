@@ -73,7 +73,7 @@ func (p *ddlJobFetcher) close(ctx context.Context) error {
 	return p.puller.Close(ctx)
 }
 
-func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, finishCallback func()) {
+func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, finishCallback func()) bool {
 	for _, kv := range kvs {
 		job, err := p.unmarshalDDL(&kv)
 		if err != nil {
@@ -81,7 +81,7 @@ func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, finishCallback func()) {
 		}
 
 		if job == nil {
-			return
+			return false
 		}
 
 		p.writeDDLEvent(DDLJobWithCommitTs{
@@ -89,7 +89,7 @@ func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, finishCallback func()) {
 			CommitTs: kv.CRTs,
 		})
 	}
-	finishCallback()
+	return false
 }
 
 func (p *ddlJobFetcher) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, error) {

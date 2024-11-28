@@ -422,13 +422,14 @@ func (e *eventStore) RegisterDispatcher(
 	}
 	e.dispatcherMeta.Unlock()
 
-	consumeKVEvents := func(kvs []common.RawKVEntry, finishCallback func()) {
+	consumeKVEvents := func(kvs []common.RawKVEntry, finishCallback func()) bool {
 		subStat.eventCh.Push(kvEventsAndCallback{
 			subID:    subStat.subID,
 			tableID:  subStat.tableID,
 			kvs:      kvs,
 			callback: finishCallback,
 		})
+		return true
 	}
 	advanceResolvedTs := func(ts uint64) {
 		subStat.resolvedTs.Store(ts)
