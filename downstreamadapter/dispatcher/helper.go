@@ -197,14 +197,16 @@ type HeartBeatInfo struct {
 type ResendTask struct {
 	message    *heartbeatpb.TableSpanBlockStatus
 	dispatcher *Dispatcher
+	callback   func() // function need to be called when the task is cancelled
 	taskHandle *threadpool.TaskHandle
 }
 
-func newResendTask(message *heartbeatpb.TableSpanBlockStatus, dispatcher *Dispatcher) *ResendTask {
+func newResendTask(message *heartbeatpb.TableSpanBlockStatus, dispatcher *Dispatcher, callback func()) *ResendTask {
 	taskScheduler := GetDispatcherTaskScheduler()
 	t := &ResendTask{
 		message:    message,
 		dispatcher: dispatcher,
+		callback:   callback,
 	}
 	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(50*time.Millisecond))
 	return t
@@ -216,6 +218,9 @@ func (t *ResendTask) Execute() time.Time {
 }
 
 func (t *ResendTask) Cancel() {
+	if t.callback != nil {
+		t.callback()
+	}
 	t.taskHandle.Cancel()
 }
 

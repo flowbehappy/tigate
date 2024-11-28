@@ -70,7 +70,7 @@ type EventDispatcherManager struct {
 
 	// statusesChan is used to store the status of dispatchers when status changed
 	// and push to heartbeatRequestQueue
-	statusesChan chan *heartbeatpb.TableSpanStatus
+	statusesChan chan TableSpanStatusWithSeq
 	// heartbeatRequestQueue is used to store the heartbeat request from all the dispatchers.
 	// heartbeat collector will consume the heartbeat request from the queue and send the response to each dispatcher.
 	heartbeatRequestQueue *HeartbeatRequestQueue
@@ -88,6 +88,8 @@ type EventDispatcherManager struct {
 
 	// sink is used to send all the events to the downstream.
 	sink sink.Sink
+
+	latestWatermark Watermark
 
 	// collect the error in all the dispatchers and sink module
 	// when we get the error, we will report the error to the maintainer
@@ -119,13 +121,14 @@ func NewEventDispatcherManager(
 		dispatcherMap:                  newDispatcherMap(),
 		changefeedID:                   changefeedID,
 		maintainerID:                   maintainerID,
-		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 8192),
+		statusesChan:                   make(chan TableSpanStatusWithSeq, 8192),
 		blockStatusesChan:              make(chan *heartbeatpb.TableSpanBlockStatus, 1024*1024),
 		errCh:                          make(chan error, 1),
 		cancel:                         cancel,
 		config:                         cfConfig,
 		filterConfig:                   toFilterConfigPB(cfConfig.Filter),
 		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
+		latestWatermark:                NewWatermark(startTs),
 		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
 		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
@@ -315,9 +318,12 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 
 	for idx, id := range dispatcherIds {
 		if newStartTsList[idx] == -1 {
-			e.statusesChan <- &heartbeatpb.TableSpanStatus{
-				ID:              id.ToPB(),
-				ComponentStatus: heartbeatpb.ComponentState_Removed,
+			e.statusesChan <- TableSpanStatusWithSeq{
+				TableSpanStatus: &heartbeatpb.TableSpanStatus{
+					ID:              id.ToPB(),
+					ComponentStatus: heartbeatpb.ComponentState_Removed,
+				},
+				Seq: e.dispatcherMap.GetSeq(),
 			}
 			log.Info("this table is dropped, skip it and return removed status to maintainer",
 				zap.Any("tableSpan", tableSpans[idx]),
@@ -350,10 +356,14 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).AddDispatcher(d, int(e.config.MemoryQuota))
 
-		e.dispatcherMap.Set(id, d)
-		e.statusesChan <- &heartbeatpb.TableSpanStatus{
-			ID:              id.ToPB(),
-			ComponentStatus: heartbeatpb.ComponentState_Working,
+		seq := e.dispatcherMap.Set(id, d)
+		e.statusesChan <- TableSpanStatusWithSeq{
+			TableSpanStatus: &heartbeatpb.TableSpanStatus{
+				ID:              id.ToPB(),
+				ComponentStatus: heartbeatpb.ComponentState_Working,
+			},
+			StartTs: uint64(newStartTsList[idx]),
+			Seq:     seq,
 		}
 
 		e.tableEventDispatcherCount.Inc()
@@ -456,17 +466,34 @@ func (e *EventDispatcherManager) collectBlockStatusRequest(ctx context.Context) 
 func (e *EventDispatcherManager) collectComponentStatusWhenChanged(ctx context.Context) {
 	for {
 		statusMessage := make([]*heartbeatpb.TableSpanStatus, 0)
+		watermark := e.latestWatermark.Get()
 		select {
 		case <-ctx.Done():
 			return
 		case tableSpanStatus := <-e.statusesChan:
-			statusMessage = append(statusMessage, tableSpanStatus)
+			statusMessage = append(statusMessage, tableSpanStatus.TableSpanStatus)
+			watermark.Seq = tableSpanStatus.Seq
+			if tableSpanStatus.StartTs != 0 && tableSpanStatus.StartTs < watermark.CheckpointTs {
+				watermark.CheckpointTs = tableSpanStatus.StartTs
+			}
+			if tableSpanStatus.StartTs != 0 && tableSpanStatus.StartTs < watermark.ResolvedTs {
+				watermark.ResolvedTs = tableSpanStatus.StartTs
+			}
 			delay := time.NewTimer(10 * time.Millisecond)
 		loop:
 			for {
 				select {
 				case tableSpanStatus := <-e.statusesChan:
-					statusMessage = append(statusMessage, tableSpanStatus)
+					statusMessage = append(statusMessage, tableSpanStatus.TableSpanStatus)
+					if watermark.Seq < tableSpanStatus.Seq {
+						watermark.Seq = tableSpanStatus.Seq
+					}
+					if tableSpanStatus.StartTs != 0 && tableSpanStatus.StartTs < watermark.CheckpointTs {
+						watermark.CheckpointTs = tableSpanStatus.StartTs
+					}
+					if tableSpanStatus.StartTs != 0 && tableSpanStatus.StartTs < watermark.ResolvedTs {
+						watermark.ResolvedTs = tableSpanStatus.StartTs
+					}
 				case <-delay.C:
 					break loop
 				}
@@ -481,6 +508,7 @@ func (e *EventDispatcherManager) collectComponentStatusWhenChanged(ctx context.C
 			var message heartbeatpb.HeartBeatRequest
 			message.ChangefeedID = e.changefeedID.ToPB()
 			message.Statuses = statusMessage
+			message.Watermark = watermark
 			e.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
 		}
 	}
@@ -508,7 +536,7 @@ func (e *EventDispatcherManager) aggregateDispatcherHeartbeats(needCompleteStatu
 	removedDispatcherSchemaIDs := make([]int64, 0)
 	heartBeatInfo := &dispatcher.HeartBeatInfo{}
 
-	e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
+	seq := e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
 		dispatcherItem.GetHeartBeatInfo(heartBeatInfo)
 		// If the dispatcher is in removing state, we need to check if it's closed successfully.
 		// If it's closed successfully, we could clean it up.
@@ -539,6 +567,8 @@ func (e *EventDispatcherManager) aggregateDispatcherHeartbeats(needCompleteStatu
 			})
 		}
 	})
+	message.Watermark.Seq = seq
+	e.latestWatermark.Set(message.Watermark)
 
 	for idx, id := range toRemoveDispatcherIDs {
 		e.cleanTableEventDispatcher(id, removedDispatcherSchemaIDs[idx])
@@ -564,9 +594,12 @@ func (e *EventDispatcherManager) removeDispatcher(id common.DispatcherID) {
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
 		dispatcher.Remove()
 	} else {
-		e.statusesChan <- &heartbeatpb.TableSpanStatus{
-			ID:              id.ToPB(),
-			ComponentStatus: heartbeatpb.ComponentState_Stopped,
+		e.statusesChan <- TableSpanStatusWithSeq{
+			TableSpanStatus: &heartbeatpb.TableSpanStatus{
+				ID:              id.ToPB(),
+				ComponentStatus: heartbeatpb.ComponentState_Stopped,
+			},
+			Seq: e.dispatcherMap.GetSeq(),
 		}
 	}
 }
@@ -617,72 +650,4 @@ func (e *EventDispatcherManager) GetAllDispatchers(schemaID int64) []common.Disp
 		dispatcherIDs = append(dispatcherIDs, e.tableTriggerEventDispatcher.GetId())
 	}
 	return dispatcherIDs
-}
-
-type DispatcherMap struct {
-	m sync.Map
-}
-
-func newDispatcherMap() *DispatcherMap {
-	return &DispatcherMap{
-		m: sync.Map{},
-	}
-}
-
-func (d *DispatcherMap) Len() int {
-	var len = 0
-	d.m.Range(func(_, _ interface{}) bool {
-		len++
-		return true
-	})
-	return len
-}
-
-func (d *DispatcherMap) Get(id common.DispatcherID) (*dispatcher.Dispatcher, bool) {
-	dispatcherItem, ok := d.m.Load(id)
-	if ok {
-		return dispatcherItem.(*dispatcher.Dispatcher), ok
-	}
-	return nil, false
-}
-
-func (d *DispatcherMap) Delete(id common.DispatcherID) {
-	d.m.Delete(id)
-}
-
-func (d *DispatcherMap) Set(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) {
-	d.m.Store(id, dispatcher)
-}
-
-func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *dispatcher.Dispatcher)) {
-	d.m.Range(func(key, value interface{}) bool {
-		fn(key.(common.DispatcherID), value.(*dispatcher.Dispatcher))
-		return true
-	})
-}
-
-func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
-	filterConfig := &eventpb.FilterConfig{
-		Rules:            filter.Rules,
-		IgnoreTxnStartTs: filter.IgnoreTxnStartTs,
-		EventFilters:     make([]*eventpb.EventFilterRule, len(filter.EventFilters)),
-	}
-
-	for _, eventFilter := range filter.EventFilters {
-		ignoreEvent := make([]string, len(eventFilter.IgnoreEvent))
-		for _, event := range eventFilter.IgnoreEvent {
-			ignoreEvent = append(ignoreEvent, string(event))
-		}
-		filterConfig.EventFilters = append(filterConfig.EventFilters, &eventpb.EventFilterRule{
-			Matcher:                  eventFilter.Matcher,
-			IgnoreEvent:              ignoreEvent,
-			IgnoreSql:                eventFilter.IgnoreSQL,
-			IgnoreInsertValueExpr:    eventFilter.IgnoreInsertValueExpr,
-			IgnoreUpdateNewValueExpr: eventFilter.IgnoreUpdateNewValueExpr,
-			IgnoreUpdateOldValueExpr: eventFilter.IgnoreUpdateOldValueExpr,
-			IgnoreDeleteValueExpr:    eventFilter.IgnoreDeleteValueExpr,
-		})
-	}
-
-	return filterConfig
 }
