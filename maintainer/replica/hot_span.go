@@ -102,13 +102,15 @@ func (s *hotSpans) getBatchByGroup(groupID GroupID, cache []*HotSpan) []*HotSpan
 				totalEventSizePerSecond += int(span.eventSizePerSecond)
 			}
 		}
-		avg := uint64(totalEventSizePerSecond / len(hotSpanCache))
-		for _, span := range hotSpanCache {
-			if span.score >= HotSpanScoreThreshold && span.eventSizePerSecond/avg > ImbalanceThreshold {
-				span.HintMaxSpanNum = span.eventSizePerSecond / avg
-				cache = append(cache, span)
-				if len(cache) >= batchSize {
-					break
+		if totalEventSizePerSecond > 0 {
+			avg := uint64(totalEventSizePerSecond / len(hotSpanCache))
+			for _, span := range hotSpanCache {
+				if span.score >= HotSpanScoreThreshold && span.eventSizePerSecond/avg > ImbalanceThreshold {
+					span.HintMaxSpanNum = span.eventSizePerSecond / avg
+					cache = append(cache, span)
+					if len(cache) >= batchSize {
+						break
+					}
 				}
 			}
 		}

@@ -191,7 +191,11 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 
 	// 1. get the real start ts from the table trigger event dispatcher
 	startTs := uint64(0)
-	for _, resp := range cachedResp {
+	for node, resp := range cachedResp {
+		log.Info("received bootstrap response",
+			zap.Any("changefeed", resp.ChangefeedID),
+			zap.Any("node", node),
+			zap.Any("startTs", resp.CheckpointTs))
 		if resp.CheckpointTs > startTs {
 			startTs = resp.CheckpointTs
 		}

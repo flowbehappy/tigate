@@ -18,12 +18,14 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/pkg/scheduler"
 	"github.com/pingcap/ticdc/server/watcher"
+	"go.uber.org/zap"
 )
 
 // balanceScheduler is used to check the balance status of all spans among all nodes
@@ -166,6 +168,7 @@ func (s *balanceScheduler) schedulerGlobal(nodes map[node.ID]*node.Info) int {
 			}
 		}
 	}
+	log.Info("finish global balance", zap.Stringer("changefeed", s.changefeedID), zap.Int("moved", moved))
 	return moved
 }
 
