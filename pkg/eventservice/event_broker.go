@@ -2,7 +2,6 @@ package eventservice
 
 import (
 	"context"
-	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -30,7 +29,7 @@ import (
 
 const (
 	resolvedTsCacheSize = 8192
-	streamCount         = 8
+	streamCount         = 4
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -108,11 +107,7 @@ func newEventBroker(
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
 	ds.Start()
 
-	messageWorkerCount := runtime.NumCPU()
-	if messageWorkerCount < streamCount {
-		messageWorkerCount = streamCount
-	}
-
+	messageWorkerCount := streamCount
 	//conf := config.GetGlobalServerConfig().Debug.EventService
 
 	c := &eventBroker{
@@ -549,7 +544,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 				} else {
 					// Group the resolvedTs events by the node id.
 					for _, m := range messages {
-						// c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
 						nodeBatch, ok := resolvedTsByNode[m.serverID]
 						if !ok {
 							nodeBatch = make([]pevent.ResolvedEvent, 0, 64)
