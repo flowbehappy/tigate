@@ -316,6 +316,8 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 		return errors.Trace(err)
 	}
 
+	log.Info("calculate real startTs for dispatchers", zap.Any("receive startTs", startTsList), zap.Any("real startTs", newStartTsList))
+
 	for idx, id := range dispatcherIds {
 		if newStartTsList[idx] == -1 {
 			e.statusesChan <- TableSpanStatusWithSeq{
