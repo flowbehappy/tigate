@@ -106,7 +106,7 @@ func (w *changeEventProcessor) handleSingleRegionError(ctx context.Context, stat
 	stepsToRemoved := state.markRemoved()
 	err := state.takeError()
 	if err != nil {
-		log.Debug("region change event processor get a region error",
+		log.Info("region change event processor get a region error",
 			zap.Int("subscriptionClientID", int(w.client.id)),
 			zap.Uint64("workerID", worker.workerID),
 			zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
