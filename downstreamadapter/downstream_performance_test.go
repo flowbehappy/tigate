@@ -21,13 +21,16 @@ import (
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
-	"github.com/pingcap/tiflow/cdc/model"
-	ticonfig "github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
 )
 
-const totalCount = 30
-const dispatcherCount = 10000
+// 使用攻略：
+// 1. 先去增加 NewDispatcher, GetDS,AggregateDispatcherHeartbeats(都是套一下壳)
+// 2. memory quota 直接硬编码写死
+// 3. 注释掉 shouldIgnoreDataEvent 的检查
+
+const totalCount = 40
+const dispatcherCount = 1000
 const databaseCount = 1
 
 func initContext(serverId node.ID) {
@@ -38,7 +41,7 @@ func initContext(serverId node.ID) {
 
 func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}, helper *commonEvent.EventTestHelper) {
 	// 因为开了 dryrun，所以不用避免冲突，随便写'
-	dispatcherEventsDynamicStream := eventcollector.NewEventDynamicStream()
+	eventCollectorItem := appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector)
 	idx := 0
 	var mutex sync.Mutex
 	var wg sync.WaitGroup
@@ -49,13 +52,13 @@ func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}
 		go func(idx int, id common.DispatcherID) {
 			defer wg.Done()
 			tableName := "test.t" + strconv.Itoa(idx)
-			ddlQuery := "create table " + tableName + " (a int primary key, b int, c double, d varchar(100))"
+			ddlQuery := "create table " + tableName + " (a int primary key, b int, c double, d varchar(100), e varchar(100), f varchar(100), g varchar(100), h varchar(100), i varchar(100), j varchar(100), k varchar(100), l varchar(100), m varchar(100), n varchar(100), o varchar(100), p varchar(100), q varchar(100), r varchar(100), s varchar(100), t varchar(100), u varchar(100), v varchar(100), w varchar(100), x varchar(100), y varchar(100), z varchar(100))"
 			mutex.Lock()
 			_ = helper.DDL2Job(ddlQuery)
 			mutex.Unlock()
 			for count := 1; count <= totalCount; count++ {
 				mutex.Lock()
-				event := helper.DML2Event("test", "t"+strconv.Itoa(int(idx)), "insert into "+tableName+" values ("+strconv.Itoa(count)+", 1, 1.1, 'test')")
+				event := helper.DML2Event("test", "t"+strconv.Itoa(int(idx)), "insert into "+tableName+" values ("+strconv.Itoa(count)+", 1, 1.1,'abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz','abcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyzabcdefgihjklmnopqrstuvwxyz')")
 				mutex.Unlock()
 				event.DispatcherID = id
 				event.PhysicalTableID = int64(idx)
@@ -73,7 +76,7 @@ func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}
 	wg.Wait()
 	log.Warn("begin to push data into dispatchers")
 	for _, event := range eventList {
-		dispatcherEventsDynamicStream.In() <- dispatcher.DispatcherEvent{
+		eventCollectorItem.GetDS().In(event.DispatcherID) <- dispatcher.DispatcherEvent{
 			Event: event,
 		}
 	}
@@ -102,18 +105,18 @@ func TestDownstream(t *testing.T) {
 
 	dispatcherIDSet := make(map[common.DispatcherID]interface{})
 	var mutex sync.Mutex
-	openProtocol := "open-protocol"
+	canalJsonProtocol := "canal-json"
 	for db_index := 0; db_index < databaseCount; db_index++ {
 		changefeedConfig := config.ChangefeedConfig{
 			// SinkURI: "tidb://root:@127.0.0.1:4000?dry-run=true",
-			SinkURI: "kafka://127.0.0.1:9094/topic-name?protocol=open-protocol&kafka-version=2.4.0&max-message-bytes=67108864&replication-factor=1",
-			Filter:  &ticonfig.FilterConfig{},
+			SinkURI: "kafka://127.0.0.1:9094/hyy?protocol=canal-json&kafka-version=2.4.0&max-message-bytes=67108864&replication-factor=1",
+			Filter:  &config.FilterConfig{},
 			SinkConfig: &config.SinkConfig{
-				Protocol: &openProtocol,
+				Protocol: &canalJsonProtocol,
 			},
 		}
-		changefeedID := model.DefaultChangeFeedID("test" + strconv.Itoa(db_index))
-		eventDispatcherManager, err := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId)
+		changefeedID := common.NewChangeFeedIDWithName("test" + strconv.Itoa(db_index))
+		eventDispatcherManager, _, err := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, nil, 0, serverId)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,7 +131,7 @@ func TestDownstream(t *testing.T) {
 				mutex.Lock()
 				dispatcherIDSet[dispatcherID] = nil
 				mutex.Unlock()
-				eventDispatcherManager.NewDispatcher(dispatcherID, tableSpan, 0, 1)
+				eventDispatcherManager.NewDispatcher(dispatcherID, tableSpan, 0, 1, 0)
 			}(&wg)
 		}
 	}
@@ -150,7 +153,7 @@ func TestDownstream(t *testing.T) {
 				continue
 			}
 			eventDispatcherManager := managerMap[db_index]
-			message := eventDispatcherManager.CollectHeartbeatInfo(false)
+			message := eventDispatcherManager.AggregateDispatcherHeartbeats(false)
 			checkpointTs := message.Watermark.CheckpointTs
 			if checkpointTs == uint64(totalCount)+10 {
 				finishVec[db_index] = true
