@@ -110,7 +110,6 @@ func newEventBroker(
 	//ds := dynstream.NewDynamicStream(&dispatcherEventsHandler{}, option)
 	ds.Start()
 
-	messageWorkerCount := 1
 	//conf := config.GetGlobalServerConfig().Debug.EventService
 
 	c := &eventBroker{
@@ -124,7 +123,7 @@ func newEventBroker(
 		taskQueue:               make(chan scanTask, 8192),
 		scanWorkerCount:         defaultScanWorkerCount,
 		ds:                      ds,
-		messageCh:               make([]*chann.UnlimitedChannel[wrapEvent, int], messageWorkerCount),
+		messageCh:               make([]*chann.UnlimitedChannel[wrapEvent, int], messageSenderCount),
 		cancel:                  cancel,
 		wg:                      wg,
 
@@ -135,14 +134,14 @@ func newEventBroker(
 		metricScanEventDuration:              metrics.EventServiceScanDuration,
 	}
 
-	for i := 0; i < messageWorkerCount; i++ {
+	for i := 0; i < messageSenderCount; i++ {
 		c.messageCh[i] = chann.NewUnlimitedChannel[wrapEvent, int](getEventGroup, getEventSize)
 	}
 
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.logUnresetDispatchers(ctx)
-	for i := 0; i < messageWorkerCount; i++ {
+	for i := 0; i < messageSenderCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
@@ -323,7 +322,6 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 		//log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.id))
 		return false, common.DataRange{}
 	}
-
 	c.checkAndInitDispatcher(task)
 
 	// 1. Get the data range of the dispatcher.
@@ -523,6 +521,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 	buf := make([]wrapEvent, 0, 1024)
 	go func() {
 		defer c.wg.Done()
+		defer flushResolvedTsTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -539,7 +538,10 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 			}
 			switch messages[0].msgType {
 			case pevent.TypeResolvedEvent:
-				c.handleResolvedTs(ctx, resolvedTsCacheMap, messages[0])
+				log.Info("handle resolvedTs event", zap.Int("count", len(messages)))
+				for _, m := range messages {
+					c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
+				}
 			case pevent.TypeHandshakeEvent:
 				for _, m := range messages {
 					// Check if the dispatcher is initialized, if so, ignore the handshake event.
@@ -758,8 +760,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	id := info.GetID()
 	span := info.GetTableSpan()
 	startTs := info.GetStartTs()
-	// workerIndex := int((common.GID)(id).Hash(uint64(messageSenderCount)))
-	workerIndex := 0
+	workerIndex := int((common.GID)(id).Hash(uint64(messageSenderCount)))
 	dispatcher := newDispatcherStat(startTs, info, filter, workerIndex)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)
