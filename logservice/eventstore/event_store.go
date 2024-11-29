@@ -336,7 +336,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 				p.store.writeEvents(p.db, events)
 				prevSubID := logpuller.InvalidSubscriptionID
 				for i := range events {
-					// wake once for every subscription. otherwise there may be new events between two wakeups.
+					// wake once for every subscription. otherwise there may be new events between two wake ups.
 					if events[i].subID != prevSubID {
 						p.store.wakeSubscription(events[i].subID)
 						prevSubID = events[i].subID

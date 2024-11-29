@@ -30,7 +30,7 @@ import (
 const (
 	resolvedTsCacheSize = 8192
 	streamCount         = 2
-	messageSenderCount  = 1
+	messageSenderCount  = 16
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -105,8 +105,9 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	//ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
-	ds := dynstream.NewDynamicStream(&dispatcherEventsHandler{}, option)
+	option.UseBuffer = true
+	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
+	//ds := dynstream.NewDynamicStream(&dispatcherEventsHandler{}, option)
 	ds.Start()
 
 	messageWorkerCount := 1
