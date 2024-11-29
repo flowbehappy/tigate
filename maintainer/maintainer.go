@@ -464,7 +464,10 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 	}
 	req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
 	if req.Watermark != nil {
-		m.checkpointTsByCapture[msg.From] = *req.Watermark
+		old, ok := m.checkpointTsByCapture[msg.From]
+		if !ok || req.Watermark.Seq >= old.Seq {
+			m.checkpointTsByCapture[msg.From] = *req.Watermark
+		}
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
 	if req.Err != nil {
