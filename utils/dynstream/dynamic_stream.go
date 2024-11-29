@@ -15,9 +15,9 @@ import (
 )
 
 const TrackTopPaths = 16
-const BusyStreamRatio = 0.3
-const BusyPathRatio = 0.1
-const IdlePathRatio = 0.02
+const BusyStreamRatio = 0.5
+const BusyPathRatio = 0.25
+const IdlePathRatio = 0.05
 
 type cmdType int
 
@@ -76,30 +76,38 @@ type streamInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	pathMap    map[*pathInfo[A, P, T, D, H]]struct{}
 }
 
-func (si *streamInfo[A, P, T, D, H]) runtime() time.Duration {
-	return si.streamStat.processingTime
+func (si *streamInfo[A, P, T, D, H]) runtime() (time.Duration, bool) {
+	if !si.streamStat.isValid() {
+		return 0, false
+	}
+	return si.streamStat.processingTime, true
 }
 
-func (si *streamInfo[A, P, T, D, H]) busyRatio(period time.Duration) float64 {
-	if si.streamStat.processingTime == 0 {
-		return 0
+func (si *streamInfo[A, P, T, D, H]) busyRatio(period time.Duration) (float64, bool) {
+	if !si.streamStat.isValid() || si.streamStat.processingTime == 0 {
+		return 0, false
 	}
 	if period != 0 {
-		return float64(si.streamStat.processingTime) / float64(period)
+		return float64(si.streamStat.processingTime) / float64(period), true
 	}
-	return float64(si.streamStat.processingTime) / float64(si.streamStat.elapsedTime)
+	return float64(si.streamStat.processingTime) / float64(si.streamStat.elapsedTime), true
 }
 
-func (si *streamInfo[A, P, T, D, H]) period() time.Duration {
-	return si.streamStat.elapsedTime
+func (si *streamInfo[A, P, T, D, H]) period() (time.Duration, bool) {
+	if !si.streamStat.isValid() {
+		return 0, false
+	}
+	return si.streamStat.elapsedTime, true
 }
 
 type sortedSIs[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] []*streamInfo[A, P, T, D, H]
 
 // implement sort.Interface
-func (s sortedSIs[A, P, T, D, H]) Len() int           { return len(s) }
-func (s sortedSIs[A, P, T, D, H]) Less(i, j int) bool { return s[i].runtime() < s[j].runtime() }
-func (s sortedSIs[A, P, T, D, H]) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s sortedSIs[A, P, T, D, H]) Len() int { return len(s) }
+func (s sortedSIs[A, P, T, D, H]) Less(i, j int) bool {
+	return s[i].streamStat.processingTime < s[j].streamStat.processingTime
+}
+func (s sortedSIs[A, P, T, D, H]) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 // This is the implementation of the DynamicStream interface.
 // We use two goroutines
@@ -427,11 +435,14 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 
 			for i := 0; i < d.baseStreamCount; i++ {
 				si := d.streamInfos[i]
-				period := si.period()
+				period, ok := si.period()
+				if !ok {
+					continue
+				}
 				if testPeriod != 0 {
 					period = testPeriod
 				}
-				if si.busyRatio(period) < BusyStreamRatio {
+				if ratio, ok := si.busyRatio(period); !ok || ratio < BusyStreamRatio {
 					newStreamInfos = append(newStreamInfos, si)
 					continue
 				}
@@ -512,7 +523,8 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 					// The solo stream is empty, we should remove it
 					idleSoloStreams = append(idleSoloStreams, si.stream)
 					idleSoloStreamInfos = append(idleSoloStreamInfos, si)
-				} else if si.busyRatio(testPeriod) < IdlePathRatio {
+				} else if ratio, ok := si.busyRatio(testPeriod); ok && ratio < IdlePathRatio {
+					// The solo stream is idle, we shoudl merge it
 					if len(si.pathMap) != 1 {
 						panic("The solo stream should have only one path")
 					}
@@ -581,8 +593,11 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				leastBusy := baseStreamInfos[i]
 				mostBusy := baseStreamInfos[d.baseStreamCount-1-i]
 
-				if mostBusy.busyRatio(testPeriod) < BusyStreamRatio ||
-					mostBusy.busyRatio(testPeriod) < leastBusy.busyRatio(testPeriod)*2 ||
+				ratio1, ok1 := mostBusy.busyRatio(testPeriod)
+				ratio2, ok2 := leastBusy.busyRatio(testPeriod)
+				if (!ok1 || !ok2) ||
+					ratio1 < BusyStreamRatio ||
+					ratio1 < ratio2*2 ||
 					len(mostBusy.pathMap) == 1 {
 					newStreamInfos = append(newStreamInfos, leastBusy, mostBusy)
 					continue

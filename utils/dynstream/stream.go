@@ -135,6 +135,10 @@ func (s streamStat[A, P, T, D, H]) getMostBusyPaths() []*pathStat[A, P, T, D, H]
 	return s.mostBusyPath.All()
 }
 
+func (s streamStat[A, P, T, D, H]) isValid() bool {
+	return s.count != 0
+}
+
 // Try to add the path to the busy heap.
 // If the heap is not full, add the path directly.
 // If the heap is full, only add the path if it is busier than the least busy path in the heap.
