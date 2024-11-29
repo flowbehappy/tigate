@@ -176,6 +176,7 @@ func NewMaintainer(cfID common.ChangeFeedID,
 	}
 	m.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse](m.id.Name(), m.getNewBootstrapFn())
 	log.Info("maintainer is created", zap.String("id", cfID.String()),
+		zap.Uint64("checkpointTs", checkpointTs),
 		zap.String("ddl dispatcher", tableTriggerEventDispatcherID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace(), cfID.Name()).Inc()
 	return m
@@ -636,10 +637,6 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 			zap.Error(err))
 	}
 	return func(id node.ID) *messaging.TargetMessage {
-		log.Info("send maintainer bootstrap message",
-			zap.String("changefeed", m.id.String()),
-			zap.String("server", id.String()),
-		)
 		msg := &heartbeatpb.MaintainerBootstrapRequest{
 			ChangefeedID:                  m.id.ToPB(),
 			Config:                        cfgBytes,
@@ -654,6 +651,11 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 				zap.String("dispatcher id", m.tableTriggerEventDispatcherID.String()))
 			msg.TableTriggerEventDispatcherId = m.tableTriggerEventDispatcherID.ToPB()
 		}
+		log.Info("send maintainer bootstrap message",
+			zap.String("changefeed", m.id.String()),
+			zap.String("server", id.String()),
+			zap.Uint64("startTs", m.startCheckpointTs),
+		)
 		return messaging.NewSingleTargetMessage(id, messaging.DispatcherManagerManagerTopic, msg)
 	}
 }
