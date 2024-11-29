@@ -15,6 +15,7 @@ package main
 
 import (
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/pingcap/log"
@@ -119,6 +120,10 @@ func main() {
 		cmd.Println("=== Command to ticdc(tiflow).")
 		tiflowCmd.AddTiCDCCommandTo(cmd)
 	}
+
+	GOGC := 50
+	debug.SetGCPercent(GOGC)
+	log.Info("Current GOGC:", zap.Int("GOGC", GOGC))
 
 	if err := cmd.Execute(); err != nil {
 		cmd.PrintErrln(err)
