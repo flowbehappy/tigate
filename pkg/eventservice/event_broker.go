@@ -667,8 +667,8 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 
 				dsMetrics := c.ds.GetMetrics()
 
-				if dsMetrics.MinHandledTS != 0 {
-					lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandledTS)) / 1e3
+				if dsMetrics.MinHandleTS != 0 {
+					lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandleTS)) / 1e3
 					c.metricEventServiceSentResolvedTs.Set(lag)
 				}
 

@@ -234,6 +234,7 @@ func New(
 
 	option := dynstream.NewOption()
 	option.BatchCount = 4096
+	option.UseBuffer = true
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
 	ds.Start()
 
@@ -706,8 +707,8 @@ func (e *eventStore) updateMetricsOnce() {
 	// eventStoreResolvedTsLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
 	// metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
 	dsMetrics := e.ds.GetMetrics()
-	if dsMetrics.MinHandledTS != 0 {
-		lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandledTS)) / 1e3
+	if dsMetrics.MinHandleTS != 0 {
+		lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandleTS)) / 1e3
 		metrics.EventStoreResolvedTsLagGauge.Set(lag)
 	}
 	metricEventStoreDSChannelSize.Set(float64(dsMetrics.EventChanSize))
