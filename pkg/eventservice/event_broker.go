@@ -546,6 +546,8 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 	c.wg.Add(1)
 	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 300)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
+	messageCh := c.messageCh[workerIndex]
+	tickCh := flushResolvedTsTicker.C
 	go func() {
 		defer c.wg.Done()
 		defer flushResolvedTsTicker.Stop()
@@ -553,7 +555,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 			select {
 			case <-ctx.Done():
 				return
-			case m := <-c.messageCh[workerIndex]:
+			case m := <-messageCh:
 				if m.msgType == pevent.TypeResolvedEvent {
 					// The message is a watermark, we need to cache it, and send it to the dispatcher
 					// when cache is full to reduce the number of messages.
@@ -580,7 +582,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 				// to keep the order of the resolvedTs and the message.
 				c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
 				c.sendMsg(ctx, tMsg, m.postSendFunc)
-			case <-flushResolvedTsTicker.C:
+			case <-tickCh:
 				for serverID, cache := range resolvedTsCacheMap {
 					c.flushResolvedTs(ctx, cache, serverID)
 				}
