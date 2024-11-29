@@ -650,7 +650,7 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
 	c.wg.Add(1)
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	go func() {
 		defer c.wg.Done()
 		log.Info("update metrics goroutine is started")
@@ -660,36 +660,36 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				log.Info("update metrics goroutine is closing")
 				return
 			case <-ticker.C:
-				// receivedMinResolvedTs := uint64(0)
-				// sentMinWaterMark := uint64(0)
-				// c.dispatchers.Range(func(key, value interface{}) bool {
-				// 	dispatcher := value.(*dispatcherStat)
-				// 	resolvedTs := dispatcher.resolvedTs.Load()
-				// 	if receivedMinResolvedTs == 0 || resolvedTs < receivedMinResolvedTs {
-				// 		receivedMinResolvedTs = resolvedTs
-				// 	}
-				// 	watermark := dispatcher.watermark.Load()
-				// 	if sentMinWaterMark == 0 || watermark < sentMinWaterMark {
-				// 		sentMinWaterMark = watermark
-				// 	}
-				// 	return true
-				// })
-				// if receivedMinResolvedTs == 0 {
-				// 	continue
-				// }
-				// phyResolvedTs := oracle.ExtractPhysical(receivedMinResolvedTs)
-				// lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
-				// c.metricEventServiceReceivedResolvedTs.Set(float64(phyResolvedTs))
-				// c.metricEventServiceResolvedTsLag.Set(lag)
-				// lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(sentMinWaterMark)) / 1e3
-				// c.metricEventServiceSentResolvedTs.Set(lag)
+				receivedMinResolvedTs := uint64(0)
+				sentMinWaterMark := uint64(0)
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
+					resolvedTs := dispatcher.resolvedTs.Load()
+					if receivedMinResolvedTs == 0 || resolvedTs < receivedMinResolvedTs {
+						receivedMinResolvedTs = resolvedTs
+					}
+					watermark := dispatcher.watermark.Load()
+					if sentMinWaterMark == 0 || watermark < sentMinWaterMark {
+						sentMinWaterMark = watermark
+					}
+					return true
+				})
+				if receivedMinResolvedTs == 0 {
+					continue
+				}
+				phyResolvedTs := oracle.ExtractPhysical(receivedMinResolvedTs)
+				lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
+				c.metricEventServiceReceivedResolvedTs.Set(float64(phyResolvedTs))
+				c.metricEventServiceResolvedTsLag.Set(lag)
+				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(sentMinWaterMark)) / 1e3
+				c.metricEventServiceSentResolvedTs.Set(lag)
 
 				dsMetrics := c.ds.GetMetrics()
 
-				if dsMetrics.MinHandleTS != 0 {
-					lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandleTS)) / 1e3
-					c.metricEventServiceSentResolvedTs.Set(lag)
-				}
+				// if dsMetrics.MinHandleTS != 0 {
+				// 	lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandleTS)) / 1e3
+				// 	c.metricEventServiceSentResolvedTs.Set(lag)
+				// }
 
 				chLen := 0
 				for _, ch := range c.messageCh {
