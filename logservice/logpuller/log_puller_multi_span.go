@@ -31,7 +31,7 @@ import (
 // LogPullerMultiSpan is a simple wrapper around LogPuller.
 // It just maintain the minimum resolve ts of all spans.
 type LogPullerMultiSpan struct {
-	advanceResolveTs func(ts uint64)
+	advanceResolvedTs func(ts uint64)
 
 	// used to notify the min resolved ts of all spans is updated
 	notifyCh chan interface{}
@@ -56,13 +56,13 @@ func NewLogPullerMultiSpan(
 	spans []heartbeatpb.TableSpan,
 	startTs uint64,
 	consume func([]common.RawKVEntry, func()) bool,
-	advanceResolveTs func(ts uint64),
+	advanceResolvedTs func(ts uint64),
 ) *LogPullerMultiSpan {
 	if len(spans) <= 1 {
 		log.Panic("spans should have more than 1 element")
 	}
 	pullerWrapper := &LogPullerMultiSpan{
-		advanceResolveTs:  advanceResolveTs,
+		advanceResolvedTs: advanceResolvedTs,
 		notifyCh:          make(chan interface{}, 4),
 		resolvedTsMap:     make(map[SubscriptionID]*resolvedTsItem),
 		resolvedTsHeap:    heap.NewHeap[*resolvedTsItem](),
@@ -133,7 +133,7 @@ func (p *LogPullerMultiSpan) sendResolvedTsPeriodically(ctx context.Context) err
 		defer p.mu.Unlock()
 		// Note: pendingResolvedTs may be 0(which means not all spans have received resolved ts) and it won't be send here
 		if p.pendingResolvedTs > p.prevResolvedTs {
-			p.advanceResolveTs(p.pendingResolvedTs)
+			p.advanceResolvedTs(p.pendingResolvedTs)
 			p.prevResolvedTs = p.pendingResolvedTs
 		}
 	}
