@@ -78,7 +78,9 @@ func (s *parallelDynamicStream[A, P, T, D, H]) GetMetrics() Metrics {
 		metrics.PendingQueueLen += subMetrics.PendingQueueLen
 		metrics.AddPath += subMetrics.AddPath
 		metrics.RemovePath += subMetrics.RemovePath
-		metrics.ArrangeStream += subMetrics.ArrangeStream
+		metrics.ArrangeStream.CreateSolo += subMetrics.ArrangeStream.CreateSolo
+		metrics.ArrangeStream.RemoveSolo += subMetrics.ArrangeStream.RemoveSolo
+		metrics.ArrangeStream.Shuffle += subMetrics.ArrangeStream.Shuffle
 		if subMetrics.MinHandleTS < metrics.MinHandleTS {
 			metrics.MinHandleTS = subMetrics.MinHandleTS
 		}

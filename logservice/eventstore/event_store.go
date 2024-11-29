@@ -172,9 +172,13 @@ type eventStore struct {
 	encoder *zstd.Encoder
 	decoder *zstd.Decoder
 
-	metricEventStoreDSAddPathNum      prometheus.Gauge
-	metricEventStoreDSRemovePathNum   prometheus.Gauge
-	metricEventStoreDSArrageStreamNum prometheus.Gauge
+	metricEventStoreDSAddPathNum       prometheus.Gauge
+	metricEventStoreDSRemovePathNum    prometheus.Gauge
+	metricEventStoreDSArrangeStreamNum struct {
+		createSolo prometheus.Gauge
+		removeSolo prometheus.Gauge
+		shuffle    prometheus.Gauge
+	}
 }
 
 const (
@@ -251,9 +255,17 @@ func New(
 		encoder:   encoder,
 		decoder:   decoder,
 
-		metricEventStoreDSAddPathNum:      metrics.DynamicStreamAddPathNum.WithLabelValues("event-store"),
-		metricEventStoreDSRemovePathNum:   metrics.DynamicStreamRemovePathNum.WithLabelValues("event-store"),
-		metricEventStoreDSArrageStreamNum: metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-store"),
+		metricEventStoreDSAddPathNum:    metrics.DynamicStreamAddPathNum.WithLabelValues("event-store"),
+		metricEventStoreDSRemovePathNum: metrics.DynamicStreamRemovePathNum.WithLabelValues("event-store"),
+		metricEventStoreDSArrangeStreamNum: struct {
+			createSolo prometheus.Gauge
+			removeSolo prometheus.Gauge
+			shuffle    prometheus.Gauge
+		}{
+			createSolo: metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-store", "create-solo"),
+			removeSolo: metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-store", "remove-solo"),
+			shuffle:    metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-store", "shuffle"),
+		},
 	}
 	// TODO: update pebble options
 	for i := 0; i < dbCount; i++ {
@@ -715,7 +727,9 @@ func (e *eventStore) updateMetricsOnce() {
 	metricEventStoreDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 	e.metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))
 	e.metricEventStoreDSRemovePathNum.Set(float64(dsMetrics.RemovePath))
-	e.metricEventStoreDSArrageStreamNum.Set(float64(dsMetrics.ArrangeStream))
+	e.metricEventStoreDSArrangeStreamNum.createSolo.Set(float64(dsMetrics.ArrangeStream.CreateSolo))
+	e.metricEventStoreDSArrangeStreamNum.removeSolo.Set(float64(dsMetrics.ArrangeStream.RemoveSolo))
+	e.metricEventStoreDSArrangeStreamNum.shuffle.Set(float64(dsMetrics.ArrangeStream.Shuffle))
 }
 
 func (e *eventStore) writeEvents(db *pebble.DB, events []kvEvent) error {

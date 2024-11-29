@@ -83,6 +83,13 @@ type eventBroker struct {
 	metricEventServiceSentResolvedTs     prometheus.Gauge
 	metricEventServiceResolvedTsLag      prometheus.Gauge
 	metricScanEventDuration              prometheus.Observer
+	metricEventStoreDSAddPathNum         prometheus.Gauge
+	metricEventStoreDSRemovePathNum      prometheus.Gauge
+	metricEventStoreDSArrangeStreamNum   struct {
+		createSolo prometheus.Gauge
+		removeSolo prometheus.Gauge
+		shuffle    prometheus.Gauge
+	}
 }
 
 type pathHasher struct {
@@ -134,6 +141,18 @@ func newEventBroker(
 		metricEventServiceResolvedTsLag:      metrics.EventServiceResolvedTsLagGauge.WithLabelValues("received"),
 		metricEventServiceSentResolvedTs:     metrics.EventServiceResolvedTsLagGauge.WithLabelValues("sent"),
 		metricScanEventDuration:              metrics.EventServiceScanDuration,
+
+		metricEventStoreDSAddPathNum:    metrics.DynamicStreamAddPathNum.WithLabelValues("event-service"),
+		metricEventStoreDSRemovePathNum: metrics.DynamicStreamRemovePathNum.WithLabelValues("event-service"),
+		metricEventStoreDSArrangeStreamNum: struct {
+			createSolo prometheus.Gauge
+			removeSolo prometheus.Gauge
+			shuffle    prometheus.Gauge
+		}{
+			createSolo: metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-service", "create-solo"),
+			removeSolo: metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-service", "remove-solo"),
+			shuffle:    metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-service", "shuffle"),
+		},
 	}
 
 	for i := 0; i < messageWorkerCount; i++ {
@@ -675,6 +694,12 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				metricEventBrokerDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 				metricEventBrokerDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 				metricEventBrokerPendingScanTaskCount.Set(float64(len(c.taskQueue)))
+
+				c.metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))
+				c.metricEventStoreDSRemovePathNum.Set(float64(dsMetrics.RemovePath))
+				c.metricEventStoreDSArrangeStreamNum.createSolo.Set(float64(dsMetrics.ArrangeStream.CreateSolo))
+				c.metricEventStoreDSArrangeStreamNum.removeSolo.Set(float64(dsMetrics.ArrangeStream.RemoveSolo))
+				c.metricEventStoreDSArrangeStreamNum.shuffle.Set(float64(dsMetrics.ArrangeStream.Shuffle))
 			}
 		}
 	}()
