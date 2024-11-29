@@ -70,7 +70,7 @@ var (
 	metricSubscriptionClientDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-store")
 	metricEventStoreDSAddPathNum              = metrics.DynamicStreamAddPathNum.WithLabelValues("event-store")
 	metricEventStoreDSRemovePathNum           = metrics.DynamicStreamRemovePathNum.WithLabelValues("event-store")
-	metricEventStoreDSArrageStreamNum         = metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-store")
+	// metricEventStoreDSArrageStreamNum         = metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-store")
 )
 
 // To generate an ID for a new subscription.
