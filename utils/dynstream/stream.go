@@ -87,7 +87,7 @@ type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	lastSwitchPausedTime time.Time
 	lastSendFeedbackTime time.Time
 
-	lastHandledTS Timestamp
+	// lastHandledTS Timestamp
 }
 
 func newPathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](area A, path P, dest D) *pathInfo[A, P, T, D, H] {
@@ -204,8 +204,6 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	reportWg sync.WaitGroup
 
 	startTime time.Time
-
-	_statMinHandledTS atomic.Uint64
 }
 
 func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
@@ -245,10 +243,6 @@ func (s *stream[A, P, T, D, H]) getPendingSize() int {
 	} else {
 		return len(s.eventChan) + int(s.eventQueue.totalPendingLength.Load())
 	}
-}
-
-func (s *stream[A, P, T, D, H]) getMinHandledTS() uint64 {
-	return s._statMinHandledTS.Load()
 }
 
 func (s *stream[A, P, T, D, H]) in() chan eventWrap[A, P, T, D, H] {
@@ -391,9 +385,9 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 			}
 			eventBuf = eventBuf[:0]
 		}
-		path     *pathInfo[A, P, T, D, H]
-		property Property
-		lastTS   Timestamp
+		path *pathInfo[A, P, T, D, H]
+		// property Property
+		// lastTS   Timestamp
 	)
 
 	// For testing. Don't handle events until this wait group is done.
@@ -422,7 +416,7 @@ Loop:
 				pushToPendingQueue(e)
 				eventQueueEmpty = false
 			default:
-				eventBuf, path, property, lastTS = s.eventQueue.popEvents(eventBuf)
+				eventBuf, path = s.eventQueue.popEvents(eventBuf)
 				if len(eventBuf) == 0 {
 					eventQueueEmpty = true
 					continue Loop
@@ -433,12 +427,6 @@ Loop:
 
 				if path.blocking {
 					s.eventQueue.blockPath(path)
-				} else if property == PeriodicSignal {
-					path.lastHandledTS = lastTS
-					minTS := s.eventQueue.onHandledTS(path)
-					if minTS > 0 {
-						s._statMinHandledTS.Store(uint64(minTS))
-					}
 				}
 				cleanUpEventBuf()
 			}

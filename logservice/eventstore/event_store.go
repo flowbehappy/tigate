@@ -680,7 +680,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 }
 
 func (e *eventStore) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(10 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():
@@ -692,37 +692,35 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 }
 
 func (e *eventStore) updateMetricsOnce() {
-	// currentTime := e.pdClock.CurrentTime()
-	// currentPhyTs := oracle.GetPhysical(currentTime)
-	// minResolvedTs := uint64(0)
-	// e.dispatcherMeta.RLock()
-	// for _, subscriptionStat := range e.dispatcherMeta.subscriptionStats {
-	// 	// resolved ts lag
-	// 	resolvedTs := subscriptionStat.resolvedTs.Load()
-	// 	resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
-	// 	resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
-	// 	metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
-	// 	if minResolvedTs == 0 || resolvedTs < minResolvedTs {
-	// 		minResolvedTs = resolvedTs
-	// 	}
-	// 	// checkpoint ts lag
-	// 	checkpointTs := subscriptionStat.checkpointTs.Load()
-	// 	watermarkPhyTs := oracle.ExtractPhysical(checkpointTs)
-	// 	watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
-	// 	metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
-	// }
-	// e.dispatcherMeta.RUnlock()
-	// if minResolvedTs == 0 {
-	// 	return
-	// }
-	// minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
-	// eventStoreResolvedTsLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
-	// metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
-	dsMetrics := e.ds.GetMetrics()
-	if dsMetrics.MinHandleTS != 0 {
-		lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandleTS)) / 1e3
-		metrics.EventStoreResolvedTsLagGauge.Set(lag)
+	currentTime := e.pdClock.CurrentTime()
+	currentPhyTs := oracle.GetPhysical(currentTime)
+	minResolvedTs := uint64(0)
+	e.dispatcherMeta.RLock()
+	for _, subscriptionStat := range e.dispatcherMeta.subscriptionStats {
+		// resolved ts lag
+		resolvedTs := subscriptionStat.resolvedTs.Load()
+		resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
+		resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+		metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
+		if minResolvedTs == 0 || resolvedTs < minResolvedTs {
+			minResolvedTs = resolvedTs
+		}
+		// checkpoint ts lag
+		checkpointTs := subscriptionStat.checkpointTs.Load()
+		watermarkPhyTs := oracle.ExtractPhysical(checkpointTs)
+		watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
+		metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
 	}
+	e.dispatcherMeta.RUnlock()
+	if minResolvedTs == 0 {
+		return
+	}
+	minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
+	eventStoreResolvedTsLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
+	metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
+
+	dsMetrics := e.ds.GetMetrics()
+
 	metricEventStoreDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 	metricEventStoreDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 	e.metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))

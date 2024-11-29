@@ -1,7 +1,5 @@
 package dynstream
 
-import "math"
-
 // Use a hasher to select target stream for the path.
 // It implements the DynamicStream interface.
 type parallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
@@ -71,7 +69,6 @@ func (s *parallelDynamicStream[A, P, T, D, H]) SetAreaSettings(area A, settings 
 
 func (s *parallelDynamicStream[A, P, T, D, H]) GetMetrics() Metrics {
 	metrics := Metrics{}
-	metrics.MinHandleTS = math.MaxUint64
 	for _, ds := range s.dynamicStreams {
 		subMetrics := ds.GetMetrics()
 		metrics.EventChanSize += subMetrics.EventChanSize
@@ -81,9 +78,6 @@ func (s *parallelDynamicStream[A, P, T, D, H]) GetMetrics() Metrics {
 		metrics.ArrangeStream.CreateSolo += subMetrics.ArrangeStream.CreateSolo
 		metrics.ArrangeStream.RemoveSolo += subMetrics.ArrangeStream.RemoveSolo
 		metrics.ArrangeStream.Shuffle += subMetrics.ArrangeStream.Shuffle
-		if subMetrics.MinHandleTS < metrics.MinHandleTS {
-			metrics.MinHandleTS = subMetrics.MinHandleTS
-		}
 	}
 	return metrics
 }
