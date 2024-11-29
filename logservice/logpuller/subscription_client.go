@@ -282,7 +282,7 @@ func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
 			metricSubscriptionClientDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 			metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))
 			metricEventStoreDSRemovePathNum.Set(float64(dsMetrics.RemovePath))
-			metricEventStoreDSArrageStreamNum.Set(float64(dsMetrics.ArrangeStream))
+			// metricEventStoreDSArrageStreamNum.Set(float64(dsMetrics.ArrangeStream))
 		}
 	}
 }

@@ -267,5 +267,10 @@ type Metrics struct {
 	MinHandleTS     uint64 // The min handled timestamp of the stream. Could be zero if no events are handled.
 	AddPath         int
 	RemovePath      int
-	ArrangeStream   int
+
+	ArrangeStream struct {
+		CreateSolo int
+		RemoveSolo int
+		Shuffle    int
+	}
 }
