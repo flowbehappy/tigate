@@ -30,6 +30,7 @@ import (
 const (
 	resolvedTsCacheSize = 8192
 	streamCount         = 2
+	messageSenderCount  = 1
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -753,7 +754,8 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	id := info.GetID()
 	span := info.GetTableSpan()
 	startTs := info.GetStartTs()
-	workerIndex := int((common.GID)(id).Hash(uint64(streamCount)))
+	// workerIndex := int((common.GID)(id).Hash(uint64(messageSenderCount)))
+	workerIndex := 0
 	dispatcher := newDispatcherStat(startTs, info, filter, workerIndex)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)
