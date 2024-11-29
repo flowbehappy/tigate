@@ -27,12 +27,22 @@ import (
 
 const (
 	HotSpanWriteThreshold = 1024 * 1024 // 1MB per second
-	HotSpanScoreThreshold = 10
+	HotSpanScoreThreshold = 3           // TODO: bump to 10 befroe release
 	HotSpanMaxLevel       = 1
-	ImbalanceThreshold    = 3 // trigger merge after it is supported
+
+	EnableDynamicThreshold = false
+	ImbalanceThreshold     = 3 // trigger merge after it is supported
 
 	clearTimeout = 300 // seconds
 )
+
+// TODO: extract group interface
+func getImbalanceThreshold(id GroupID) int {
+	if id == defaultGroupID {
+		return 1
+	}
+	return ImbalanceThreshold
+}
 
 type hotSpans struct {
 	lock          sync.Mutex
@@ -43,12 +53,10 @@ type HotSpan struct {
 	*SpanReplication
 	HintMaxSpanNum uint64
 
-	eventSizePerSecond          uint64
-	preaverageEventSizePerSecon uint64
-
-	// A span that continuously writes more than hotSpanWriteThreshold for
-	// hotSpanScoreThreshold times will be considered a hot span.
-	// TODO: use more flexible and efficient strategy to calculate the score.
+	eventSizePerSecond   float32
+	writeThreshold       float32 // maybe a dynamic value
+	imbalanceCoefficient int     // fixed value for each group
+	// score add 1 when the eventSizePerSecond is larger than writeThreshold*imbalanceCoefficient
 	score          int
 	lastUpdateTime time.Time
 }
@@ -80,42 +88,31 @@ func (s *hotSpans) getBatchByGroup(groupID GroupID, cache []*HotSpan) []*HotSpan
 	outdatedSpans := make([]*HotSpan, 0)
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if groupID == defaultGroupID {
-		hotSpanCache := s.getOrCreateGroup(defaultGroupID)
+	hotSpanCache := s.getOrCreateGroup(groupID)
+	if EnableDynamicThreshold && groupID != defaultGroupID {
+		totalEventSizePerSecond := float32(0)
 		for _, span := range hotSpanCache {
-			if time.Since(span.lastUpdateTime) > clearTimeout*time.Second {
-				outdatedSpans = append(outdatedSpans, span)
-			} else if span.score >= HotSpanScoreThreshold {
-				cache = append(cache, span)
-				if len(cache) >= batchSize {
-					break
-				}
-			}
-		}
-	} else {
-		hotSpanCache := s.getOrCreateGroup(groupID)
-		totalEventSizePerSecond := 0
-		for _, span := range hotSpanCache {
-			if time.Since(span.lastUpdateTime) > clearTimeout*time.Second {
-				outdatedSpans = append(outdatedSpans, span)
-			} else {
-				totalEventSizePerSecond += int(span.eventSizePerSecond)
-			}
+			totalEventSizePerSecond += span.eventSizePerSecond
 		}
 		if totalEventSizePerSecond > 0 {
-			avg := uint64(totalEventSizePerSecond / len(hotSpanCache))
+			avg := float32(totalEventSizePerSecond / float32(len(hotSpanCache)))
 			for _, span := range hotSpanCache {
-				if span.score >= HotSpanScoreThreshold && span.eventSizePerSecond/avg > ImbalanceThreshold {
-					span.HintMaxSpanNum = span.eventSizePerSecond / avg
-					cache = append(cache, span)
-					if len(cache) >= batchSize {
-						break
-					}
-				}
+				span.writeThreshold = avg
+				span.HintMaxSpanNum = uint64(span.eventSizePerSecond / avg)
 			}
 		}
 	}
 
+	for _, span := range hotSpanCache {
+		if time.Since(span.lastUpdateTime) > clearTimeout*time.Second {
+			outdatedSpans = append(outdatedSpans, span)
+		} else if span.score >= HotSpanScoreThreshold {
+			cache = append(cache, span)
+			if len(cache) >= batchSize {
+				break
+			}
+		}
+	}
 	s.doClear(defaultGroupID, outdatedSpans...)
 	return cache
 }
@@ -129,25 +126,29 @@ func (s *hotSpans) updateHotSpan(span *SpanReplication, status *heartbeatpb.Tabl
 	defer s.lock.Unlock()
 	hotSpanCache := s.getOrCreateGroup(span.groupID)
 	if status.EventSizePerSecond < HotSpanWriteThreshold {
-		span, ok := hotSpanCache[span.ID]
-		if !ok {
-			return
+		if span, ok := hotSpanCache[span.ID]; ok && status.EventSizePerSecond < span.writeThreshold {
+			span.score--
+			if span.groupID == defaultGroupID && span.score == 0 {
+				delete(hotSpanCache, span.ID)
+			}
 		}
-		span.score--
-		if span.score == 0 && span.groupID == defaultGroupID {
-			delete(hotSpanCache, span.ID)
-		}
+		return
 	}
+
 	cache, ok := hotSpanCache[span.ID]
 	if !ok {
 		cache = &HotSpan{
-			SpanReplication: span,
-			score:           0,
+			SpanReplication:      span,
+			writeThreshold:       HotSpanWriteThreshold,
+			imbalanceCoefficient: getImbalanceThreshold(span.groupID),
+			score:                0,
 		}
 		hotSpanCache[span.ID] = cache
 	}
-	cache.score++
-	cache.lastUpdateTime = time.Now()
+	if status.EventSizePerSecond >= cache.writeThreshold*float32(cache.imbalanceCoefficient) {
+		cache.score++
+		cache.lastUpdateTime = time.Now()
+	}
 }
 
 func (s *hotSpans) clearHotSpansByGroup(groupID GroupID, spans ...*HotSpan) {
@@ -186,14 +187,14 @@ func (s *hotSpans) stat() string {
 			cnt[score]++
 			total++
 		}
-		for i := 1; i <= 10; i++ {
-			// if cnt[i] == 0 {
-			// 	continue
-			// }
+		for i, cnt := range cnt {
+			if cnt == 0 {
+				continue
+			}
 			res.WriteString("score ")
-			res.WriteString(strconv.Itoa(i))
+			res.WriteString(strconv.Itoa(i + 1))
 			res.WriteString("->")
-			res.WriteString(strconv.Itoa(cnt[i]))
+			res.WriteString(strconv.Itoa(cnt))
 			res.WriteString("; ")
 		}
 		res.WriteString("]")
