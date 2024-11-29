@@ -271,7 +271,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 			defer p.store.wg.Done()
 			buffer := make([]kvEventsAndCallback, 0, 1024)
 			for {
-				events, ok := p.dataCh.GetMultipleMixdGroupConsecutive(buffer, 1<<20 /* 1MB */)
+				events, ok := p.dataCh.GetMultipleNoGroup(buffer)
 				if !ok {
 					return
 				}
