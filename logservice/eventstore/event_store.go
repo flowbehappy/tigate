@@ -708,8 +708,7 @@ func (e *eventStore) updateMetricsOnce() {
 	// metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
 	dsMetrics := e.ds.GetMetrics()
 	if dsMetrics.MinHandleTS != 0 {
-		sinceMinHandleTS := int64(dsMetrics.SinceMinHandleTS / time.Millisecond)
-		lag := float64(oracle.GetPhysical(time.Now())-(oracle.ExtractPhysical(dsMetrics.MinHandleTS)+sinceMinHandleTS)) / 1e3
+		lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandleTS)) / 1e3
 		metrics.EventStoreResolvedTsLagGauge.Set(lag)
 	}
 	metricEventStoreDSChannelSize.Set(float64(dsMetrics.EventChanSize))

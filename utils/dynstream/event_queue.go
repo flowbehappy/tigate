@@ -267,15 +267,17 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 	}
 }
 
-func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, D, H], Timestamp) {
+func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, D, H], Property, Timestamp) {
 	batchSize := q.option.BatchCount
 	if batchSize == 0 {
 		batchSize = 1
 	}
+	lastProperty := BatchableData
 	lastTS := Timestamp(0)
 	// Append the event to the buffer and update the state of the queue and the path.
 	appendToBufAndUpdateState := func(event *eventWrap[A, P, T, D, H], path *pathInfo[A, P, T, D, H]) {
 		buf = append(buf, event.event)
+		lastProperty = event.eventType.Property
 		lastTS = event.timestamp
 		path.pendingSize -= event.eventSize
 		q.totalPendingLength.Add(-1)
@@ -289,7 +291,7 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 	for {
 		area, ok := q.eventQueueTimeQueue.PeekTop()
 		if !ok {
-			return buf[:0], nil, 0
+			return buf[:0], nil, 0, 0
 		}
 		top, ok := area.timestampHeap.PeekTop()
 		if !ok {
@@ -332,10 +334,10 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				// If the first event is a periodic signal, we only need to return the latest event
 				buf[0] = buf[count-1]
 				buf = buf[:1]
-				return buf, path, lastTS
+				return buf, path, lastProperty, lastTS
 			}
 
-			return buf, path, lastTS
+			return buf, path, lastProperty, lastTS
 		}
 	}
 }

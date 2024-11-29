@@ -81,7 +81,6 @@ func (s *parallelDynamicStream[A, P, T, D, H]) GetMetrics() Metrics {
 		metrics.ArrangeStream += subMetrics.ArrangeStream
 		if subMetrics.MinHandleTS < metrics.MinHandleTS {
 			metrics.MinHandleTS = subMetrics.MinHandleTS
-			metrics.SinceMinHandleTS = subMetrics.SinceMinHandleTS
 		}
 	}
 	return metrics

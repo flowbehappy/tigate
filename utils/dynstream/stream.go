@@ -202,7 +202,6 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	startTime time.Time
 
 	_statMinHandledTS atomic.Uint64
-	_statSinceStart   atomic.Int64 // To avoid storing an atomic Time
 }
 
 func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
@@ -244,9 +243,8 @@ func (s *stream[A, P, T, D, H]) getPendingSize() int {
 	}
 }
 
-func (s *stream[A, P, T, D, H]) getMinHandledTS() (uint64, int64) {
-	return s._statMinHandledTS.Load(),
-		int64(time.Since(s.startTime)) - s._statSinceStart.Load()
+func (s *stream[A, P, T, D, H]) getMinHandledTS() uint64 {
+	return s._statMinHandledTS.Load()
 }
 
 func (s *stream[A, P, T, D, H]) in() chan eventWrap[A, P, T, D, H] {
@@ -389,8 +387,9 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 			}
 			eventBuf = eventBuf[:0]
 		}
-		path   *pathInfo[A, P, T, D, H]
-		lastTS Timestamp
+		path     *pathInfo[A, P, T, D, H]
+		property Property
+		lastTS   Timestamp
 	)
 
 	// For testing. Don't handle events until this wait group is done.
@@ -419,24 +418,22 @@ Loop:
 				pushToPendingQueue(e)
 				eventQueueEmpty = false
 			default:
-				eventBuf, path, lastTS = s.eventQueue.popEvents(eventBuf)
+				eventBuf, path, property, lastTS = s.eventQueue.popEvents(eventBuf)
 				if len(eventBuf) == 0 {
 					eventQueueEmpty = true
 					continue Loop
 				}
 				beginTime := time.Now()
 				path.blocking = s.handler.Handle(path.dest, eventBuf...)
-				doneTime := time.Now()
-				s.doneChan <- doneInfo[A, P, T, D, H]{pathInfo: path, handleTime: doneTime.Sub(beginTime)}
+				s.doneChan <- doneInfo[A, P, T, D, H]{pathInfo: path, handleTime: time.Since(beginTime)}
 
 				if path.blocking {
 					s.eventQueue.blockPath(path)
-				} else {
+				} else if property == PeriodicSignal {
 					path.lastHandledTS = lastTS
 					minTS := s.eventQueue.onHandledTS(path)
 					if minTS > 0 {
 						s._statMinHandledTS.Store(uint64(minTS))
-						s._statSinceStart.Store(int64(doneTime.Sub(s.startTime)))
 					}
 				}
 				cleanUpEventBuf()
