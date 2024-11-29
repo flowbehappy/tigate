@@ -466,9 +466,11 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 		return
 	}
 	req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
-	// update the checkpoint ts
-	if req.Watermark != nil && req.Size() == m.controller.GetTaskSizeByNodeID(msg.From) {
-		m.checkpointTsByCapture[msg.From] = *req.Watermark
+	if req.Watermark != nil {
+		old, ok := m.checkpointTsByCapture[msg.From]
+		if !ok || req.Watermark.Seq >= old.Seq {
+			m.checkpointTsByCapture[msg.From] = *req.Watermark
+		}
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
 	if req.Err != nil {

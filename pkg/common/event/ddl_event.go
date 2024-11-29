@@ -164,6 +164,10 @@ func (d *DDLEvent) GetSeq() uint64 {
 	return d.Seq
 }
 
+func (d *DDLEvent) ClearPostFlushFunc() {
+	d.PostTxnFlushed = d.PostTxnFlushed[:0]
+}
+
 func (d *DDLEvent) AddPostFlushFunc(f func()) {
 	d.PostTxnFlushed = append(d.PostTxnFlushed, f)
 }

@@ -172,7 +172,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	// ===== ddl event =====
 	// 1. non-block ddl event, and don't need to communicate with maintainer
 	ddlEvent := &commonEvent.DDLEvent{
-		FinishedTs: 3,
+		FinishedTs: 2,
 		BlockedTables: &commonEvent.InfluencedTables{
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0},
@@ -188,11 +188,48 @@ func TestDispatcherHandleEvents(t *testing.T) {
 
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
-	require.Equal(t, uint64(2), checkpointTs)
+	require.Equal(t, uint64(1), checkpointTs)
 
 	require.Equal(t, 2, count)
 
-	// 2. non-block ddl event, but need to communicate with maintainer
+	// 2.1 non-block ddl event, but need to communicate with maintainer(drop table)
+	ddlEvent21 := &commonEvent.DDLEvent{
+		FinishedTs: 3,
+		BlockedTables: &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{0},
+		},
+		NeedDroppedTables: &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{1},
+		},
+	}
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent21)}, callback)
+	require.Equal(t, true, block)
+	require.Equal(t, 0, len(sink.dmls))
+	// no pending event
+	require.Nil(t, dispatcher.blockEventStatus.blockPendingEvent)
+	require.Equal(t, dispatcher.blockEventStatus.blockStage, heartbeatpb.BlockStage_NONE)
+
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(2), checkpointTs)
+
+	require.Equal(t, 3, count)
+
+	require.Equal(t, 1, dispatcher.resendTaskMap.Len())
+
+	// receive the ack info
+	dispatcherStatus := &heartbeatpb.DispatcherStatus{
+		Ack: &heartbeatpb.ACK{
+			CommitTs:    ddlEvent21.FinishedTs,
+			IsSyncPoint: false,
+		},
+	}
+	dispatcher.HandleDispatcherStatus(dispatcherStatus)
+	require.Equal(t, 0, dispatcher.resendTaskMap.Len())
+
+	// 2.2 block ddl event, but need to communicate with maintainer(add table)
 	ddlEvent2 := &commonEvent.DDLEvent{
 		FinishedTs: 4,
 		BlockedTables: &commonEvent.InfluencedTables{
@@ -212,12 +249,12 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	// no pending event
 	require.Nil(t, dispatcher.blockEventStatus.blockPendingEvent)
 	require.Equal(t, dispatcher.blockEventStatus.blockStage, heartbeatpb.BlockStage_NONE)
-
+	// but block table progress until ack
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
-	require.Equal(t, true, isEmpty)
+	require.Equal(t, false, isEmpty)
 	require.Equal(t, uint64(3), checkpointTs)
 
-	require.Equal(t, 3, count)
+	require.Equal(t, 4, count)
 
 	require.Equal(t, 1, dispatcher.resendTaskMap.Len())
 
@@ -232,7 +269,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	dispatcher.HandleDispatcherStatus(dispatcherStatusPrev)
 	require.Equal(t, 1, dispatcher.resendTaskMap.Len())
 
-	dispatcherStatus := &heartbeatpb.DispatcherStatus{
+	dispatcherStatus = &heartbeatpb.DispatcherStatus{
 		Ack: &heartbeatpb.ACK{
 			CommitTs:    ddlEvent2.FinishedTs,
 			IsSyncPoint: false,
@@ -240,6 +277,11 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	}
 	dispatcher.HandleDispatcherStatus(dispatcherStatus)
 	require.Equal(t, 0, dispatcher.resendTaskMap.Len())
+
+	// clear the event in tableProgress when receive the ack
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(3), checkpointTs)
 
 	// 3. block ddl event
 	ddlEvent3 := &commonEvent.DDLEvent{
@@ -261,7 +303,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	require.Equal(t, true, isEmpty)
 	require.Equal(t, uint64(3), checkpointTs)
 
-	require.Equal(t, 3, count)
+	require.Equal(t, 4, count)
 
 	require.Equal(t, 1, dispatcher.resendTaskMap.Len())
 
@@ -300,7 +342,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	require.Nil(t, dispatcher.blockEventStatus.blockPendingEvent)
 	require.Equal(t, dispatcher.blockEventStatus.blockStage, heartbeatpb.BlockStage_NONE)
 
-	require.Equal(t, 4, count)
+	require.Equal(t, 5, count)
 
 	// ===== sync point event =====
 
@@ -344,6 +386,8 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
 	require.Equal(t, uint64(5), checkpointTs)
+
+	require.Equal(t, 6, count)
 
 	// ===== resolved event =====
 	checkpointTs = dispatcher.GetCheckpointTs()

@@ -1582,7 +1582,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			}
 			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
 				InfluenceType: commonEvent.InfluenceTypeNormal,
-				TableIDs:      []int64{rawEvent.CurrentTableID, heartbeatpb.DDLSpan.TableID},
+				TableIDs:      []int64{rawEvent.PrevTableID, heartbeatpb.DDLSpan.TableID},
 			}
 		}
 	case model.ActionModifyColumn,
