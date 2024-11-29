@@ -85,7 +85,7 @@ func (h *regionEventHandler) GetTimestamp(event regionEvent) dynstream.Timestamp
 		entries := event.entries.Entries.GetEntries()
 		switch entries[0].Type {
 		case cdcpb.Event_INITIALIZED:
-			return dynstream.Timestamp(event.state.region.subscribedSpan.startTs)
+			return dynstream.Timestamp(event.state.region.resolvedTs())
 		case cdcpb.Event_COMMITTED,
 			cdcpb.Event_PREWRITE,
 			cdcpb.Event_COMMIT,
@@ -166,6 +166,11 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 			}
 			span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, entry))
 		case cdcpb.Event_PREWRITE:
+			log.Info("handle prewrite",
+				zap.Uint64("startTs", entry.StartTs),
+				zap.Uint64("commitTs", entry.CommitTs),
+				zap.Any("type", entry.Type),
+				zap.Any("opType", entry.OpType))
 			state.matcher.putPrewriteRow(entry)
 		case cdcpb.Event_COMMIT:
 			// NOTE: matchRow should always be called even if the event is stale.
@@ -174,7 +179,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 					state.matcher.cacheCommitRow(entry)
 					continue
 				}
-				log.Fatal("prewrite not match",
+				log.Warn("prewrite not match",
 					zap.String("key", hex.EncodeToString(entry.GetKey())),
 					zap.Uint64("startTs", entry.GetStartTs()),
 					zap.Uint64("commitTs", entry.GetCommitTs()),
