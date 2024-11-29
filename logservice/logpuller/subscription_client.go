@@ -237,6 +237,7 @@ func NewSubscriptionClient(
 
 	option := dynstream.NewOption()
 	option.BatchCount = 1024
+	option.UseBuffer = true
 	ds := dynstream.NewParallelDynamicStream(config.StreamCount, pathHasher{}, &regionEventHandler{subClient: subClient}, option)
 	ds.Start()
 	subClient.ds = ds
@@ -268,13 +269,13 @@ func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			dsMetrics := s.ds.GetMetrics()
-			if dsMetrics.MinHandledTS != 0 {
-				lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandledTS)) / 1e3
+			if dsMetrics.MinHandleTS != 0 {
+				lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandleTS)) / 1e3
 				metrics.EventStoreResolvedTsLagGauge.Set(lag)
 				if lag > 1000 {
 					log.Info("updateMetrics",
 						zap.Float64("lag", lag),
-						zap.Uint64("minHandledTs", dsMetrics.MinHandledTS))
+						zap.Uint64("minHandledTs", dsMetrics.MinHandleTS))
 				}
 			}
 			metricSubscriptionClientDSChannelSize.Set(float64(dsMetrics.EventChanSize))
