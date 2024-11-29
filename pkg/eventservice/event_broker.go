@@ -330,14 +330,6 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 		return false, dataRange
 	}
 
-	// FIXME: remove this after testing
-	{
-		remoteID := node.ID(task.info.GetServerID())
-		c.sendWatermark(remoteID, task, dataRange.EndTs, task.metricEventServiceSendResolvedTsCount)
-		task.watermark.Store(dataRange.EndTs)
-		return false, dataRange
-	}
-
 	// 2. Constrain the data range by the ddl state of the table.
 	ddlState := c.schemaStore.GetTableDDLEventState(task.info.GetTableSpan().TableID)
 	if ddlState.ResolvedTs < dataRange.EndTs {
