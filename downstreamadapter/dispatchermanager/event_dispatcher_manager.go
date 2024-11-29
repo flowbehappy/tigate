@@ -187,7 +187,11 @@ func NewEventDispatcherManager(
 			return nil, 0, errors.Trace(err)
 		}
 	}
-
+	log.Info("event dispatcher manager created",
+		zap.Stringer("changefeedID", changefeedID),
+		zap.Stringer("maintainerID", maintainerID),
+		zap.Uint64("startTs", startTs),
+		zap.Uint64("tableTriggerStartTs", tableTriggerStartTs))
 	return manager, tableTriggerStartTs, nil
 }
 

@@ -127,7 +127,9 @@ func (s *hotSpans) updateHotSpan(span *SpanReplication, status *heartbeatpb.Tabl
 	hotSpanCache := s.getOrCreateGroup(span.groupID)
 	if status.EventSizePerSecond < HotSpanWriteThreshold {
 		if span, ok := hotSpanCache[span.ID]; ok && status.EventSizePerSecond < span.writeThreshold {
-			span.score--
+			if span.score > 0 {
+				span.score--
+			}
 			if span.groupID == defaultGroupID && span.score == 0 {
 				delete(hotSpanCache, span.ID)
 			}

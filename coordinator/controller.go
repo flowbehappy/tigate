@@ -529,6 +529,7 @@ func (c *Controller) collectMetrics() {
 		log.Info("coordinator status",
 			zap.Int("total", total),
 			zap.Int("stopped", stopped),
+			zap.Int("absent", absent),
 			zap.Int("scheduling", scheduling),
 			zap.Int("working", working))
 	}

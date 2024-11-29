@@ -93,6 +93,7 @@ func (m *DispatcherOrchestrator) handleAddDispatcherManager(from node.ID, req *h
 
 	if manager.GetMaintainerID() != from {
 		manager.SetMaintainerID(from)
+		log.Info("maintainer changed", zap.String("changefeed", cfId.Name()), zap.String("maintainer", from.String()))
 	}
 
 	response := createBootstrapResponse(req.ChangefeedID, manager, startTs)

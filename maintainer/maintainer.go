@@ -654,8 +654,7 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 		log.Info("send maintainer bootstrap message",
 			zap.String("changefeed", m.id.String()),
 			zap.String("server", id.String()),
-			zap.Uint64("startTs", m.startCheckpointTs),
-		)
+			zap.Uint64("startTs", m.startCheckpointTs))
 		return messaging.NewSingleTargetMessage(id, messaging.DispatcherManagerManagerTopic, msg)
 	}
 }
