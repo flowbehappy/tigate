@@ -517,8 +517,9 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 
 func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int) {
 	c.wg.Add(1)
-	resolvedTsByNode := make(map[node.ID][]pevent.ResolvedEvent)
 	messageCh := c.getMessageCh(workerIndex)
+	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 50)
+	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	buf := make([]wrapEvent, 0, 1024)
 	go func() {
 		defer c.wg.Done()
@@ -526,6 +527,10 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 			select {
 			case <-ctx.Done():
 				return
+			case <-flushResolvedTsTicker.C:
+				for serverID, cache := range resolvedTsCacheMap {
+					c.flushResolvedTs(ctx, cache, serverID)
+				}
 			default:
 			}
 			messages, ok := messageCh.GetMultipleSingleGroup(buf)
@@ -534,39 +539,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 			}
 			switch messages[0].msgType {
 			case pevent.TypeResolvedEvent:
-				if len(messages) == 1 {
-					// If there is only one resolvedTs event, we can send it directly.
-					m := messages[0]
-					msg := &pevent.BatchResolvedEvent{}
-					msg.Events = append(msg.Events, m.resolvedTsEvent)
-					tMsg := messaging.NewSingleTargetMessage(
-						m.serverID,
-						messaging.EventCollectorTopic,
-						msg)
-					c.sendMsg(ctx, tMsg, nil)
-				} else {
-					// Group the resolvedTs events by the node id.
-					for _, m := range messages {
-						nodeBatch, ok := resolvedTsByNode[m.serverID]
-						if !ok {
-							nodeBatch = make([]pevent.ResolvedEvent, 0, 64)
-							resolvedTsByNode[m.serverID] = nodeBatch
-						}
-						nodeBatch = append(nodeBatch, m.resolvedTsEvent)
-						resolvedTsByNode[m.serverID] = nodeBatch
-					}
-					// Send them grouped by the node id.
-					for serverID, nodeBatch := range resolvedTsByNode {
-						msg := &pevent.BatchResolvedEvent{}
-						msg.Events = append(msg.Events, nodeBatch...)
-						tMsg := messaging.NewSingleTargetMessage(
-							serverID,
-							messaging.EventCollectorTopic,
-							msg)
-						c.sendMsg(ctx, tMsg, nil)
-						resolvedTsByNode[serverID] = nodeBatch[:0]
-					}
-				}
+				c.handleResolvedTs(ctx, resolvedTsCacheMap, messages[0])
 			case pevent.TypeHandshakeEvent:
 				for _, m := range messages {
 					// Check if the dispatcher is initialized, if so, ignore the handshake event.
@@ -586,20 +559,50 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 					c.sendMsg(ctx, tMsg, m.postSendFunc)
 				}
 			default:
+				// Note: we need to flush the resolvedTs cache before sending the message
+				// to keep the order of the resolvedTs and the message.
+				// c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
+				for serverID, cache := range resolvedTsCacheMap {
+					c.flushResolvedTs(ctx, cache, serverID)
+				}
+
 				for _, m := range messages {
 					tMsg := messaging.NewSingleTargetMessage(
 						m.serverID,
 						messaging.EventCollectorTopic,
 						m.e)
-					// Note: we need to flush the resolvedTs cache before sending the message
-					// to keep the order of the resolvedTs and the message.
-					// c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
+
 					c.sendMsg(ctx, tMsg, m.postSendFunc)
 				}
 			}
 			buf = buf[:0]
 		}
 	}()
+}
+
+func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID]*resolvedTsCache, m wrapEvent) {
+	cache, ok := cacheMap[m.serverID]
+	if !ok {
+		cache = newResolvedTsCache(resolvedTsCacheSize)
+		cacheMap[m.serverID] = cache
+	}
+	cache.add(m.resolvedTsEvent)
+	if cache.isFull() {
+		c.flushResolvedTs(ctx, cache, m.serverID)
+	}
+}
+
+func (c *eventBroker) flushResolvedTs(ctx context.Context, cache *resolvedTsCache, serverID node.ID) {
+	if cache == nil || cache.len == 0 {
+		return
+	}
+	msg := &pevent.BatchResolvedEvent{}
+	msg.Events = append(msg.Events, cache.getAll()...)
+	tMsg := messaging.NewSingleTargetMessage(
+		serverID,
+		messaging.EventCollectorTopic,
+		msg)
+	c.sendMsg(ctx, tMsg, nil)
 }
 
 func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage, postSendMsg func()) {
@@ -1052,4 +1055,41 @@ func newWrapSyncPointEvent(serverID node.ID, e *pevent.SyncPointEvent, state pev
 		e:        e,
 		msgType:  pevent.TypeSyncPointEvent,
 	}
+}
+
+// resolvedTsCache is used to cache the resolvedTs events.
+// We use it instead of a primitive slice to reduce the allocation
+// of the memory and reduce the GC pressure.
+type resolvedTsCache struct {
+	cache []pevent.ResolvedEvent
+	// len is the number of the events in the cache.
+	len int
+	// limit is the max number of the events that the cache can store.
+	limit int
+}
+
+func newResolvedTsCache(limit int) *resolvedTsCache {
+	return &resolvedTsCache{
+		cache: make([]pevent.ResolvedEvent, limit),
+		limit: limit,
+	}
+}
+
+func (c *resolvedTsCache) add(e pevent.ResolvedEvent) {
+	c.cache[c.len] = e
+	c.len++
+}
+
+func (c *resolvedTsCache) isFull() bool {
+	return c.len >= c.limit
+}
+
+func (c *resolvedTsCache) getAll() []pevent.ResolvedEvent {
+	res := c.cache[:c.len]
+	c.reset()
+	return res
+}
+
+func (c *resolvedTsCache) reset() {
+	c.len = 0
 }
