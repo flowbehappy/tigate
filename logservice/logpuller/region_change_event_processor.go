@@ -227,6 +227,7 @@ func (w *changeEventProcessor) doHandle(
 					state.matcher.cacheCommitRow(entry)
 					continue
 				}
+				log.Fatal("prewrite not match")
 				return cerror.ErrPrewriteNotMatch.GenWithStackByArgs(
 					hex.EncodeToString(entry.GetKey()),
 					entry.GetStartTs(), entry.GetCommitTs(),
