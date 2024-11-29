@@ -1,8 +1,6 @@
 package eventservice
 
 import (
-	"time"
-
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/utils/dynstream"
@@ -23,10 +21,12 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 	if len(tasks) != 1 {
 		log.Panic("only one task is allowed")
 	}
-	startTime := time.Now()
-	defer func() {
-		metricEventBrokerTaskHandleDuration.Observe(float64(time.Since(startTime).Milliseconds()))
-	}()
+
+	// startTime := time.Now()
+	// defer func() {
+	// 	metricEventBrokerTaskHandleDuration.Observe(float64(time.Since(startTime).Milliseconds()))
+	// }()
+
 	task := tasks[0]
 	needScan, _ := broker.checkNeedScan(task)
 	if !needScan {
