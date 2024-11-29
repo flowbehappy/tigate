@@ -17,8 +17,10 @@ import (
 	"time"
 
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
+	"github.com/pingcap/ticdc/eventpb"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
 )
@@ -144,4 +146,124 @@ func GetCheckpointTsMessageDynamicStream() dynstream.DynamicStream[int, common.C
 		})
 	}
 	return checkpointTsMessageDynamicStream
+}
+
+type DispatcherMap struct {
+	m     sync.Map
+	mutex sync.Mutex // mutex is protected when the seq is need to get or set, and make the seq and map change atomic.
+	seq   uint64     // sequence number is increasing when changed
+}
+
+func newDispatcherMap() *DispatcherMap {
+	return &DispatcherMap{
+		m:   sync.Map{},
+		seq: 0,
+	}
+}
+
+func (d *DispatcherMap) Len() int {
+	var len = 0
+	d.m.Range(func(_, _ interface{}) bool {
+		len++
+		return true
+	})
+	return len
+}
+
+func (d *DispatcherMap) Get(id common.DispatcherID) (*dispatcher.Dispatcher, bool) {
+	dispatcherItem, ok := d.m.Load(id)
+	if ok {
+		return dispatcherItem.(*dispatcher.Dispatcher), ok
+	}
+	return nil, false
+}
+
+func (d *DispatcherMap) GetSeq() uint64 {
+	d.mutex.Lock()
+	d.mutex.Unlock()
+	return d.seq
+}
+
+func (d *DispatcherMap) Delete(id common.DispatcherID) {
+	d.mutex.Lock()
+	d.mutex.Unlock()
+	d.m.Delete(id)
+	d.seq++
+}
+
+func (d *DispatcherMap) Set(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) uint64 {
+	d.mutex.Lock()
+	d.mutex.Unlock()
+	d.m.Store(id, dispatcher)
+	d.seq++
+
+	return d.seq
+}
+
+func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *dispatcher.Dispatcher)) uint64 {
+	d.mutex.Lock()
+	d.mutex.Unlock()
+	d.m.Range(func(key, value interface{}) bool {
+		fn(key.(common.DispatcherID), value.(*dispatcher.Dispatcher))
+		return true
+	})
+	return d.seq
+}
+
+func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
+	filterConfig := &eventpb.FilterConfig{
+		Rules:            filter.Rules,
+		IgnoreTxnStartTs: filter.IgnoreTxnStartTs,
+		EventFilters:     make([]*eventpb.EventFilterRule, len(filter.EventFilters)),
+	}
+
+	for _, eventFilter := range filter.EventFilters {
+		ignoreEvent := make([]string, len(eventFilter.IgnoreEvent))
+		for _, event := range eventFilter.IgnoreEvent {
+			ignoreEvent = append(ignoreEvent, string(event))
+		}
+		filterConfig.EventFilters = append(filterConfig.EventFilters, &eventpb.EventFilterRule{
+			Matcher:                  eventFilter.Matcher,
+			IgnoreEvent:              ignoreEvent,
+			IgnoreSql:                eventFilter.IgnoreSQL,
+			IgnoreInsertValueExpr:    eventFilter.IgnoreInsertValueExpr,
+			IgnoreUpdateNewValueExpr: eventFilter.IgnoreUpdateNewValueExpr,
+			IgnoreUpdateOldValueExpr: eventFilter.IgnoreUpdateOldValueExpr,
+			IgnoreDeleteValueExpr:    eventFilter.IgnoreDeleteValueExpr,
+		})
+	}
+
+	return filterConfig
+}
+
+type TableSpanStatusWithSeq struct {
+	*heartbeatpb.TableSpanStatus
+	StartTs uint64
+	Seq     uint64
+}
+
+type Watermark struct {
+	mutex sync.Mutex
+	*heartbeatpb.Watermark
+}
+
+func NewWatermark(ts uint64) Watermark {
+	return Watermark{
+		Watermark: &heartbeatpb.Watermark{
+			CheckpointTs: ts,
+			ResolvedTs:   ts,
+		},
+	}
+}
+
+func (w *Watermark) Get() *heartbeatpb.Watermark {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	return w.Watermark
+}
+
+func (w *Watermark) Set(watermark *heartbeatpb.Watermark) {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.Watermark = watermark
 }

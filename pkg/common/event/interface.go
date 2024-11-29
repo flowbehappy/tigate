@@ -24,6 +24,7 @@ type FlushableEvent interface {
 	PostFlush()
 	AddPostFlushFunc(func())
 	PushFrontFlushFunc(f func())
+	ClearPostFlushFunc()
 }
 
 // BlockEvent is an event that may be blocked the dispatcher.

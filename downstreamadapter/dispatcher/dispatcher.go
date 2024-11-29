@@ -402,7 +402,28 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 				CommitTs:    event.GetCommitTs(),
 				IsSyncPoint: false,
 			}
-			d.resendTaskMap.Set(identifier, newResendTask(message, d))
+
+			if event.GetNeedAddedTables() != nil {
+				// When the ddl need add tables, we need the maintainer to block the forwarding of checkpointTs
+				// Because the the new add table should join the calculation of checkpointTs
+				// So the forwarding of checkpointTs should be blocked until the new dispatcher is created.
+				// While there is a time gap between dispatcher send the block status and
+				// maintainer begin to create dispatcher(and block the forwaring checkpoint)
+				// in order to avoid the checkpointTs forward unexceptedly,
+				// we need to block the checkpoint forwarding in this dispatcher until receive the ack from maintainer.
+				//
+				//     |----> block checkpointTs forwaring of this dispatcher ------>|-----> forwarding checkpointTs normally
+				//     |        send block stauts                 send ack           |
+				// dispatcher -------------------> maintainer ----------------> dispatcher
+				//                                     |
+				//                                     |----------> Block CheckpointTs Forwarding and create new dispatcher
+				// Thus, we add the event to tableProgress again, and call event postFunc when the ack is received from maintainer.
+				event.ClearPostFlushFunc()
+				d.tableProgress.Add(event)
+				d.resendTaskMap.Set(identifier, newResendTask(message, d, event.PostFlush))
+			} else {
+				d.resendTaskMap.Set(identifier, newResendTask(message, d, nil))
+			}
 			d.blockStatusesChan <- message
 		}
 	} else {
@@ -424,7 +445,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 			CommitTs:    event.GetCommitTs(),
 			IsSyncPoint: event.GetType() == commonEvent.TypeSyncPointEvent,
 		}
-		d.resendTaskMap.Set(identifier, newResendTask(message, d))
+		d.resendTaskMap.Set(identifier, newResendTask(message, d, nil))
 		d.blockStatusesChan <- message
 	}
 

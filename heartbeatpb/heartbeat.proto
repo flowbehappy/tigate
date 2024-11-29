@@ -20,6 +20,7 @@ message HeartBeatRequest {
 message Watermark {
     uint64 checkpointTs = 1; // min checkpointTs of all tables in the eventDispatcherManager
     uint64 resolvedTs = 2;   // min resolvedTs of all tables in the eventDispatcherManager
+    uint64 seq = 3; // sequence number, it's used to check whether the watermark is outdated
 }
 
 enum Action {

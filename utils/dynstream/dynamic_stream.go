@@ -320,7 +320,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings Area
 func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
 	m := Metrics{
 		PendingQueueLen: int(d._statAllStreamPendingLen.Load()),
-		MinHandledTS:    d._statMinHandledTS.Load(),
+		MinHandleTS:     d._statMinHandledTS.Load(),
 		AddPath:         int(d._statAddPathCount.Load()),
 		RemovePath:      int(d._statRemovePathCount.Load()),
 		ArrangeStream:   int(d._statArrangeStreamCount.Load()),
@@ -785,16 +785,16 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				d.memControl.updateMetrics()
 			}
 			allStreamPendingLen := 0
-			minHandledTS := uint64(0)
+			minHandleTS := uint64(0)
 			for _, si := range d.streamInfos {
 				allStreamPendingLen += si.stream.getPendingSize()
-				handledTs := si.stream._statMinHandledTS.Load()
-				if minHandledTS == 0 || (minHandledTS > handledTs && handledTs != 0) {
-					minHandledTS = handledTs
+				handledTs := si.stream.getMinHandledTS()
+				if minHandleTS == 0 || (minHandleTS > handledTs && handledTs != 0) {
+					minHandleTS = handledTs
 				}
 			}
 			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
-			d._statMinHandledTS.Store(minHandledTS)
+			d._statMinHandledTS.Store(minHandleTS)
 		}
 	}
 }

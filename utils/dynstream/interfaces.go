@@ -264,7 +264,7 @@ func NewParallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T
 type Metrics struct {
 	EventChanSize   int
 	PendingQueueLen int
-	MinHandledTS    uint64 // The min handled timestamp of the stream. Could be zero if no events are handled.
+	MinHandleTS     uint64 // The min handled timestamp of the stream. Could be zero if no events are handled.
 	AddPath         int
 	RemovePath      int
 	ArrangeStream   int
