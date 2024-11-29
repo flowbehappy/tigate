@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/logservice/logpuller"
-	"github.com/pingcap/ticdc/logservice/txnutil"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -29,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
-	"github.com/pingcap/tiflow/pkg/security"
-	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -38,7 +35,8 @@ import (
 type ddlJobFetcher struct {
 	puller *logpuller.LogPullerMultiSpan
 
-	writeDDLEvent     func(ddlEvent DDLJobWithCommitTs)
+	writeDDLEvent func(ddlEvent DDLJobWithCommitTs)
+
 	advanceResolvedTs func(resolvedTS uint64)
 
 	// ddlTableInfo is initialized when receive the first concurrent DDL job.
@@ -48,36 +46,21 @@ type ddlJobFetcher struct {
 }
 
 func newDDLJobFetcher(
+	subClient *logpuller.SubscriptionClient,
 	pdCli pd.Client,
-	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 	startTs uint64,
 	writeDDLEvent func(ddlEvent DDLJobWithCommitTs),
 	advanceResolvedTs func(resolvedTS uint64),
 ) *ddlJobFetcher {
-	clientConfig := &logpuller.SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:   1,
-		ChangeEventProcessorNum:       1, // must be 1, because ddlJobFetcher.input cannot be called concurrently
-		AdvanceResolvedTsIntervalInMs: 100,
-	}
-	client := logpuller.NewSubscriptionClient(
-		logpuller.ClientIDSchemaStore,
-		clientConfig,
-		pdCli,
-		regionCache,
-		pdClock,
-		txnutil.NewLockerResolver(kvStorage.(tikv.Storage)),
-		&security.Credential{},
-	)
-
 	ddlJobFetcher := &ddlJobFetcher{
 		writeDDLEvent:     writeDDLEvent,
 		advanceResolvedTs: advanceResolvedTs,
 		kvStorage:         kvStorage,
 	}
 	ddlSpans := getAllDDLSpan()
-	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, pdClock, ddlSpans, startTs, ddlJobFetcher.input)
+	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(subClient, pdClock, ddlSpans, startTs, ddlJobFetcher.input, advanceResolvedTs)
 
 	return ddlJobFetcher
 }
@@ -90,27 +73,23 @@ func (p *ddlJobFetcher) close(ctx context.Context) error {
 	return p.puller.Close(ctx)
 }
 
-func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) error {
-	if rawEvent.IsResolved() {
-		p.advanceResolvedTs(uint64(rawEvent.CRTs))
-		return nil
+func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, finishCallback func()) bool {
+	for _, kv := range kvs {
+		job, err := p.unmarshalDDL(&kv)
+		if err != nil {
+			log.Fatal("unmarshal ddl failed", zap.Any("kv", kv), zap.Error(err))
+		}
+
+		if job == nil {
+			return false
+		}
+
+		p.writeDDLEvent(DDLJobWithCommitTs{
+			Job:      job,
+			CommitTs: kv.CRTs,
+		})
 	}
-
-	job, err := p.unmarshalDDL(rawEvent)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if job == nil {
-		return nil
-	}
-
-	p.writeDDLEvent(DDLJobWithCommitTs{
-		Job:      job,
-		CommitTs: rawEvent.CRTs,
-	})
-
-	return nil
+	return false
 }
 
 func (p *ddlJobFetcher) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, error) {
