@@ -89,6 +89,13 @@ func (m *DispatcherOrchestrator) handleAddDispatcherManager(from node.ID, req *h
 		}
 		m.dispatcherManagers[cfId] = manager
 		metrics.EventDispatcherManagerGauge.WithLabelValues(cfId.Namespace(), cfId.Name()).Inc()
+	} else {
+		// check whether the event dispatcher manager has the table trigger event dispatcher
+		// when maintainer is transferred to a new node, maybe there has an event dispatcher manager without table trigger event dispatcher
+		// so we need to add a table trigger event dispatcher to the event dispatcher manager
+		if manager.GetTableTriggerEventDispatcher() == nil {
+			manager.AddTableTriggerEventDispatcher(req.TableTriggerEventDispatcherId, req.StartTs)
+		}
 	}
 
 	if manager.GetMaintainerID() != from {
