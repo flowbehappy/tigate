@@ -307,6 +307,10 @@ func (e *eventStore) Run(ctx context.Context) error {
 	})
 
 	eg.Go(func() error {
+		return e.updateMetrics(ctx)
+	})
+
+	eg.Go(func() error {
 		return e.uploadStatePeriodically(ctx)
 	})
 
