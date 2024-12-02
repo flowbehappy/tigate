@@ -67,6 +67,7 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 			ID:           id.ToPB(),
 			CheckpointTs: checkpointTs,
 		}),
+		blockState: atomic.NewPointer[heartbeatpb.State](nil),
 	}
 	r.initGroupID()
 	log.Info("new replica set created",
@@ -140,19 +141,20 @@ func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {
 }
 
 func (r *SpanReplication) IsDropped() bool {
-	state := r.blockState.Load()
-	if state != nil && state.NeedDroppedTables != nil {
-		status := r.status.Load()
-		if status == nil || state.BlockTs != status.CheckpointTs+1 {
-			return false
-		}
-		for _, tableID := range state.NeedDroppedTables.TableIDs {
-			if tableID == r.Span.TableID {
-				return true
-			}
-		}
-	}
 	return false
+	// state := r.blockState.Load()
+	// if state != nil && state.NeedDroppedTables != nil {
+	// 	status := r.status.Load()
+	// 	if status == nil || state.BlockTs != status.CheckpointTs+1 {
+	// 		return false
+	// 	}
+	// 	for _, tableID := range state.NeedDroppedTables.TableIDs {
+	// 		if tableID == r.Span.TableID {
+	// 			return true
+	// 		}
+	// 	}
+	// }
+	// return false
 }
 
 func (r *SpanReplication) UpdateBlockState(newState heartbeatpb.State) {
