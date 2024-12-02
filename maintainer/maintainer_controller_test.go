@@ -113,7 +113,8 @@ func TestBalanceGlobal(t *testing.T) {
 	s := NewController(cfID, 1, nil, tsoClient, nil, nil, nil, ddlSpan, 1000, 0)
 	for i := 0; i < 100; i++ {
 		// generate 100 groups
-		span := &heartbeatpb.TableSpan{TableID: int64(i)}
+		totalSpan := spanz.TableIDToComparableSpan(int64(i))
+		span := &heartbeatpb.TableSpan{TableID: int64(i), StartKey: appendNew(totalSpan.StartKey, 'a'), EndKey: appendNew(totalSpan.StartKey, 'b')}
 		dispatcherID := common.NewDispatcherID()
 		spanReplica := replica.NewReplicaSet(cfID, dispatcherID, tsoClient, 1, span, 1)
 		spanReplica.SetNodeID("node1")
@@ -293,7 +294,8 @@ func TestFinishBootstrap(t *testing.T) {
 		}, "node1")
 	s := NewController(cfID, 1, nil, tsoClient, nil, &mockThreadPool{},
 		config.GetDefaultReplicaConfig(), ddlSpan, 1000, 0)
-	span := &heartbeatpb.TableSpan{TableID: int64(1)}
+	totalSpan := spanz.TableIDToComparableSpan(1)
+	span := &heartbeatpb.TableSpan{TableID: int64(1), StartKey: totalSpan.StartKey, EndKey: totalSpan.EndKey}
 	schemaStore := &mockSchemaStore{tables: []commonEvent.Table{{TableID: 1, SchemaID: 1}}}
 	appcontext.SetService(appcontext.SchemaStore, schemaStore)
 	dispatcherID2 := common.NewDispatcherID()
