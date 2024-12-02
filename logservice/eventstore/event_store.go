@@ -427,6 +427,7 @@ func (e *eventStore) RegisterDispatcher(
 	e.dispatcherMeta.Unlock()
 
 	consumeKVEvents := func(kvs []common.RawKVEntry, finishCallback func()) bool {
+		subStat.maxEventCommitTs.Store(kvs[len(kvs)-1].CRTs)
 		subStat.eventCh.Push(kvEventsAndCallback{
 			subID:    subStat.subID,
 			tableID:  subStat.tableID,
@@ -614,6 +615,7 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 }
 
 func (e *eventStore) updateMetricsOnce() {
+	log.Info("try update metrics")
 	currentTime := e.pdClock.CurrentTime()
 	currentPhyTs := oracle.GetPhysical(currentTime)
 	minResolvedTs := uint64(0)
