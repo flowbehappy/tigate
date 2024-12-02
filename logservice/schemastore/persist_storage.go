@@ -349,12 +349,13 @@ func (p *persistentStorage) getMaxEventCommitTs(tableID int64, ts uint64) uint64
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
 func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, error) {
 	// TODO: check a dispatcher won't fetch the ddl events that create it(create table/rename table)
-	p.mu.RLock()
 	// fast check
 	v, ok := p.tablesDDLHistory.Load(tableID)
+	if !ok {
+		return nil, nil
+	}
 	history := v.([]uint64)
-	if !ok || len(history) == 0 || start >= history[len(history)-1] {
-		p.mu.RUnlock()
+	if len(history) == 0 || start >= history[len(history)-1] {
 		return nil, nil
 	}
 	index := sort.Search(len(history), func(i int) bool {
@@ -370,7 +371,6 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 			allTargetTs = append(allTargetTs, history[i])
 		}
 	}
-	p.mu.RUnlock()
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
@@ -489,12 +489,12 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
 
-	p.mu.RLock()
 	kvSnapVersion := p.gcTs
 	var allDDLFinishedTs []uint64
-	history, _ := p.tablesDDLHistory.Load(tableID)
-	allDDLFinishedTs = append(allDDLFinishedTs, history.([]uint64)...)
-	p.mu.RUnlock()
+	history, ok := p.tablesDDLHistory.Load(tableID)
+	if ok {
+		allDDLFinishedTs = append(allDDLFinishedTs, history.([]uint64)...)
+	}
 
 	if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap); err != nil {
 		return err
