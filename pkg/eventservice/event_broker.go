@@ -323,7 +323,6 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 // If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
 func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common.DataRange) {
 	if !mustCheck && task.scanning.Load() {
-		log.Info("fizz:  scanning", zap.Any("dispatcher", task.id))
 		return false, common.DataRange{}
 	}
 
@@ -420,10 +419,8 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	start := time.Now()
 	remoteID := node.ID(task.info.GetServerID())
 	dispatcherID := task.id
-	log.Info("fizz: start scan", zap.Any("dispatcher", task.id))
 
 	defer func() {
-		log.Info("fizz: scan done", zap.Any("dispatcher", task.id))
 		task.scanning.Store(false)
 	}()
 
@@ -713,7 +710,6 @@ func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommi
 		needScan, _ := c.checkNeedScan(d, false)
 		if needScan {
 			d.scanning.Store(true)
-			log.Info("fizz: need scan", zap.Any("dispatcher", d.id))
 			c.taskQueue <- d
 		}
 	}
