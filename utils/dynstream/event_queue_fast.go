@@ -24,12 +24,11 @@ type eventQueueFast[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] stru
 }
 
 func newEventQueueFast[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](option Option, handler H) eventQueueFast[A, P, T, D, H] {
-	blockAlloc := deque.NewBlockAllocator[eventSignal[A, P, T, D, H]](1024, 32)
 	return eventQueueFast[A, P, T, D, H]{
 		option:          option,
 		handler:         handler,
 		eventBlockAlloc: deque.NewBlockAllocator[eventWrap[A, P, T, D, H]](32, 1024),
-		signalQueue:     deque.NewDeque[eventSignal[A, P, T, D, H]](1024, blockAlloc),
+		signalQueue:     deque.NewDeque[eventSignal[A, P, T, D, H]](1024, deque.NewBlockAllocator[eventSignal[A, P, T, D, H]](1024, 32)),
 	}
 }
 
