@@ -183,6 +183,8 @@ func (c *eventBroker) sendWatermark(
 		re,
 		d.getEventSenderState())
 	c.getMessageCh(d.workerIndex) <- resolvedEvent
+	// We comment out the following code is because we found when some resolvedTs are dropped,
+	// the lag of the resolvedTs will increase.
 	// select {
 	// case c.getMessageCh(d.workerIndex) <- resolvedEvent:
 	// 	if counter != nil {
