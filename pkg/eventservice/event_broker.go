@@ -27,7 +27,7 @@ import (
 
 const (
 	resolvedTsCacheSize = 8192
-	streamCount         = 16
+	streamCount         = 4
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -541,7 +541,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 
 func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int) {
 	c.wg.Add(1)
-	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 300)
+	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 50)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	messageCh := c.messageCh[workerIndex]
 	tickCh := flushResolvedTsTicker.C
