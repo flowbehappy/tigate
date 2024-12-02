@@ -73,7 +73,7 @@ type persistentStorage struct {
 	databaseMap map[int64]*BasicDatabaseInfo
 
 	// table id -> a sorted list of finished ts for the table's ddl events
-	tablesDDLHistory map[int64][]uint64
+	tablesDDLHistory sync.Map // table id -> a sorted list of finished ts for the table's ddl events
 
 	// it has two use cases:
 	// 1. store the ddl events need to send to a table dispatcher
@@ -148,7 +148,7 @@ func newPersistentStorage(
 		tableMap:               make(map[int64]*BasicTableInfo),
 		partitionMap:           make(map[int64]BasicPartitionInfo),
 		databaseMap:            make(map[int64]*BasicDatabaseInfo),
-		tablesDDLHistory:       make(map[int64][]uint64),
+		tablesDDLHistory:       sync.Map{}, // Changed from make(map[int64][]uint64)
 		tableTriggerDDLHistory: make([]uint64, 0),
 		tableInfoStoreMap:      make(map[int64]*versionedTableInfoStore),
 		tableRegisteredCount:   make(map[int64]int),
@@ -327,18 +327,23 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 
 // TODO: this may consider some shouldn't be send ddl, like create table, does it matter?
 func (p *persistentStorage) getMaxEventCommitTs(tableID int64, ts uint64) uint64 {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if len(p.tablesDDLHistory[tableID]) == 0 {
+	value, ok := p.tablesDDLHistory.Load(tableID)
+	if !ok || value == nil {
 		return 0
 	}
-	index := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
-		return p.tablesDDLHistory[tableID][i] > ts
+
+	history := value.([]uint64)
+	if len(history) == 0 {
+		return 0
+	}
+
+	index := sort.Search(len(history), func(i int) bool {
+		return history[i] > ts
 	})
 	if index == 0 {
 		return 0
 	}
-	return p.tablesDDLHistory[tableID][index-1]
+	return history[index-1]
 }
 
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
@@ -346,8 +351,9 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 	// TODO: check a dispatcher won't fetch the ddl events that create it(create table/rename table)
 	p.mu.RLock()
 	// fast check
-	history := p.tablesDDLHistory[tableID]
-	if len(history) == 0 || start >= history[len(history)-1] {
+	v, ok := p.tablesDDLHistory.Load(tableID)
+	history := v.([]uint64)
+	if !ok || len(history) == 0 || start >= history[len(history)-1] {
 		p.mu.RUnlock()
 		return nil, nil
 	}
@@ -486,7 +492,8 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	p.mu.RLock()
 	kvSnapVersion := p.gcTs
 	var allDDLFinishedTs []uint64
-	allDDLFinishedTs = append(allDDLFinishedTs, p.tablesDDLHistory[tableID]...)
+	history, _ := p.tablesDDLHistory.Load(tableID)
+	allDDLFinishedTs = append(allDDLFinishedTs, history.([]uint64)...)
 	p.mu.RUnlock()
 
 	if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap); err != nil {
@@ -582,21 +589,22 @@ func (p *persistentStorage) cleanObsoleteDataInMemory(gcTs uint64) {
 	defer p.mu.Unlock()
 	p.gcTs = gcTs
 
-	// clean tablesDDLHistory
-	tablesToRemove := make(map[int64]interface{})
-	for tableID := range p.tablesDDLHistory {
-		i := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
-			return p.tablesDDLHistory[tableID][i] > gcTs
+	// Clean tablesDDLHistory
+	p.tablesDDLHistory.Range(func(key, value interface{}) bool {
+		tableID := key.(int64)
+		history := value.([]uint64)
+
+		i := sort.Search(len(history), func(i int) bool {
+			return history[i] > gcTs
 		})
-		if i == len(p.tablesDDLHistory[tableID]) {
-			tablesToRemove[tableID] = nil
-			continue
+
+		if i == len(history) {
+			p.tablesDDLHistory.Delete(tableID)
+		} else {
+			p.tablesDDLHistory.Store(tableID, history[i:])
 		}
-		p.tablesDDLHistory[tableID] = p.tablesDDLHistory[tableID][i:]
-	}
-	for tableID := range tablesToRemove {
-		delete(p.tablesDDLHistory, tableID)
-	}
+		return true
+	})
 
 	// clean tableTriggerDDLHistory
 	i := sort.Search(len(p.tableTriggerDDLHistory), func(i int) bool {
@@ -607,7 +615,7 @@ func (p *persistentStorage) cleanObsoleteDataInMemory(gcTs uint64) {
 	// clean tableInfoStoreMap
 	// Note: tableInfoStoreMap need to keep one version before gcTs,
 	//  so it has different gc logic with tablesDDLHistory
-	tablesToRemove = make(map[int64]interface{})
+	tablesToRemove := make(map[int64]interface{})
 	for tableID, store := range p.tableInfoStoreMap {
 		if needRemove := store.gc(gcTs); needRemove {
 			tablesToRemove[tableID] = nil
@@ -943,15 +951,21 @@ func updateDDLHistory(
 	ddlEvent *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
-	tablesDDLHistory map[int64][]uint64,
+	tablesDDLHistory sync.Map,
 	tableTriggerDDLHistory []uint64,
 ) ([]uint64, error) {
 	appendTableHistory := func(tableID int64) {
-		tablesDDLHistory[tableID] = append(tablesDDLHistory[tableID], ddlEvent.FinishedTs)
+		value, _ := tablesDDLHistory.LoadOrStore(tableID, make([]uint64, 0))
+		history := value.([]uint64)
+		history = append(history, ddlEvent.FinishedTs)
+		tablesDDLHistory.Store(tableID, history)
 	}
 	appendPartitionsHistory := func(partitionIDs []int64) {
 		for _, partitionID := range partitionIDs {
-			tablesDDLHistory[partitionID] = append(tablesDDLHistory[partitionID], ddlEvent.FinishedTs)
+			value, _ := tablesDDLHistory.LoadOrStore(partitionID, make([]uint64, 0))
+			history := value.([]uint64)
+			history = append(history, ddlEvent.FinishedTs)
+			tablesDDLHistory.Store(partitionID, history)
 		}
 	}
 
