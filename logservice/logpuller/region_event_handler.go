@@ -80,7 +80,6 @@ func (h *regionEventHandler) GetArea(path SubscriptionID, dest *subscribedSpan) 
 	return 0
 }
 func (h *regionEventHandler) GetTimestamp(event regionEvent) dynstream.Timestamp {
-	// TODO: it is hard to get timestamp of *cdcpb.Event_Entries_
 	if event.entries != nil {
 		entries := event.entries.Entries.GetEntries()
 		switch entries[0].Type {
@@ -167,6 +166,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 			span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, entry))
 		case cdcpb.Event_PREWRITE:
 			log.Info("handle prewrite",
+				zap.String("key", hex.EncodeToString(entry.GetKey())),
 				zap.Uint64("startTs", entry.StartTs),
 				zap.Uint64("commitTs", entry.CommitTs),
 				zap.Any("type", entry.Type),
@@ -179,7 +179,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 					state.matcher.cacheCommitRow(entry)
 					continue
 				}
-				log.Fatal("prewrite not match",
+				log.Warn("prewrite not match",
 					zap.String("key", hex.EncodeToString(entry.GetKey())),
 					zap.Uint64("startTs", entry.GetStartTs()),
 					zap.Uint64("commitTs", entry.GetCommitTs()),
