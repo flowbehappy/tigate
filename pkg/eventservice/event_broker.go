@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/ticdc/logservice/schemastore"
 	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
@@ -71,7 +72,7 @@ type eventBroker struct {
 
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
-	messageCh []chan wrapEvent
+	messageCh []chan *wrapEvent
 
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
@@ -119,7 +120,7 @@ func newEventBroker(
 		messageWorkerCount = streamCount
 	}
 
-	//conf := config.GetGlobalServerConfig().Debug.EventService
+	conf := config.GetGlobalServerConfig().Debug.EventService
 
 	c := &eventBroker{
 		tidbClusterID:           id,
@@ -129,10 +130,10 @@ func newEventBroker(
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
-		taskQueue:               make(chan scanTask, 8192),
+		taskQueue:               make(chan scanTask, conf.ScanTaskQueueSize),
 		scanWorkerCount:         defaultScanWorkerCount,
 		ds:                      ds,
-		messageCh:               make([]chan wrapEvent, messageWorkerCount),
+		messageCh:               make([]chan *wrapEvent, messageWorkerCount),
 		cancel:                  cancel,
 		wg:                      wg,
 
@@ -156,7 +157,7 @@ func newEventBroker(
 	}
 
 	for i := 0; i < messageWorkerCount; i++ {
-		c.messageCh[i] = make(chan wrapEvent, defaultChannelSize)
+		c.messageCh[i] = make(chan *wrapEvent, defaultChannelSize*4)
 	}
 
 	c.runScanWorker(ctx)
@@ -202,10 +203,7 @@ func (c *eventBroker) sendReadyEvent(
 	event := pevent.NewReadyEvent(d.info.GetID())
 	wrapEvent := newWrapReadyEvent(server, event)
 
-	select {
-	case c.getMessageCh(d.workerIndex) <- wrapEvent:
-	default:
-	}
+	c.getMessageCh(d.workerIndex) <- wrapEvent
 }
 
 func (c *eventBroker) sendNotReusableEvent(
@@ -219,7 +217,7 @@ func (c *eventBroker) sendNotReusableEvent(
 	c.getMessageCh(d.workerIndex) <- wrapEvent
 }
 
-func (c *eventBroker) getMessageCh(workerIndex int) chan wrapEvent {
+func (c *eventBroker) getMessageCh(workerIndex int) chan *wrapEvent {
 	return c.messageCh[workerIndex]
 }
 
@@ -266,7 +264,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 							dispatcherStat.startTs,
 							dispatcherStat.seq.Add(1),
 							nil)
-						wrapE := wrapEvent{
+						wrapE := &wrapEvent{
 							serverID: node.ID(dispatcherStat.info.GetServerID()),
 							e:        e,
 							msgType:  pevent.TypeHandshakeEvent,
@@ -361,17 +359,18 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	}
 
 	// 2. Constrain the data range by the ddl state of the table.
-	ddlState := c.schemaStore.GetTableDDLEventState(task.info.GetTableSpan().TableID)
-	if ddlState.ResolvedTs < dataRange.EndTs {
-		dataRange.EndTs = ddlState.ResolvedTs
-	}
+	// FIXME: remove this comment after testing
+	// ddlState := c.schemaStore.GetTableDDLEventState(task.info.GetTableSpan().TableID)
+	// if ddlState.ResolvedTs < dataRange.EndTs {
+	// 	dataRange.EndTs = ddlState.ResolvedTs
+	// }
 
 	if dataRange.EndTs <= dataRange.StartTs {
 		return false, dataRange
 	}
 
 	// target ts range: (dataRange.StartTs, dataRange.EndTs]
-	if dataRange.StartTs >= task.latestCommitTs.Load() && dataRange.StartTs >= ddlState.MaxEventCommitTs {
+	if dataRange.StartTs >= task.latestCommitTs.Load() {
 		// The dispatcher has no new events. In such case, we don't need to scan the event store.
 		// We just send the watermark to the dispatcher.
 		remoteID := node.ID(task.info.GetServerID())
@@ -399,7 +398,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 	}
 	// Always reset the seq of the dispatcher to 0 before sending a handshake event.
 	task.seq.Store(0)
-	wrapE := wrapEvent{
+	wrapE := &wrapEvent{
 		serverID: node.ID(task.info.GetServerID()),
 		e: pevent.NewHandshakeEvent(
 			task.id,
@@ -553,8 +552,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 				return
 			case m := <-messageCh:
 				if m.msgType == pevent.TypeResolvedEvent {
-					// The message is a watermark, we need to cache it, and send it to the dispatcher
-					// when cache is full to reduce the number of messages.
 					c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
 					continue
 				}
@@ -578,6 +575,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 				// to keep the order of the resolvedTs and the message.
 				c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
 				c.sendMsg(ctx, tMsg, m.postSendFunc)
+				m.reset()
 			case <-tickCh:
 				for serverID, cache := range resolvedTsCacheMap {
 					c.flushResolvedTs(ctx, cache, serverID)
@@ -587,7 +585,8 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 	}()
 }
 
-func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID]*resolvedTsCache, m wrapEvent) {
+func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID]*resolvedTsCache, m *wrapEvent) {
+	defer m.reset()
 	cache, ok := cacheMap[m.serverID]
 	if !ok {
 		cache = newResolvedTsCache(resolvedTsCacheSize)
@@ -991,6 +990,18 @@ func (t scanTask) GetKey() common.DispatcherID {
 	return t.id
 }
 
+var wrapEventPool = sync.Pool{
+	New: func() interface{} {
+		return &wrapEvent{}
+	},
+}
+
+func getWrapEvent() *wrapEvent {
+	return wrapEventPool.Get().(*wrapEvent)
+}
+
+var zeroResolvedEvent = pevent.ResolvedEvent{}
+
 type wrapEvent struct {
 	serverID        node.ID
 	resolvedTsEvent pevent.ResolvedEvent
@@ -1001,13 +1012,22 @@ type wrapEvent struct {
 	postSendFunc func()
 }
 
-func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent, state pevent.EventSenderState) wrapEvent {
+func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent, state pevent.EventSenderState) *wrapEvent {
 	e.State = state
-	return wrapEvent{
-		serverID: serverID,
-		e:        e,
-		msgType:  pevent.TypeDMLEvent,
-	}
+	w := getWrapEvent()
+	w.serverID = serverID
+	w.e = e
+	w.msgType = pevent.TypeDMLEvent
+	return w
+}
+
+func (w *wrapEvent) reset() {
+	w.e = nil
+	w.postSendFunc = nil
+	w.resolvedTsEvent = zeroResolvedEvent
+	w.serverID = ""
+	w.msgType = -1
+	wrapEventPool.Put(w)
 }
 
 func (w wrapEvent) getDispatcherID() common.DispatcherID {
@@ -1018,47 +1038,47 @@ func (w wrapEvent) getDispatcherID() common.DispatcherID {
 	return e.GetDispatcherID()
 }
 
-func newWrapReadyEvent(serverID node.ID, e pevent.ReadyEvent) wrapEvent {
-	return wrapEvent{
-		serverID: serverID,
-		e:        &e,
-		msgType:  pevent.TypeReadyEvent,
-	}
+func newWrapReadyEvent(serverID node.ID, e pevent.ReadyEvent) *wrapEvent {
+	w := getWrapEvent()
+	w.serverID = serverID
+	w.e = &e
+	w.msgType = pevent.TypeReadyEvent
+	return w
 }
 
-func newWrapNotReusableEvent(serverID node.ID, e pevent.NotReusableEvent) wrapEvent {
-	return wrapEvent{
-		serverID: serverID,
-		e:        &e,
-		msgType:  pevent.TypeNotReusableEvent,
-	}
+func newWrapNotReusableEvent(serverID node.ID, e pevent.NotReusableEvent) *wrapEvent {
+	w := getWrapEvent()
+	w.serverID = serverID
+	w.e = &e
+	w.msgType = pevent.TypeNotReusableEvent
+	return w
 }
 
-func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent, state pevent.EventSenderState) wrapEvent {
+func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent, state pevent.EventSenderState) *wrapEvent {
 	e.State = state
-	return wrapEvent{
-		serverID:        serverID,
-		resolvedTsEvent: e,
-		msgType:         pevent.TypeResolvedEvent,
-	}
+	w := getWrapEvent()
+	w.serverID = serverID
+	w.resolvedTsEvent = e
+	w.msgType = pevent.TypeResolvedEvent
+	return w
 }
 
-func newWrapDDLEvent(serverID node.ID, e *pevent.DDLEvent, state pevent.EventSenderState) wrapEvent {
+func newWrapDDLEvent(serverID node.ID, e *pevent.DDLEvent, state pevent.EventSenderState) *wrapEvent {
 	e.State = state
-	return wrapEvent{
-		serverID: serverID,
-		e:        e,
-		msgType:  pevent.TypeDDLEvent,
-	}
+	w := getWrapEvent()
+	w.serverID = serverID
+	w.e = e
+	w.msgType = pevent.TypeDDLEvent
+	return w
 }
 
-func newWrapSyncPointEvent(serverID node.ID, e *pevent.SyncPointEvent, state pevent.EventSenderState) wrapEvent {
+func newWrapSyncPointEvent(serverID node.ID, e *pevent.SyncPointEvent, state pevent.EventSenderState) *wrapEvent {
 	e.State = state
-	return wrapEvent{
-		serverID: serverID,
-		e:        e,
-		msgType:  pevent.TypeSyncPointEvent,
-	}
+	w := getWrapEvent()
+	w.serverID = serverID
+	w.e = e
+	w.msgType = pevent.TypeSyncPointEvent
+	return w
 }
 
 // resolvedTsCache is used to cache the resolvedTs events.
