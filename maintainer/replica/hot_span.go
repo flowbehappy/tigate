@@ -198,7 +198,7 @@ func (s *hotSpans) stat() string {
 				continue
 			}
 			res.WriteString("score ")
-			res.WriteString(strconv.Itoa(i + 1))
+			res.WriteString(strconv.Itoa(i))
 			res.WriteString("->")
 			res.WriteString(strconv.Itoa(cnt))
 			res.WriteString(";")

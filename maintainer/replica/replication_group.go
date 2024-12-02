@@ -239,7 +239,7 @@ func (db *ReplicationDB) GetGroupStat() string {
 			distribute.WriteString(strconv.Itoa(size))
 			distribute.WriteString("; ")
 		}
-		distribute.WriteString("]")
+		distribute.WriteString("] ")
 	}
 	return distribute.String()
 }
