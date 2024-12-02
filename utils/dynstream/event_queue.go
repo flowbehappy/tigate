@@ -70,20 +70,6 @@ func (p *pathSizeStat[A, P, T, D, H]) LessThan(other *pathSizeStat[A, P, T, D, H
 	return p.pendingSize > other.pendingSize
 }
 
-type handledTSPathNode[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] pathInfo[A, P, T, D, H]
-
-func (n *handledTSPathNode[A, P, T, D, H]) SetHeapIndex(index int) {
-	n.handledTSHeapIndex = index
-}
-
-func (n *handledTSPathNode[A, P, T, D, H]) GetHeapIndex() int {
-	return n.handledTSHeapIndex
-}
-
-func (n *handledTSPathNode[A, P, T, D, H]) LessThan(other *handledTSPathNode[A, P, T, D, H]) bool {
-	return n.lastHandledTS < other.lastHandledTS
-}
-
 // An area info contains the path nodes of the area in a stream.
 // Note that the instance is stream level, not global level.
 type streamAreaInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
@@ -126,8 +112,6 @@ type eventQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	areaMap             map[A]*streamAreaInfo[A, P, T, D, H]
 	eventQueueTimeQueue *heap.Heap[*streamAreaInfo[A, P, T, D, H]]
 
-	handledTSHeap *heap.Heap[*handledTSPathNode[A, P, T, D, H]] // The min heap for handled timestamp.
-
 	totalPendingLength atomic.Int64
 }
 
@@ -136,23 +120,7 @@ func newEventQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](optio
 		option:              option,
 		areaMap:             make(map[A]*streamAreaInfo[A, P, T, D, H]),
 		eventQueueTimeQueue: heap.NewHeap[*streamAreaInfo[A, P, T, D, H]](),
-		handledTSHeap:       heap.NewHeap[*handledTSPathNode[A, P, T, D, H]](),
 		handler:             handler,
-	}
-}
-
-func (q *eventQueue[A, P, T, D, H]) updateHandledTSHeap(path *pathInfo[A, P, T, D, H]) Timestamp {
-	if path.removed || path.lastHandledTS == 0 {
-		q.handledTSHeap.Remove((*handledTSPathNode[A, P, T, D, H])(path))
-		return 0
-	} else {
-		q.handledTSHeap.AddOrUpdate((*handledTSPathNode[A, P, T, D, H])(path))
-		top, ok := q.handledTSHeap.PeekTop()
-		if ok {
-			return top.lastHandledTS
-		} else {
-			return 0
-		}
 	}
 }
 
@@ -212,12 +180,12 @@ func (q *eventQueue[A, P, T, D, H]) addPath(path *pathInfo[A, P, T, D, H]) {
 
 	q.totalPendingLength.Add(int64(path.pendingQueue.Length()))
 
-	q.updateHandledTSHeap(path)
+	// q.updateHandledTSHeap(path)
 	q.updateHeapAfterUpdatePath(path)
 }
 
 func (q *eventQueue[A, P, T, D, H]) removePath(path *pathInfo[A, P, T, D, H]) {
-	q.updateHandledTSHeap(path)
+	// q.updateHandledTSHeap(path)
 
 	if area := path.streamAreaInfo; area != nil {
 		area.pathCount--
@@ -267,18 +235,14 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 	}
 }
 
-func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, D, H], Property, Timestamp) {
+func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, D, H]) {
 	batchSize := q.option.BatchCount
 	if batchSize == 0 {
 		batchSize = 1
 	}
-	lastProperty := BatchableData
-	lastTS := Timestamp(0)
 	// Append the event to the buffer and update the state of the queue and the path.
 	appendToBufAndUpdateState := func(event *eventWrap[A, P, T, D, H], path *pathInfo[A, P, T, D, H]) {
 		buf = append(buf, event.event)
-		lastProperty = event.eventType.Property
-		lastTS = event.timestamp
 		path.pendingSize -= event.eventSize
 		q.totalPendingLength.Add(-1)
 		if path.areaMemStat != nil {
@@ -291,7 +255,7 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 	for {
 		area, ok := q.eventQueueTimeQueue.PeekTop()
 		if !ok {
-			return buf[:0], nil, 0, 0
+			return buf[:0], nil
 		}
 		top, ok := area.timestampHeap.PeekTop()
 		if !ok {
@@ -334,10 +298,10 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				// If the first event is a periodic signal, we only need to return the latest event
 				buf[0] = buf[count-1]
 				buf = buf[:1]
-				return buf, path, lastProperty, lastTS
+				return buf, path
 			}
 
-			return buf, path, lastProperty, lastTS
+			return buf, path
 		}
 	}
 }
@@ -350,6 +314,6 @@ func (q *eventQueue[A, P, T, D, H]) wakePath(path *pathInfo[A, P, T, D, H]) {
 	q.updateHeapAfterUpdatePath(path)
 }
 
-func (q *eventQueue[A, P, T, D, H]) onHandledTS(path *pathInfo[A, P, T, D, H]) Timestamp {
-	return q.updateHandledTSHeap(path)
-}
+// func (q *eventQueue[A, P, T, D, H]) onHandledTS(path *pathInfo[A, P, T, D, H]) Timestamp {
+// 	return q.updateHandledTSHeap(path)
+// }

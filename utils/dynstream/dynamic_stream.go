@@ -31,7 +31,7 @@ const (
 type ruleType int
 
 const (
-	createSoloPath ruleType = 1 + iota
+	createSoloPath ruleType = iota
 	removeSoloPath
 	shuffleStreams
 )
@@ -163,7 +163,6 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 	startTime      time.Time
 
 	_statAllStreamPendingLen atomic.Int64
-	_statMinHandledTS        atomic.Uint64
 	_statAddPathCount        atomic.Uint64
 	_statRemovePathCount     atomic.Uint64
 	_statArrangeStreamCount  struct {
@@ -333,7 +332,6 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings Area
 func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
 	m := Metrics{
 		PendingQueueLen: int(d._statAllStreamPendingLen.Load()),
-		MinHandleTS:     d._statMinHandledTS.Load(),
 		AddPath:         int(d._statAddPathCount.Load()),
 		RemovePath:      int(d._statRemovePathCount.Load()),
 		ArrangeStream: struct {
@@ -817,16 +815,10 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				d.memControl.updateMetrics()
 			}
 			allStreamPendingLen := 0
-			minHandleTS := uint64(0)
 			for _, si := range d.streamInfos {
 				allStreamPendingLen += si.stream.getPendingSize()
-				handledTs := si.stream.getMinHandledTS()
-				if minHandleTS == 0 || (minHandleTS > handledTs && handledTs != 0) {
-					minHandleTS = handledTs
-				}
 			}
 			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
-			d._statMinHandledTS.Store(minHandleTS)
 		}
 	}
 }

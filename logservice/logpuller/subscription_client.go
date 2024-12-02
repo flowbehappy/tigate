@@ -269,15 +269,6 @@ func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			dsMetrics := s.ds.GetMetrics()
-			if dsMetrics.MinHandleTS != 0 {
-				lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandleTS)) / 1e3
-				metrics.EventStoreResolvedTsLagGauge.Set(lag)
-				if lag > 1000 {
-					log.Info("updateMetrics",
-						zap.Float64("lag", lag),
-						zap.Uint64("minHandledTs", dsMetrics.MinHandleTS))
-				}
-			}
 			metricSubscriptionClientDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 			metricSubscriptionClientDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 			metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))

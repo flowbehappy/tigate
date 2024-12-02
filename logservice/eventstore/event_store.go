@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/ticdc/logservice/logservicepb"
+	"github.com/tikv/client-go/v2/oracle"
 
 	"github.com/pingcap/ticdc/utils/chann"
 
@@ -48,7 +49,7 @@ var (
 	CounterResolved = metrics.EventStoreReceivedEventCount.WithLabelValues("resolved")
 )
 
-type ResolvedTsNotifier func(watermark uint64)
+type ResolvedTsNotifier func(watermark uint64, latestCommitTs uint64)
 
 type EventStore interface {
 	Name() string
@@ -435,7 +436,7 @@ func (e *eventStore) RegisterDispatcher(
 		subStat.dispatchers.RLock()
 		defer subStat.dispatchers.RUnlock()
 		for _, notifier := range subStat.dispatchers.notifiers {
-			notifier(ts)
+			notifier(ts, subStat.maxEventCommitTs.Load())
 		}
 		CounterResolved.Inc()
 	}
@@ -594,6 +595,47 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 		rowCount:     0,
 		decoder:      e.decoder,
 	}, nil
+}
+
+func (e *eventStore) updateMetrics(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			e.updateMetricsOnce()
+		}
+	}
+}
+
+func (e *eventStore) updateMetricsOnce() {
+	currentTime := e.pdClock.CurrentTime()
+	currentPhyTs := oracle.GetPhysical(currentTime)
+	minResolvedTs := uint64(0)
+	e.dispatcherMeta.RLock()
+	for _, subscriptionStat := range e.dispatcherMeta.subscriptionStats {
+		// resolved ts lag
+		resolvedTs := subscriptionStat.resolvedTs.Load()
+		resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
+		resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+		metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
+		if minResolvedTs == 0 || resolvedTs < minResolvedTs {
+			minResolvedTs = resolvedTs
+		}
+		// checkpoint ts lag
+		checkpointTs := subscriptionStat.checkpointTs.Load()
+		watermarkPhyTs := oracle.ExtractPhysical(checkpointTs)
+		watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
+		metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
+	}
+	e.dispatcherMeta.RUnlock()
+	if minResolvedTs == 0 {
+		return
+	}
+	minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
+	eventStoreResolvedTsLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
+	metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
 }
 
 func (e *eventStore) writeEvents(db *pebble.DB, events []kvEventsAndCallback) error {
