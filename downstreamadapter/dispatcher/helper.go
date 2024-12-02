@@ -179,29 +179,6 @@ func (s *ComponentStateWithMutex) Get() heartbeatpb.ComponentState {
 	return s.componentStatus
 }
 
-type TsWithMutex struct {
-	mutex sync.Mutex
-	ts    uint64
-}
-
-func newTsWithMutex(ts uint64) *TsWithMutex {
-	return &TsWithMutex{
-		ts: ts,
-	}
-}
-
-func (r *TsWithMutex) Set(ts uint64) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	r.ts = ts
-}
-
-func (r *TsWithMutex) Get() uint64 {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	return r.ts
-}
-
 /*
 HeartBeatInfo is used to collect the message for HeartBeatRequest for each dispatcher.
 Mainly about the progress of each dispatcher:
@@ -209,11 +186,10 @@ Mainly about the progress of each dispatcher:
 */
 type HeartBeatInfo struct {
 	heartbeatpb.Watermark
-	EventSizePerSecond float32
-	Id                 common.DispatcherID
-	TableSpan          *heartbeatpb.TableSpan
-	ComponentStatus    heartbeatpb.ComponentState
-	IsRemoving         bool
+	Id              common.DispatcherID
+	TableSpan       *heartbeatpb.TableSpan
+	ComponentStatus heartbeatpb.ComponentState
+	IsRemoving      bool
 }
 
 // Resend Task is reponsible for resending the TableSpanBlockStatus message with ddl info to maintainer each 50ms.
@@ -221,14 +197,16 @@ type HeartBeatInfo struct {
 type ResendTask struct {
 	message    *heartbeatpb.TableSpanBlockStatus
 	dispatcher *Dispatcher
+	callback   func() // function need to be called when the task is cancelled
 	taskHandle *threadpool.TaskHandle
 }
 
-func newResendTask(message *heartbeatpb.TableSpanBlockStatus, dispatcher *Dispatcher) *ResendTask {
+func newResendTask(message *heartbeatpb.TableSpanBlockStatus, dispatcher *Dispatcher, callback func()) *ResendTask {
 	taskScheduler := GetDispatcherTaskScheduler()
 	t := &ResendTask{
 		message:    message,
 		dispatcher: dispatcher,
+		callback:   callback,
 	}
 	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(50*time.Millisecond))
 	return t
@@ -240,6 +218,9 @@ func (t *ResendTask) Execute() time.Time {
 }
 
 func (t *ResendTask) Cancel() {
+	if t.callback != nil {
+		t.callback()
+	}
 	t.taskHandle.Cancel()
 }
 

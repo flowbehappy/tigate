@@ -65,7 +65,7 @@ func (r *ColumnsPartitionGenerator) GeneratePartitionIndexAndKey(row *commonEven
 	}
 
 	for idx := 0; idx < len(r.Columns); idx++ {
-		colInfo := tableInfo.Columns[offsets[idx]]
+		colInfo := tableInfo.GetColumns()[offsets[idx]]
 		value, err := common.FormatColVal(&rowData, colInfo, idx)
 		if err != nil {
 			// FIXME:

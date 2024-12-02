@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/sink/codec/encoder"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
+	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -80,17 +81,18 @@ func NewKafkaDDLWorker(
 ) *KafkaDDLWorker {
 	ctx, cancel := context.WithCancel(ctx)
 	return &KafkaDDLWorker{
-		ctx:           ctx,
-		changeFeedID:  id,
-		protocol:      protocol,
-		encoder:       encoder,
-		producer:      producer,
-		eventRouter:   eventRouter,
-		topicManager:  topicManager,
-		statistics:    statistics,
-		partitionRule: getDDLDispatchRule(protocol),
-		cancel:        cancel,
-		errGroup:      errGroup,
+		ctx:              ctx,
+		changeFeedID:     id,
+		protocol:         protocol,
+		encoder:          encoder,
+		producer:         producer,
+		eventRouter:      eventRouter,
+		topicManager:     topicManager,
+		statistics:       statistics,
+		partitionRule:    getDDLDispatchRule(protocol),
+		checkpointTsChan: make(chan uint64, 16),
+		cancel:           cancel,
+		errGroup:         errGroup,
 	}
 }
 
@@ -109,33 +111,54 @@ func (w *KafkaDDLWorker) SetTableSchemaStore(tableSchemaStore *util.TableSchemaS
 }
 
 func (w *KafkaDDLWorker) WriteBlockEvent(event *event.DDLEvent) error {
-	message, err := w.encoder.EncodeDDLEvent(event)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	messages := make([]*ticommon.Message, 0)
+	topics := make([]string, 0)
 
-	topic := w.eventRouter.GetTopicForDDL(event)
-	partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if w.partitionRule == PartitionAll {
-		err = w.statistics.RecordDDLExecution(func() error {
-			return w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, message)
-		})
-		if err != nil {
-			return errors.Trace(err)
+	// Some ddl event may be multi-events, we need to split it into multiple messages.
+	// Such as rename table test.table1 to test.table10, test.table2 to test.table20
+	if event.IsMultiEvents() {
+		subEvents := event.GetSubEvents()
+		for _, subEvent := range subEvents {
+			message, err := w.encoder.EncodeDDLEvent(&subEvent)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			topic := w.eventRouter.GetTopicForDDL(&subEvent)
+			messages = append(messages, message)
+			topics = append(topics, topic)
 		}
 	} else {
-		err = w.statistics.RecordDDLExecution(func() error {
-			return w.producer.SyncSendMessage(w.ctx, topic, 0, message)
-		})
+		message, err := w.encoder.EncodeDDLEvent(event)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		topic := w.eventRouter.GetTopicForDDL(event)
+		messages = append(messages, message)
+		topics = append(topics, topic)
+	}
 
+	for i, message := range messages {
+		topic := topics[i]
+		partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if w.partitionRule == PartitionAll {
+			err = w.statistics.RecordDDLExecution(func() error {
+				return w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, message)
+			})
+		} else {
+			err = w.statistics.RecordDDLExecution(func() error {
+				return w.producer.SyncSendMessage(w.ctx, topic, 0, message)
+			})
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
+	// after flush all the ddl event, we call the callback function.
+	event.PostFlush()
 	return nil
 }
 
@@ -161,11 +184,14 @@ func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 			}
 			start := time.Now()
 
-			tableNames := w.tableSchemaStore.GetAllTableNames(ts)
 			msg, err := w.encoder.EncodeCheckpointEvent(ts)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if w.tableSchemaStore == nil {
+				log.Panic("tableSchemaStore is nil", zap.Any("changefeed", w.changeFeedID))
+			}
+			tableNames := w.tableSchemaStore.GetAllTableNames(ts)
 			// NOTICE: When there are no tables to replicate,
 			// we need to send checkpoint ts to the default topic.
 			// This will be compatible with the old behavior.
@@ -176,7 +202,7 @@ func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 					return errors.Trace(err)
 				}
 				log.Debug("Emit checkpointTs to default topic",
-					zap.String("topic", topic), zap.Uint64("checkpointTs", ts))
+					zap.String("topic", topic), zap.Uint64("checkpointTs", ts), zap.Any("partitionNum", partitionNum))
 				err = w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, msg)
 				if err != nil {
 					return errors.Trace(err)

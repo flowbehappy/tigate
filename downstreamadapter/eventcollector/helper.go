@@ -27,24 +27,22 @@ const (
 )
 
 type pathHasher struct {
-	streamCount int
 }
 
-func (h pathHasher) HashPath(path common.DispatcherID) int {
-	return int((common.GID)(path).FastHash() % (uint64)(h.streamCount))
+func (h pathHasher) HashPath(path common.DispatcherID) uint64 {
+	return (common.GID)(path).FastHash()
 }
 
 func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
-	option.InputBufferSize = 1000000 / streamCount
 	// Enable memory control for dispatcher events dynamic stream.
 	log.Info("New EventDynamicStream, memory control is enabled")
 	option.EnableMemoryControl = true
 	eventsHandler := &EventsHandler{
 		eventCollector: collector,
 	}
-	stream := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, eventsHandler, option)
+	stream := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, eventsHandler, option)
 	stream.Start()
 	return stream
 }
@@ -114,99 +112,32 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 		}
 	}
 
-	checkEventSeq := func(dispatcherEvent dispatcher.DispatcherEvent) bool {
-		if dispatcherEvent.GetType() != commonEvent.TypeDMLEvent &&
-			dispatcherEvent.GetType() != commonEvent.TypeDDLEvent &&
-			dispatcherEvent.GetType() != commonEvent.TypeHandshakeEvent {
-			return true
-		}
-		expectedSeq := stat.lastEventSeq.Add(1)
-		if dispatcherEvent.GetSeq() != expectedSeq {
-			log.Warn("Received an out-of-order event, reset the dispatcher",
-				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-				zap.Stringer("dispatcher", stat.target.GetId()),
-				zap.Uint64("receivedSeq", dispatcherEvent.GetSeq()),
-				zap.Uint64("expectedSeq", expectedSeq),
-				zap.Uint64("commitTs", dispatcherEvent.GetCommitTs()),
-				zap.Any("event", dispatcherEvent))
-			h.eventCollector.ResetDispatcherStat(stat)
-			return false
-		}
-		return true
-	}
-
 	// just check the first event type, because all event types should be same
 	switch events[0].GetType() {
 	// note: TypeDMLEvent and TypeResolvedEvent can be in the same batch, so we should handle them together.
 	case commonEvent.TypeDMLEvent,
 		commonEvent.TypeResolvedEvent:
-		if stat.waitHandshake.Load() {
-			log.Warn("Receive event before handshake event, ignore it",
-				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-				zap.Stringer("dispatcher", stat.target.GetId()),
-				zap.Any("event", events))
-			return false
-		}
 		validEventStart := 0
-		for _, dispatcherEvent := range events {
-			if !checkEventSeq(dispatcherEvent) {
-				return false
-			}
-			// commit ts should be in increasing order
-			if dispatcherEvent.GetCommitTs() <= stat.sendCommitTs.Load() {
-				log.Warn("Receive dml event before sendCommitTs, ignore it",
-					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-					zap.Stringer("dispatcher", stat.target.GetId()),
-					zap.Uint64("sendCommitTs", stat.sendCommitTs.Load()),
-					zap.Any("event", dispatcherEvent))
-				validEventStart += 1
+		for _, event := range events {
+			if stat.shouldIgnoreDataEvent(event, h.eventCollector) {
+				continue
 			}
 		}
-		stat.sendCommitTs.Store(events[len(events)-1].GetCommitTs())
 		return stat.target.HandleEvents(events[validEventStart:], func() { h.eventCollector.WakeDispatcher(stat.dispatcherID) })
 	case commonEvent.TypeDDLEvent,
 		commonEvent.TypeSyncPointEvent:
-		if stat.waitHandshake.Load() {
-			log.Warn("Receive event before handshake event, ignore it",
-				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-				zap.Stringer("dispatcher", stat.target.GetId()),
-				zap.Any("event", events))
-			return false
-		}
-		// there should be only one event
-		if events[0].GetCommitTs() <= stat.sendCommitTs.Load() {
-			log.Warn("Receive resolved event before sendCommitTs, ignore it",
-				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-				zap.Stringer("dispatcher", stat.target.GetId()),
-				zap.Uint64("sendCommitTs", stat.sendCommitTs.Load()),
-				zap.Any("event", events))
-			return false
-		}
-		if !checkEventSeq(events[0]) {
+		if stat.shouldIgnoreDataEvent(events[0], h.eventCollector) {
 			return false
 		}
 		return stat.target.HandleEvents(events, func() { h.eventCollector.WakeDispatcher(stat.dispatcherID) })
 	case commonEvent.TypeHandshakeEvent:
-		dispatcherEvent := events[0]
-		if !stat.isHandshakeEventValid(dispatcherEvent, h.eventCollector) {
-			return false
-		}
-		// for unexpected handshake, we must reset the event service with current send ts.
-		// because the table info in handshake event is stale, and we don't know the current table info.
-		// TODO: may be just ignore the table info is ok in this case?(the dispatcher can get table info from ddl event)
-		if !checkEventSeq(dispatcherEvent) {
-			return false
-		}
-		stat.lastEventSeq.Store(dispatcherEvent.GetSeq())
-		stat.waitHandshake.Store(false)
-		handshake := dispatcherEvent.Event.(*commonEvent.HandshakeEvent)
-		stat.target.SetInitialTableInfo(handshake.TableInfo)
+		stat.handleHandshakeEvent(events[0], h.eventCollector)
 		return false
 	case commonEvent.TypeReadyEvent:
 		stat.handleReadyEvent(events[0], h.eventCollector)
 		return false
 	case commonEvent.TypeNotReusableEvent:
-		stat.tryNextRemoteCandidate(h.eventCollector)
+		stat.handleNotReusableEvent(events[0], h.eventCollector)
 		return false
 	default:
 		log.Panic("unknown event type", zap.Int("type", int(events[0].GetType())))

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/logservice/schemastore"
-	"github.com/pingcap/ticdc/maintainer/checker"
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/maintainer/scheduler"
@@ -46,28 +45,23 @@ import (
 type Controller struct {
 	bootstrapped bool
 
-	spanScheduler      *scheduler.Scheduler
-	operatorController *operator.Controller
-	checkController    *checker.Controller
-	replicationDB      *replica.ReplicationDB
-	messageCenter      messaging.MessageCenter
-	nodeManager        *watcher.NodeManager
-	tsoClient          replica.TSOClient
+	schedulerController *scheduler.Controller
+	operatorController  *operator.Controller
+	replicationDB       *replica.ReplicationDB
+	messageCenter       messaging.MessageCenter
+	nodeManager         *watcher.NodeManager
+	tsoClient           replica.TSOClient
 
 	splitter               *split.Splitter
 	spanReplicationEnabled bool
 	startCheckpointTs      uint64
 	ddlDispatcherID        common.DispatcherID
 
-	cfConfig *config.ReplicaConfig
-
+	cfConfig     *config.ReplicaConfig
 	changefeedID common.ChangeFeedID
-	batchSize    int
 
-	taskScheduler            threadpool.ThreadPool
-	operatorControllerHandle *threadpool.TaskHandle
-	schedulerHandle          *threadpool.TaskHandle
-	checkerHandle            *threadpool.TaskHandle
+	taskScheduler threadpool.ThreadPool
+	taskHandlers  []*threadpool.TaskHandle
 }
 
 func NewController(changefeedID common.ChangeFeedID,
@@ -86,10 +80,8 @@ func NewController(changefeedID common.ChangeFeedID,
 	s := &Controller{
 		startCheckpointTs:  checkpointTs,
 		changefeedID:       changefeedID,
-		batchSize:          batchSize,
 		bootstrapped:       false,
 		ddlDispatcherID:    ddlSpan.ID,
-		spanScheduler:      scheduler.NewScheduler(changefeedID, batchSize, oc, replicaSetDB, nodeManager, balanceInterval),
 		operatorController: oc,
 		messageCenter:      mc,
 		replicationDB:      replicaSetDB,
@@ -102,7 +94,7 @@ func NewController(changefeedID common.ChangeFeedID,
 		s.splitter = split.NewSplitter(changefeedID, pdapi, regionCache, cfConfig.Scheduler)
 		s.spanReplicationEnabled = true
 	}
-	s.checkController = checker.NewController(changefeedID, s.splitter, oc, replicaSetDB, nodeManager)
+	s.schedulerController = scheduler.NewController(changefeedID, batchSize, oc, replicaSetDB, nodeManager, balanceInterval, s.splitter)
 	return s
 }
 
@@ -139,6 +131,7 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 			continue
 		}
 		stm.UpdateStatus(status)
+		c.schedulerController.UpdateStatus(stm, status)
 	}
 }
 
@@ -287,23 +280,20 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 	barrier := NewBarrier(c, c.cfConfig.Scheduler.EnableTableAcrossNodes)
 	barrier.HandleBootstrapResponse(cachedResp)
 
-	// start operator and scheduler
-	c.operatorControllerHandle = c.taskScheduler.Submit(c.spanScheduler, time.Now())
-	c.schedulerHandle = c.taskScheduler.Submit(c.operatorController, time.Now())
-	c.checkerHandle = c.taskScheduler.Submit(c.checkController, time.Now().Add(time.Second*120))
+	// start scheduler
+	for _, scheduler := range c.schedulerController.GetSchedulers() {
+		c.taskHandlers = append(c.taskHandlers, c.taskScheduler.Submit(scheduler, time.Now()))
+	}
+	// start operator controller
+	c.taskHandlers = append(c.taskHandlers, c.taskScheduler.Submit(c.operatorController, time.Now()))
+
 	c.bootstrapped = true
 	return barrier, nil
 }
 
 func (c *Controller) Stop() {
-	if c.operatorControllerHandle != nil {
-		c.operatorControllerHandle.Cancel()
-	}
-	if c.schedulerHandle != nil {
-		c.schedulerHandle.Cancel()
-	}
-	if c.checkerHandle != nil {
-		c.checkerHandle.Cancel()
+	for _, handler := range c.taskHandlers {
+		handler.Cancel()
 	}
 }
 

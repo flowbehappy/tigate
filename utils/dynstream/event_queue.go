@@ -80,9 +80,9 @@ type streamAreaInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] stru
 	// the pathCount could be larger than the length of the heaps.
 	pathCount int
 
-	timestampHeap *heap.Heap[*timestampPathNode[A, P, T, D, H]]
-	queueTimeHeap *heap.Heap[*queuePathNode[A, P, T, D, H]]
-	pathSizeHeap  *heap.Heap[*pathSizeStat[A, P, T, D, H]]
+	timestampHeap *heap.Heap[*timestampPathNode[A, P, T, D, H]] // The min heap for next timestamp.
+	queueTimeHeap *heap.Heap[*queuePathNode[A, P, T, D, H]]     // The min heap for longest queue time.
+	pathSizeHeap  *heap.Heap[*pathSizeStat[A, P, T, D, H]]      // The max heap for pending size.
 
 	queueTimeHeapIndex int
 }
@@ -176,12 +176,17 @@ func (q *eventQueue[A, P, T, D, H]) addPath(path *pathInfo[A, P, T, D, H]) {
 	path.queueTimeHeapIndex = 0
 	path.timestampHeapIndex = 0
 	path.sizeHeapIndex = 0
+	path.handledTSHeapIndex = 0
 
 	q.totalPendingLength.Add(int64(path.pendingQueue.Length()))
+
+	// q.updateHandledTSHeap(path)
 	q.updateHeapAfterUpdatePath(path)
 }
 
 func (q *eventQueue[A, P, T, D, H]) removePath(path *pathInfo[A, P, T, D, H]) {
+	// q.updateHandledTSHeap(path)
+
 	if area := path.streamAreaInfo; area != nil {
 		area.pathCount--
 
@@ -213,16 +218,16 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 
 	// Shortcut when memory control is disabled.
 	replaced := false
-	if event.eventType.Property == PeriodicSignal {
-		back, ok := path.pendingQueue.BackRef()
-		if ok && back.eventType.Property == PeriodicSignal {
-			// Replace the repeated signal.
-			// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
-			*back = event
-			replaced = true
-			q.updateHeapAfterUpdatePath(path)
-		}
-	}
+	// if event.eventType.Property == PeriodicSignal {
+	// 	back, ok := path.pendingQueue.BackRef()
+	// 	if ok && back.eventType.Property == PeriodicSignal {
+	// 		// Replace the repeated signal.
+	// 		// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
+	// 		*back = event
+	// 		replaced = true
+	// 		q.updateHeapAfterUpdatePath(path)
+	// 	}
+	// }
 	if !replaced {
 		path.pendingQueue.PushBack(event)
 		q.updateHeapAfterUpdatePath(path)
@@ -268,6 +273,7 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				log.Panic("firstEvent is nil, it should not happen")
 			}
 			firstGroup := firstEvent.eventType.DataGroup
+			firstProperty := firstEvent.eventType.Property
 			appendToBufAndUpdateState(firstEvent, path)
 			count := 1
 
@@ -287,6 +293,14 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 			}
 
 			q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(path))
+
+			if count != 1 && firstProperty == PeriodicSignal {
+				// If the first event is a periodic signal, we only need to return the latest event
+				buf[0] = buf[count-1]
+				buf = buf[:1]
+				return buf, path
+			}
+
 			return buf, path
 		}
 	}
@@ -299,3 +313,7 @@ func (q *eventQueue[A, P, T, D, H]) blockPath(path *pathInfo[A, P, T, D, H]) {
 func (q *eventQueue[A, P, T, D, H]) wakePath(path *pathInfo[A, P, T, D, H]) {
 	q.updateHeapAfterUpdatePath(path)
 }
+
+// func (q *eventQueue[A, P, T, D, H]) onHandledTS(path *pathInfo[A, P, T, D, H]) Timestamp {
+// 	return q.updateHandledTSHeap(path)
+// }

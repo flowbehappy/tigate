@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/maintainer/range_checker"
-	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/messaging"
@@ -30,16 +29,18 @@ import (
 // BarrierEvent is a barrier event that reported by dispatchers, note is a block multiple dispatchers
 // all of these dispatchers should report the same event
 type BarrierEvent struct {
-	cfID                     common.ChangeFeedID
-	commitTs                 uint64
-	controller               *Controller
-	selected                 bool
-	writerDispatcher         common.DispatcherID
-	writerDispatcherAdvanced bool
+	cfID        common.ChangeFeedID
+	commitTs    uint64
+	controller  *Controller
+	selected    bool
+	hasNewTable bool
+	// table trigger event dispatcher reported the block event, we should use it as the writer
+	tableTriggerDispatcherRelated bool
+	writerDispatcher              common.DispatcherID
+	writerDispatcherAdvanced      bool
 
 	blockedDispatchers *heartbeatpb.InfluencedTables
 	dropDispatchers    *heartbeatpb.InfluencedTables
-	blockedTasks       []*replica.SpanReplication
 	newTables          []*heartbeatpb.Table
 	schemaIDChange     []*heartbeatpb.SchemaIDChange
 	isSyncPoint        bool
@@ -49,6 +50,8 @@ type BarrierEvent struct {
 	// rangeChecker is used to check if all the dispatchers reported the block events
 	rangeChecker   range_checker.RangeChecker
 	lastResendTime time.Time
+
+	lastWarningLogTime time.Time
 }
 
 func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
@@ -56,6 +59,7 @@ func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
 	event := &BarrierEvent{
 		controller:          controller,
 		selected:            false,
+		hasNewTable:         len(status.NeedAddedTables) > 0,
 		cfID:                cfID,
 		commitTs:            status.BlockTs,
 		blockedDispatchers:  status.BlockTables,
@@ -65,6 +69,7 @@ func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
 		lastResendTime:      time.Time{},
 		isSyncPoint:         status.IsSyncPoint,
 		dynamicSplitEnabled: dynamicSplitEnabled,
+		lastWarningLogTime:  time.Now(),
 	}
 	if status.BlockTables != nil {
 		switch status.BlockTables.InfluenceType {
@@ -74,7 +79,6 @@ func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
 			} else {
 				event.rangeChecker = range_checker.NewTableCountChecker(len(status.BlockTables.TableIDs))
 			}
-			event.blockedTasks = controller.GetTasksByTableIDs(status.BlockTables.TableIDs...)
 		case heartbeatpb.InfluenceType_DB:
 			// add table trigger event dispatcher for InfluenceType_DB:
 			if dynamicSplitEnabled {
@@ -107,7 +111,8 @@ func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
 	log.Info("new block event is created",
 		zap.String("changefeedID", cfID.Name()),
 		zap.Uint64("block-ts", event.commitTs),
-		zap.Bool("sync-point", event.isSyncPoint))
+		zap.Bool("sync-point", event.isSyncPoint),
+		zap.Any("detail", status))
 	return event
 }
 
@@ -125,19 +130,15 @@ func (be *BarrierEvent) onAllDispatcherReportedBlockEvent(dispatchers []*heartbe
 			zap.Uint64("commitTs", be.commitTs))
 		dispatcher = be.controller.ddlDispatcherID
 	default:
-		// select the last one as the writer
-		// or the table trigger event dispatcher if it's one of the blocked dispatcher
-		tableTriggerEventDispatcherID := be.controller.ddlDispatcherID.ToPB()
 		selected := dispatchers[len(dispatchers)-1]
-		for _, blockedDispatcher := range dispatchers {
-			if blockedDispatcher == tableTriggerEventDispatcherID {
-				selected = blockedDispatcher
-				log.Info("use table trigger event as the writer dispatcher",
-					zap.String("changefeed", be.cfID.Name()),
-					zap.String("dispatcher", selected.String()),
-					zap.Uint64("commitTs", be.commitTs))
-				break
-			}
+		if be.tableTriggerDispatcherRelated {
+			// select the last one as the writer
+			// or the table trigger event dispatcher if it's one of the blocked dispatcher
+			selected = be.controller.ddlDispatcherID.ToPB()
+			log.Info("use table trigger event as the writer dispatcher",
+				zap.String("changefeed", be.cfID.Name()),
+				zap.String("dispatcher", selected.String()),
+				zap.Uint64("commitTs", be.commitTs))
 		}
 		dispatcher = common.NewDispatcherIDFromPB(selected)
 	}
@@ -244,8 +245,13 @@ func (be *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 		}
 	case heartbeatpb.InfluenceType_Normal:
 		// send pass action
-		for _, stm := range be.blockedTasks {
+		for _, stm := range be.controller.GetTasksByTableIDs(be.blockedDispatchers.TableIDs...) {
 			if stm == nil {
+				log.Warn("nil span replication, ignore",
+					zap.String("changefeed", be.cfID.Name()),
+					zap.Uint64("commitTs", be.commitTs),
+					zap.Bool("isSyncPoint", be.isSyncPoint),
+				)
 				continue
 			}
 			nodeID := stm.GetNodeID()
@@ -273,6 +279,23 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 	if time.Since(be.lastResendTime) < time.Second {
 		return nil
 	}
+	var msgs []*messaging.TargetMessage
+	defer func() {
+		if time.Since(be.lastWarningLogTime) > time.Second*10 {
+			log.Warn("barrier event is not resolved",
+				zap.String("changefeed", be.cfID.Name()),
+				zap.Uint64("commitTs", be.commitTs),
+				zap.Bool("isSyncPoint", be.isSyncPoint),
+				zap.Bool("selected", be.selected),
+				zap.Bool("writerDispatcherAdvanced", be.writerDispatcherAdvanced),
+				zap.String("coverage", be.rangeChecker.Detail()),
+				zap.Any("blocker", be.blockedDispatchers),
+				zap.Any("resend", msgs),
+			)
+			be.lastWarningLogTime = time.Now()
+		}
+	}()
+
 	// still waiting for all dispatcher to reach the block commit ts
 	if !be.selected {
 		return nil
@@ -283,13 +306,19 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 		//resend write action
 		stm := be.controller.GetTask(be.writerDispatcher)
 		if stm == nil || stm.GetNodeID() == "" {
+			log.Warn("writer dispatcher not found",
+				zap.String("changefeed", be.cfID.Name()),
+				zap.Uint64("commitTs", be.commitTs),
+				zap.Bool("isSyncPoint", be.isSyncPoint))
 			// todo: select a new writer
 			return nil
 		}
-		return []*messaging.TargetMessage{be.newWriterActionMessage(stm.GetNodeID())}
+		msgs = []*messaging.TargetMessage{be.newWriterActionMessage(stm.GetNodeID())}
+	} else {
+		// the writer dispatcher is advanced, resend pass action
+		msgs = be.sendPassAction()
 	}
-	// the writer dispatcher is advanced, resend pass action
-	return be.sendPassAction()
+	return msgs
 }
 
 func (be *BarrierEvent) newWriterActionMessage(capture node.ID) *messaging.TargetMessage {

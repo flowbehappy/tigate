@@ -82,7 +82,6 @@ func (s *EventTestHelper) ApplyJob(job *timodel.Job) {
 		job.SchemaID,
 		job.SchemaName,
 		job.BinlogInfo.TableInfo)
-	info.InitPreSQLs()
 	s.tableInfos[key] = info
 }
 
@@ -173,8 +172,8 @@ func (s *EventTestHelper) DML2Event(schema, table string, dml ...string) *DMLEve
 	tableInfo, ok := s.tableInfos[key]
 	require.True(s.t, ok)
 	did := common.NewDispatcherID()
-	ts := tableInfo.UpdateTS
-	dmlEvent := NewDMLEvent(did, tableInfo.ID, ts-1, ts+1, tableInfo)
+	ts := tableInfo.UpdateTS()
+	dmlEvent := NewDMLEvent(did, tableInfo.TableName.TableID, ts-1, ts+1, tableInfo)
 	rawKvs := s.DML2RawKv(schema, table, dml...)
 	for _, rawKV := range rawKvs {
 		err := dmlEvent.AppendRow(rawKV, s.mounter.DecodeToChunk)
@@ -186,11 +185,11 @@ func (s *EventTestHelper) DML2Event(schema, table string, dml ...string) *DMLEve
 func (s EventTestHelper) DML2RawKv(schema, table string, dml ...string) []*common.RawKVEntry {
 	tableInfo, ok := s.tableInfos[toTableInfosKey(schema, table)]
 	require.True(s.t, ok)
-	ts := tableInfo.UpdateTS
+	ts := tableInfo.UpdateTS()
 	var rawKVs []*common.RawKVEntry
 	for _, dml := range dml {
 		s.tk.MustExec(dml)
-		key, value := s.getLastKeyValue(tableInfo.ID)
+		key, value := s.getLastKeyValue(tableInfo.TableName.TableID)
 		rawKV := &common.RawKVEntry{
 			OpType:   common.OpTypePut,
 			Key:      key,

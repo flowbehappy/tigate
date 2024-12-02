@@ -15,6 +15,7 @@ package logpuller
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,6 +74,8 @@ var subscriptionIDGen atomic.Uint64
 // It is used as `RequestId` in region requests to remote store.
 type SubscriptionID uint64
 
+const InvalidSubscriptionID SubscriptionID = 0
+
 // regionFeedEvent from the kv layer.
 type regionFeedEvent struct {
 	// TODO: every resolve ts event may allocate a common.RawKVEntry, is it memory consuming?
@@ -130,7 +133,11 @@ type subscribedSpan struct {
 	tryResolveLock     func(regionID uint64, state *regionlock.LockedRangeState)
 	staleLocksTargetTs atomic.Uint64
 
+	advanceInterval int64
+
 	lastAdvanceTime atomic.Int64
+	// This is used to calculate the resolvedTs lag for metrics.
+	resolvedTs atomic.Uint64
 }
 
 type SubscriptionClientConfig struct {
@@ -811,11 +818,13 @@ func (s *SubscriptionClient) newSubscribedSpan(
 	rangeLock := regionlock.NewRangeLock(uint64(subID), span.StartKey, span.EndKey, startTs)
 
 	rt := &subscribedSpan{
-		subID:     subID,
-		span:      span,
-		startTs:   startTs,
-		rangeLock: rangeLock,
+		subID:           subID,
+		span:            span,
+		startTs:         startTs,
+		rangeLock:       rangeLock,
+		advanceInterval: int64(s.config.AdvanceResolvedTsIntervalInMs)/4*3 + int64(rand.Intn(int(s.config.AdvanceResolvedTsIntervalInMs)/4)),
 	}
+	rt.resolvedTs.Store(startTs)
 
 	rt.tryResolveLock = func(regionID uint64, state *regionlock.LockedRangeState) {
 		targetTs := rt.staleLocksTargetTs.Load()
@@ -829,6 +838,24 @@ func (s *SubscriptionClient) newSubscribedSpan(
 		}
 	}
 	return rt
+}
+
+func (s *SubscriptionClient) GetResolvedTsLag() float64 {
+	pullerMinResolvedTs := uint64(0)
+	s.totalSpans.RLock()
+	for _, rt := range s.totalSpans.spanMap {
+		resolvedTs := rt.resolvedTs.Load()
+		if pullerMinResolvedTs == 0 || resolvedTs < pullerMinResolvedTs {
+			pullerMinResolvedTs = resolvedTs
+		}
+	}
+	s.totalSpans.RUnlock()
+	if pullerMinResolvedTs == 0 {
+		return 0
+	}
+	phyResolvedTs := oracle.ExtractPhysical(pullerMinResolvedTs)
+	lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
+	return lag
 }
 
 func (r *subscribedSpan) resolveStaleLocks(targetTs uint64) {

@@ -221,7 +221,6 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 	}
 	appendTableInfo := func() {
 		info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.TableInfo)
-		info.InitPreSQLs()
 		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 	}
 
@@ -313,18 +312,30 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 		}
 	case model.ActionExchangeTablePartition:
 		assertNonEmpty(v.infos, event)
-		lastRawTableInfo := v.infos[len(v.infos)-1].info.TableInfo.Clone()
+		columnSchema := v.infos[len(v.infos)-1].info.ShadowCopyColumnSchema()
 		// the previous normal table
 		if v.tableID == event.PrevTableID {
-			lastRawTableInfo.Name = pmodel.NewCIStr(event.CurrentTableName)
-			info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, lastRawTableInfo)
-			info.InitPreSQLs()
-			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+			tableInfo := common.NewTableInfo(
+				event.CurrentSchemaID,
+				event.CurrentSchemaName,
+				pmodel.NewCIStr(event.CurrentTableName).O,
+				v.infos[len(v.infos)-1].info.TableName.TableID,
+				v.infos[len(v.infos)-1].info.TableName.IsPartition,
+				v.infos[len(v.infos)-1].info.Version,
+				columnSchema,
+			)
+			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: tableInfo})
 		} else {
-			lastRawTableInfo.Name = pmodel.NewCIStr(event.PrevTableName)
-			info := common.WrapTableInfo(event.PrevSchemaID, event.PrevSchemaName, lastRawTableInfo)
-			info.InitPreSQLs()
-			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+			tableInfo := common.NewTableInfo(
+				event.CurrentSchemaID,
+				event.CurrentSchemaName,
+				pmodel.NewCIStr(event.PrevTableName).O,
+				v.infos[len(v.infos)-1].info.TableName.TableID,
+				v.infos[len(v.infos)-1].info.TableName.IsPartition,
+				v.infos[len(v.infos)-1].info.Version,
+				columnSchema,
+			)
+			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: tableInfo})
 		}
 	case model.ActionCreateTables:
 		assertEmpty(v.infos, event)
@@ -333,7 +344,6 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 				for _, partitionID := range getAllPartitionIDs(tableInfo) {
 					if v.tableID == partitionID {
 						info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, tableInfo)
-						info.InitPreSQLs()
 						v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 						break
 					}
@@ -341,7 +351,6 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 			} else {
 				if v.tableID == tableInfo.ID {
 					info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, tableInfo)
-					info.InitPreSQLs()
 					v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 					break
 				}

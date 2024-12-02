@@ -14,6 +14,7 @@
 package metrics
 
 import (
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -21,7 +22,7 @@ func InitMetrics(registry *prometheus.Registry) {
 	InitServerMetrics(registry)
 	InitSchedulerMetrics(registry)
 	InitChangefeedMetrics(registry)
-	InitDisaptcherMetrics(registry)
+	InitDispatcherMetrics(registry)
 	InitMessagingMetrics(registry)
 	InitSinkMetrics(registry)
 	InitPullerMetrics(registry)
@@ -30,4 +31,7 @@ func InitMetrics(registry *prometheus.Registry) {
 	InitEventServiceMetrics(registry)
 	InitMaintainerMetrics(registry)
 	InitCoordinatorMetrics(registry)
+	InitLogPullerMetrics(registry)
+	common.InitCommonMetrics(registry)
+	InitDynamicStreamMetrics(registry)
 }

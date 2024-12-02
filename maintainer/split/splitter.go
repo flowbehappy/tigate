@@ -34,6 +34,9 @@ const (
 	// baseSpanNumberCoefficient is the base coefficient that use to
 	// multiply the number of captures to get the number of spans.
 	baseSpanNumberCoefficient = 3
+	// maxSpanNumber is the maximum number of spans that can be split
+	// in single batch.
+	maxSpanNumber = 100
 )
 
 // RegionCache is a simplified interface of tikv.RegionCache.

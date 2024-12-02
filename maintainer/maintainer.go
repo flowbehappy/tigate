@@ -42,12 +42,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// Maintainer is response for handle changefeed replication tasksMaintainer should:
-// 1. schedules tables to dispatcher manager
+// Maintainer is response for handle changefeed replication tasks. Maintainer should:
+// 1. schedule tables to dispatcher manager
 // 2. calculate changefeed checkpoint ts
 // 3. send changefeed status to coordinator
 // 4. handle heartbeat reported by dispatcher
-// there are four threads in maintainer:
+//
+// There are four threads in maintainer:
 // 1. controller thread , handled in dynstream, it handles the main logic of the maintainer, like barrier, heartbeat
 // 2. scheduler thread, handled in threadpool, it schedules the tables to dispatcher manager
 // 3. operator controller thread, handled in threadpool, it runs the operators
@@ -174,7 +175,8 @@ func NewMaintainer(cfID common.ChangeFeedID,
 		handleEventDuration:            metrics.MaintainerHandleEventDuration.WithLabelValues(cfID.Namespace(), cfID.Name()),
 	}
 	m.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse](m.id.Name(), m.getNewBootstrapFn())
-	log.Info("maintainer is created", zap.String("id", cfID.String()))
+	log.Info("maintainer is created", zap.String("id", cfID.String()),
+		zap.String("ddl dispatcher", tableTriggerEventDispatcherID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace(), cfID.Name()).Inc()
 	return m
 }
@@ -404,6 +406,9 @@ func (m *Maintainer) calCheckpointTs() {
 	if !m.controller.ScheduleFinished() {
 		return
 	}
+	if m.barrier.ShouldBlockCheckpointTs() {
+		return
+	}
 	newWatermark := heartbeatpb.NewMaxWatermark()
 	// if there is no tables, there must be a table trigger dispatcher
 	for id := range m.bootstrapper.GetAllNodes() {
@@ -462,7 +467,10 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 	}
 	req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
 	if req.Watermark != nil {
-		m.checkpointTsByCapture[msg.From] = *req.Watermark
+		old, ok := m.checkpointTsByCapture[msg.From]
+		if !ok || req.Watermark.Seq >= old.Seq {
+			m.checkpointTsByCapture[msg.From] = *req.Watermark
+		}
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
 	if req.Err != nil {
@@ -628,25 +636,25 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 			zap.Error(err))
 	}
 	return func(id node.ID) *messaging.TargetMessage {
+		log.Info("send maintainer bootstrap message",
+			zap.String("changefeed", m.id.String()),
+			zap.String("server", id.String()),
+		)
+		msg := &heartbeatpb.MaintainerBootstrapRequest{
+			ChangefeedID:                  m.id.ToPB(),
+			Config:                        cfgBytes,
+			StartTs:                       m.startCheckpointTs,
+			TableTriggerEventDispatcherId: nil,
+		}
+
 		// only send dispatcher id to dispatcher manager on the same node
 		if id == m.selfNode.ID {
 			log.Info("create table event trigger dispatcher", zap.String("changefeed", m.id.String()),
 				zap.String("server", id.String()),
 				zap.String("dispatcher id", m.tableTriggerEventDispatcherID.String()))
+			msg.TableTriggerEventDispatcherId = m.tableTriggerEventDispatcherID.ToPB()
 		}
-		log.Info("send maintainer bootstrap message",
-			zap.String("changefeed", m.id.String()),
-			zap.String("server", id.String()),
-		)
-		return messaging.NewSingleTargetMessage(
-			id,
-			messaging.DispatcherManagerManagerTopic,
-			&heartbeatpb.MaintainerBootstrapRequest{
-				ChangefeedID:                  m.id.ToPB(),
-				Config:                        cfgBytes,
-				StartTs:                       m.startCheckpointTs,
-				TableTriggerEventDispatcherId: m.tableTriggerEventDispatcherID.ToPB(),
-			})
+		return messaging.NewSingleTargetMessage(id, messaging.DispatcherManagerManagerTopic, msg)
 	}
 }
 

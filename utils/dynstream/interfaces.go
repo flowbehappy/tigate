@@ -159,28 +159,33 @@ type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] inter
 	// SetAreaSettings sets the settings of the area. An area uses the default settings if it is not set.
 	// This method can be called at any time. But to avoid the memory leak, setting on a area without existing paths is a no-op.
 	SetAreaSettings(area A, settings AreaSettings)
+
+	GetMetrics() Metrics
 }
 
 type PathHasher[P Path] interface {
-	HashPath(path P) int
+	HashPath(path P) uint64
 }
 
 const DefaultInputBufferSize = 1024
-const DefaultSchedulerInterval = 1 * time.Second
-const DefaultReportInterval = 500 * time.Millisecond
+const DefaultSchedulerInterval = 10 * time.Second
+const DefaultReportInterval = 10 * time.Second
 const DefaultMaxPendingSize = 128 * (1 << 20) // 128 MB
 const DefaultFeedbackInterval = 1000 * time.Millisecond
 
 type Option struct {
-	InputBufferSize int // The buffer size of the input channel. By default 0, means 1024.
+	InputChanSize int // The buffer size of the input channel. By default 0, means 1024.
 
 	SchedulerInterval time.Duration // The interval of the scheduler. The scheduler is used to balance the paths between streams.
 	ReportInterval    time.Duration // The interval of reporting the status of stream, the status is used by the scheduler.
 
 	StreamCount int // The count of streams. I.e. the count of goroutines to handle events. By default 0, means runtime.NumCPU().
 	BatchCount  int // The batch size of handling events. <= 1 means no batch. By default 1.
+	BatchBytes  int // The max bytes of the batch. <= 1 means no limit. By default 0.
 
 	EnableMemoryControl bool // Enable the memory control. By default false.
+
+	UseBuffer bool // Use buffers inside the dynamic stream. By default false.
 
 	handleWait *sync.WaitGroup // For testing. Don't handle events until this wait group is done.
 }
@@ -191,12 +196,13 @@ func NewOption() Option {
 		ReportInterval:    DefaultReportInterval,
 		StreamCount:       0,
 		BatchCount:        1,
+		UseBuffer:         false,
 	}
 }
 
 func (o *Option) fix() {
-	if o.InputBufferSize <= 0 {
-		o.InputBufferSize = DefaultInputBufferSize
+	if o.InputChanSize <= 0 {
+		o.InputChanSize = DefaultInputBufferSize
 	}
 	if o.StreamCount == 0 {
 		o.StreamCount = runtime.NumCPU()
@@ -253,4 +259,17 @@ func NewParallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T
 		opt = option[0]
 	}
 	return newParallelDynamicStream(streamCount, hasher, handler, opt)
+}
+
+type Metrics struct {
+	EventChanSize   int
+	PendingQueueLen int
+	AddPath         int
+	RemovePath      int
+
+	ArrangeStream struct {
+		CreateSolo int
+		RemoveSolo int
+		Shuffle    int
+	}
 }

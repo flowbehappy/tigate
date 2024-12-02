@@ -74,7 +74,7 @@ func NewDMLEvent(
 		PhysicalTableID:  tableID,
 		StartTs:          startTs,
 		CommitTs:         commitTs,
-		TableInfoVersion: tableInfo.UpdateTS,
+		TableInfoVersion: tableInfo.UpdateTS(),
 		TableInfo:        tableInfo,
 		Rows:             chk,
 		RowTypes:         make([]RowType, 0, 1),
@@ -137,6 +137,10 @@ func (t *DMLEvent) PushFrontFlushFunc(f func()) {
 	t.PostTxnFlushed = append([]func(){f}, t.PostTxnFlushed...)
 }
 
+func (d *DMLEvent) ClearPostFlushFunc() {
+	d.PostTxnFlushed = d.PostTxnFlushed[:0]
+}
+
 func (t *DMLEvent) AddPostFlushFunc(f func()) {
 	t.PostTxnFlushed = append(t.PostTxnFlushed, f)
 }
@@ -194,7 +198,9 @@ func (t *DMLEvent) Unmarshal(data []byte) error {
 
 // GetSize returns the size of the event in bytes, including all fields.
 func (t *DMLEvent) GetSize() int64 {
-	return t.eventSize
+	// Notice: events send from local channel will not have the size field.
+	// return t.eventSize
+	return t.GetRowsSize()
 }
 
 // GetRowsSize returns the approximate size of the rows in the transaction.
@@ -332,8 +338,8 @@ func (t *DMLEvent) AssembleRows(tableInfo *common.TableInfo) error {
 		log.Panic("DMLEvent: RawRows is empty")
 		return nil
 	}
-	if t.TableInfoVersion != tableInfo.UpdateTS {
-		log.Panic("DMLEvent: TableInfoVersion mismatch", zap.Uint64("dmlEventTableInfoVersion", t.TableInfoVersion), zap.Uint64("tableInfoVersion", tableInfo.UpdateTS))
+	if t.TableInfoVersion != tableInfo.UpdateTS() {
+		log.Panic("DMLEvent: TableInfoVersion mismatch", zap.Uint64("dmlEventTableInfoVersion", t.TableInfoVersion), zap.Uint64("tableInfoVersion", tableInfo.UpdateTS()))
 		return nil
 	}
 	decoder := chunk.NewCodec(tableInfo.GetFieldSlice())

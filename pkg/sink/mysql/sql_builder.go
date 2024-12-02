@@ -159,8 +159,8 @@ func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 }
 
 func getArgs(row *chunk.Row, tableInfo *common.TableInfo) ([]interface{}, error) {
-	args := make([]interface{}, 0, len(tableInfo.Columns))
-	for i, col := range tableInfo.Columns {
+	args := make([]interface{}, 0, len(tableInfo.GetColumns()))
+	for i, col := range tableInfo.GetColumns() {
 		if col == nil || tableInfo.GetColumnFlags()[col.ID].IsGeneratedColumn() {
 			continue
 		}
@@ -175,10 +175,10 @@ func getArgs(row *chunk.Row, tableInfo *common.TableInfo) ([]interface{}, error)
 
 // whereSlice returns the column names and values for the WHERE clause
 func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interface{}, error) {
-	args := make([]interface{}, 0, len(tableInfo.Columns))
-	colNames := make([]string, 0, len(tableInfo.Columns))
+	args := make([]interface{}, 0, len(tableInfo.GetColumns()))
+	colNames := make([]string, 0, len(tableInfo.GetColumns()))
 	// Try to use unique key values when available
-	for i, col := range tableInfo.Columns {
+	for i, col := range tableInfo.GetColumns() {
 		if col == nil || !tableInfo.GetColumnFlags()[col.ID].IsHandleKey() {
 			continue
 		}
@@ -192,7 +192,7 @@ func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interf
 
 	// if no explicit row id but force replicate, use all key-values in where condition
 	if len(colNames) == 0 {
-		for i, col := range tableInfo.Columns {
+		for i, col := range tableInfo.GetColumns() {
 			colNames = append(colNames, col.Name.O)
 			v, err := common.FormatColVal(row, col, i)
 			if err != nil {

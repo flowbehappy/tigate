@@ -1,6 +1,7 @@
 package event
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"strings"
 
@@ -30,7 +31,7 @@ type DDLEvent struct {
 	PrevSchemaName string            `json:"prev_schema_name"`
 	PrevTableName  string            `json:"prev_table_name"`
 	Query          string            `json:"query"`
-	TableInfo      *common.TableInfo `json:"table_info"`
+	TableInfo      *common.TableInfo `json:"-"`
 	FinishedTs     uint64            `json:"finished_ts"`
 	// The seq of the event. It is set by event service.
 	Seq uint64 `json:"seq"`
@@ -138,6 +139,7 @@ func (d *DDLEvent) GetSubEvents() []DDLEvent {
 		}
 	case model.ActionCreateTables:
 		events := make([]DDLEvent, 0, len(d.TableNameChange.AddName))
+		// TODO: don't use ; to split query, please use parser
 		querys := strings.Split(d.Query, ";")
 		if len(querys) != len(d.TableNameChange.AddName) {
 			log.Panic("querys length should be equal to addName length", zap.String("query", d.Query), zap.Any("addName", d.TableNameChange.AddName))
@@ -160,6 +162,10 @@ func (d *DDLEvent) GetSubEvents() []DDLEvent {
 
 func (d *DDLEvent) GetSeq() uint64 {
 	return d.Seq
+}
+
+func (d *DDLEvent) ClearPostFlushFunc() {
+	d.PostTxnFlushed = d.PostTxnFlushed[:0]
 }
 
 func (d *DDLEvent) AddPostFlushFunc(f func()) {
@@ -206,24 +212,58 @@ func (e *DDLEvent) GetDDLType() model.ActionType {
 }
 
 func (t DDLEvent) Marshal() ([]byte, error) {
+	// restData | dispatcherIDData | dispatcherIDDataSize | tableInfoData | tableInfoDataSize
 	data, err := json.Marshal(t)
 	if err != nil {
 		return nil, err
 	}
 	dispatcherIDData := t.DispatcherID.Marshal()
+	dispatcherIDDataSize := make([]byte, 8)
+	binary.BigEndian.PutUint64(dispatcherIDDataSize, uint64(len(dispatcherIDData)))
 	data = append(data, dispatcherIDData...)
+	data = append(data, dispatcherIDDataSize...)
 
+	if t.TableInfo != nil {
+		tableInfoData, err := json.Marshal(t.TableInfo)
+		if err != nil {
+			return nil, err
+		}
+		tableInfoDataSize := make([]byte, 8)
+		binary.BigEndian.PutUint64(tableInfoDataSize, uint64(len(tableInfoData)))
+		data = append(data, tableInfoData...)
+		data = append(data, tableInfoDataSize...)
+	} else {
+		tableInfoDataSize := make([]byte, 8)
+		binary.BigEndian.PutUint64(tableInfoDataSize, 0)
+		data = append(data, tableInfoDataSize...)
+	}
 	return data, nil
 }
 
 func (t *DDLEvent) Unmarshal(data []byte) error {
+	// restData | dispatcherIDData | dispatcherIDDataSize | tableInfoData | tableInfoDataSize
 	t.eventSize = int64(len(data))
-	dispatcherIDData := data[len(data)-16:]
-	err := t.DispatcherID.Unmarshal(dispatcherIDData)
+	tableInfoDataSize := binary.BigEndian.Uint64(data[len(data)-8:])
+	var err error
+	end := len(data) - 8 - int(tableInfoDataSize)
+	if tableInfoDataSize > 0 {
+		tableInfoData := data[len(data)-8-int(tableInfoDataSize) : len(data)-8]
+		t.TableInfo, err = common.UnmarshalJSONToTableInfo(tableInfoData)
+		if err != nil {
+			return err
+		}
+	}
+	dispatcherIDDatSize := binary.BigEndian.Uint64(data[end-8 : end])
+	dispatcherIDData := data[end-8-int(dispatcherIDDatSize) : end-8]
+	err = t.DispatcherID.Unmarshal(dispatcherIDData)
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data[:len(data)-16], t)
+	err = json.Unmarshal(data[:end-8-int(dispatcherIDDatSize)], t)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (t *DDLEvent) GetSize() int64 {

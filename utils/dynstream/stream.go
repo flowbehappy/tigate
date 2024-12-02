@@ -14,6 +14,8 @@ import (
 
 var nextReportRound = atomic.Int64{}
 
+const BlockLenInPendingQueue = 32
+
 // ====== internal types ======
 
 type pathStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
@@ -72,6 +74,7 @@ type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	timestampHeapIndex int
 	queueTimeHeapIndex int
 	sizeHeapIndex      int
+	handledTSHeapIndex int
 
 	// Those values below are used to compare in the heap.
 	frontTimestamp Timestamp // The timestamp of the front event.
@@ -83,6 +86,8 @@ type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	paused               bool // The path is paused to send events.
 	lastSwitchPausedTime time.Time
 	lastSendFeedbackTime time.Time
+
+	// lastHandledTS Timestamp
 }
 
 func newPathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](area A, path P, dest D) *pathInfo[A, P, T, D, H] {
@@ -90,10 +95,18 @@ func newPathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](area A,
 		area:         area,
 		path:         path,
 		dest:         dest,
-		pendingQueue: deque.NewDeque[eventWrap[A, P, T, D, H]](32, 0),
+		pendingQueue: deque.NewDeque[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 0 /*unlimited*/),
 		pathStat:     &pathStat[A, P, T, D, H]{},
 	}
 	return pi
+}
+
+func (pi *pathInfo[A, P, T, D, H]) setStream(stream *stream[A, P, T, D, H]) {
+	pi.stream = stream
+}
+
+func (pi *pathInfo[A, P, T, D, H]) setEventBlockAllocator(eventBlockAllocator *deque.BlockAllocator[eventWrap[A, P, T, D, H]]) {
+	pi.pendingQueue.SetBlockAllocator(eventBlockAllocator)
 }
 
 func (pi *pathInfo[A, P, T, D, H]) resetStat() {
@@ -120,6 +133,10 @@ func (s streamStat[A, P, T, D, H]) getMostBusyPaths() []*pathStat[A, P, T, D, H]
 		return nil
 	}
 	return s.mostBusyPath.All()
+}
+
+func (s streamStat[A, P, T, D, H]) isValid() bool {
+	return s.count != 0
 }
 
 // Try to add the path to the busy heap.
@@ -162,9 +179,18 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	handler Handler[A, P, T, D]
 
-	inChan     chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
-	eventQueue eventQueue[A, P, T, D, H]     // The queue to store the pending events.
-	doneChan   chan doneInfo[A, P, T, D, H]  // The channel to receive the done events.
+	eventBlockAllocator *deque.BlockAllocator[eventWrap[A, P, T, D, H]] // The allocator for blocks to store eventWraps in the pendingQueue.
+
+	// The fields when UseBuffer is true.
+	bufferCount atomic.Int64
+	inChan      chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
+	outChan     chan eventWrap[A, P, T, D, H] // The buffer channel to send the events.
+
+	// The channel used by the handleLoop to receive the events.
+	eventChan chan eventWrap[A, P, T, D, H]
+
+	eventQueue eventQueue[A, P, T, D, H]    // The queue to store the pending events.
+	doneChan   chan doneInfo[A, P, T, D, H] // The channel to receive the done events.
 
 	reportNow chan struct{} // For test, make the reportStatLoop to report immediately.
 
@@ -176,6 +202,8 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	handleWg sync.WaitGroup
 	reportWg sync.WaitGroup
+
+	startTime time.Time
 }
 
 func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
@@ -188,19 +216,42 @@ func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 	s := &stream[A, P, T, D, H]{
 		id:                  id,
 		handler:             handler,
-		inChan:              make(chan eventWrap[A, P, T, D, H], 64),
 		eventQueue:          newEventQueue(option, handler),
 		doneChan:            make(chan doneInfo[A, P, T, D, H], 64),
 		reportNow:           make(chan struct{}, 1),
 		reportChan:          reportChan,
 		maxBusyPathsToTrack: maxBusyPathsToTrack,
 		option:              option,
+		startTime:           time.Now(),
 	}
+	if option.UseBuffer {
+		s.inChan = make(chan eventWrap[A, P, T, D, H], 64)
+		s.outChan = make(chan eventWrap[A, P, T, D, H], 64)
+
+		s.eventChan = s.outChan
+	} else {
+		s.eventChan = make(chan eventWrap[A, P, T, D, H], 64)
+	}
+	a := deque.NewBlockAllocator[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 64)
+	s.eventBlockAllocator = &a
 	return s
 }
 
+func (s *stream[A, P, T, D, H]) getPendingSize() int {
+	if s.option.UseBuffer {
+		return len(s.inChan) + int(s.bufferCount.Load()) + len(s.outChan) + int(s.eventQueue.totalPendingLength.Load())
+	} else {
+		return len(s.eventChan) + int(s.eventQueue.totalPendingLength.Load())
+	}
+}
+
 func (s *stream[A, P, T, D, H]) in() chan eventWrap[A, P, T, D, H] {
-	return s.inChan
+	if s.option.UseBuffer {
+		return s.inChan
+	} else {
+		return s.eventChan
+	}
+
 }
 
 // Start the stream.
@@ -208,9 +259,16 @@ func (s *stream[A, P, T, D, H]) start(acceptedPaths []*pathInfo[A, P, T, D, H], 
 	if s.isClosed.Load() {
 		panic("The stream has been closed.")
 	}
+	if s.option.UseBuffer {
+		go s.reciever()
+	}
 
 	s.handleWg.Add(1)
-	go s.handleLoop(acceptedPaths, formerStreams)
+	if s.option.UseBuffer {
+		go s.handleLoop(acceptedPaths, formerStreams)
+	} else {
+		go s.handleLoop(acceptedPaths, formerStreams)
+	}
 
 	s.reportWg.Add(1)
 	go s.reportStatLoop()
@@ -220,10 +278,55 @@ func (s *stream[A, P, T, D, H]) start(acceptedPaths []*pathInfo[A, P, T, D, H], 
 // wait is by default true, which means to wait for the goroutines to exit.
 func (s *stream[A, P, T, D, H]) close(wait ...bool) {
 	if s.isClosed.CompareAndSwap(false, true) {
-		close(s.inChan)
+		if s.option.UseBuffer {
+			close(s.inChan)
+		} else {
+			close(s.eventChan)
+		}
 	}
 	if len(wait) == 0 || wait[0] {
 		s.handleWg.Wait()
+	}
+}
+
+func (s *stream[A, P, T, D, H]) reciever() {
+	buffer := deque.NewDeque[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 0 /*unlimited*/)
+	defer func() {
+		// Move all remaining events in the buffer to the outChan.
+		for {
+			event, ok := buffer.FrontRef()
+			if !ok {
+				break
+			} else {
+				s.outChan <- *event
+				buffer.PopFront()
+				s.bufferCount.Add(-1)
+			}
+		}
+		close(s.outChan)
+	}()
+	for {
+		event, ok := buffer.FrontRef()
+		if !ok {
+			e, ok := <-s.inChan
+			if !ok {
+				return
+			}
+			buffer.PushBack(e)
+			s.bufferCount.Add(1)
+		} else {
+			select {
+			case e, ok := <-s.inChan:
+				if !ok {
+					return
+				}
+				buffer.PushBack(e)
+				s.bufferCount.Add(1)
+			case s.outChan <- *event:
+				buffer.PopFront()
+				s.bufferCount.Add(-1)
+			}
+		}
 	}
 }
 
@@ -247,8 +350,8 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 		}
 		close(s.doneChan)
 
-		// Move remaining events in the inChan to pendingQueue.
-		for e := range s.inChan {
+		// Move remaining events in the eventChan to pendingQueue.
+		for e := range s.eventChan {
 			pushToPendingQueue(e)
 		}
 
@@ -266,6 +369,7 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 	// We initialize the pathMap here to avoid blocking the main goroutine.
 	// As there could be many paths, and the initialization could be time-consuming.
 	for _, p := range acceptedPaths {
+		p.setEventBlockAllocator(s.eventBlockAllocator)
 		s.eventQueue.addPath(p)
 	}
 
@@ -282,6 +386,8 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 			eventBuf = eventBuf[:0]
 		}
 		path *pathInfo[A, P, T, D, H]
+		// property Property
+		// lastTS   Timestamp
 	)
 
 	// For testing. Don't handle events until this wait group is done.
@@ -289,12 +395,12 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 		s.option.handleWait.Wait()
 	}
 
-	// 1. Drain the inChan to pendingQueue.
+	// 1. Drain the eventChan to pendingQueue.
 	// 2. Pop events from the eventQueue and handle them.
 Loop:
 	for {
 		if eventQueueEmpty {
-			e, ok := <-s.inChan
+			e, ok := <-s.eventChan
 			if !ok {
 				// The stream is closed.
 				return
@@ -303,7 +409,7 @@ Loop:
 			eventQueueEmpty = false
 		} else {
 			select {
-			case e, ok := <-s.inChan:
+			case e, ok := <-s.eventChan:
 				if !ok {
 					return
 				}
@@ -315,9 +421,9 @@ Loop:
 					eventQueueEmpty = true
 					continue Loop
 				}
-				now := time.Now()
+				beginTime := time.Now()
 				path.blocking = s.handler.Handle(path.dest, eventBuf...)
-				s.doneChan <- doneInfo[A, P, T, D, H]{pathInfo: path, handleTime: time.Since(now)}
+				s.doneChan <- doneInfo[A, P, T, D, H]{pathInfo: path, handleTime: time.Since(beginTime)}
 
 				if path.blocking {
 					s.eventQueue.blockPath(path)

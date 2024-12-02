@@ -140,7 +140,7 @@ func encodeDDLEvent(e *commonEvent.DDLEvent, config *newcommon.Config) ([]byte, 
 	keyOutput.Write(key)
 
 	valueOutput := new(bytes.Buffer)
-	valueOutput.Write(versionByte[:])
+	valueOutput.Write(valueLenByte[:])
 	valueOutput.Write(value)
 
 	return keyOutput.Bytes(), valueOutput.Bytes(), nil
@@ -284,7 +284,7 @@ func writeColumnFieldValues(
 ) error {
 	flag := false // flag to check if any column is written
 
-	colInfo := tableInfo.Columns
+	colInfo := tableInfo.GetColumns()
 
 	for idx, col := range colInfo {
 		if selector.Select(col) {
@@ -314,7 +314,7 @@ func writeUpdatedColumnFieldValues(
 ) {
 	// we don't need check here whether after column selector there still exists handle key column
 	// because writeUpdatedColumnFieldValues only can be called after successfully dealing with one row event
-	colInfo := tableInfo.Columns
+	colInfo := tableInfo.GetColumns()
 
 	for idx, col := range colInfo {
 		if selector.Select(col) {

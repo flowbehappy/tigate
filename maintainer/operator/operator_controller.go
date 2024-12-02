@@ -34,13 +34,13 @@ import (
 // And the Controller is responsible for the execution of the operator.
 type Controller struct {
 	changefeedID  common.ChangeFeedID
-	replicationDB *replica.ReplicationDB
-	operators     map[common.DispatcherID]*operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus]
-	runningQueue  operator.OperatorQueue[common.DispatcherID, *heartbeatpb.TableSpanStatus]
 	batchSize     int
 	messageCenter messaging.MessageCenter
+	replicationDB *replica.ReplicationDB
 
-	lock sync.RWMutex
+	lock         sync.RWMutex // protect the following fields
+	operators    map[common.DispatcherID]*operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus]
+	runningQueue operator.OperatorQueue[common.DispatcherID, *heartbeatpb.TableSpanStatus]
 }
 
 func NewOperatorController(changefeedID common.ChangeFeedID,
@@ -71,6 +71,7 @@ func (oc *Controller) Execute() time.Time {
 			continue
 		}
 
+		// is the lock necessary?
 		oc.lock.RLock()
 		msg := r.Schedule()
 		oc.lock.RUnlock()

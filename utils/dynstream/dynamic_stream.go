@@ -11,12 +11,13 @@ import (
 
 	. "github.com/pingcap/ticdc/pkg/apperror"
 	. "github.com/pingcap/ticdc/utils"
+	"github.com/pingcap/ticdc/utils/deque"
 )
 
 const TrackTopPaths = 16
-const BusyStreamRatio = 0.3
-const BusyPathRatio = 0.1
-const IdlePathRatio = 0.02
+const BusyStreamRatio = 0.5
+const BusyPathRatio = 0.25
+const IdlePathRatio = 0.05
 
 type cmdType int
 
@@ -56,6 +57,7 @@ type removePathCmd[P Path] struct {
 }
 
 type arrangeStreamCmd[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
+	ruleType   ruleType
 	oldStreams []*stream[A, P, T, D, H]
 
 	newStreams     []*stream[A, P, T, D, H]
@@ -75,30 +77,38 @@ type streamInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	pathMap    map[*pathInfo[A, P, T, D, H]]struct{}
 }
 
-func (si *streamInfo[A, P, T, D, H]) runtime() time.Duration {
-	return si.streamStat.processingTime
+func (si *streamInfo[A, P, T, D, H]) runtime() (time.Duration, bool) {
+	if !si.streamStat.isValid() {
+		return 0, false
+	}
+	return si.streamStat.processingTime, true
 }
 
-func (si *streamInfo[A, P, T, D, H]) busyRatio(period time.Duration) float64 {
-	if si.streamStat.processingTime == 0 {
-		return 0
+func (si *streamInfo[A, P, T, D, H]) busyRatio(period time.Duration) (float64, bool) {
+	if !si.streamStat.isValid() || si.streamStat.processingTime == 0 {
+		return 0, false
 	}
 	if period != 0 {
-		return float64(si.streamStat.processingTime) / float64(period)
+		return float64(si.streamStat.processingTime) / float64(period), true
 	}
-	return float64(si.streamStat.processingTime) / float64(si.streamStat.elapsedTime)
+	return float64(si.streamStat.processingTime) / float64(si.streamStat.elapsedTime), true
 }
 
-func (si *streamInfo[A, P, T, D, H]) period() time.Duration {
-	return si.streamStat.elapsedTime
+func (si *streamInfo[A, P, T, D, H]) period() (time.Duration, bool) {
+	if !si.streamStat.isValid() {
+		return 0, false
+	}
+	return si.streamStat.elapsedTime, true
 }
 
 type sortedSIs[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] []*streamInfo[A, P, T, D, H]
 
 // implement sort.Interface
-func (s sortedSIs[A, P, T, D, H]) Len() int           { return len(s) }
-func (s sortedSIs[A, P, T, D, H]) Less(i, j int) bool { return s[i].runtime() < s[j].runtime() }
-func (s sortedSIs[A, P, T, D, H]) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s sortedSIs[A, P, T, D, H]) Len() int { return len(s) }
+func (s sortedSIs[A, P, T, D, H]) Less(i, j int) bool {
+	return s[i].streamStat.processingTime < s[j].streamStat.processingTime
+}
+func (s sortedSIs[A, P, T, D, H]) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 // This is the implementation of the DynamicStream interface.
 // We use two goroutines
@@ -118,8 +128,22 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	memControl *memControl[A, P, T, D, H]
 
-	eventChan    chan T                 // The channel to receive the incoming events by distributor
-	wakeChan     chan P                 // The channel to receive the wake signal by distributor
+	// Fields if UseBuffer is true
+	// inChan -> buffer -> outChan(eventChan) ->  streams
+	//        ^ receiver                      ^ distributor
+	bufferCount atomic.Int64
+	inChan      chan T // The channel to receive the incoming events by receiver
+	outChan     chan T // The channel to send the events to the streams by distributor
+
+	wakeBufferCount atomic.Int64
+	wakeInChan      chan P // The channel to receive the wake signal by receiver
+	wakeOutChan     chan P // The channel to send the wake signal to the streams by distributor
+
+	// The channel used to receive and send the events by the distributor
+	// It is the same as the outChan if UseBuffer is true
+	eventChan chan T
+	wakeChan  chan P
+
 	feedbackChan chan Feedback[A, P, D] // The channel to report the feedback to outside listener
 
 	reportChan chan streamStat[A, P, T, D, H] // The channel to receive the report by scheduler
@@ -137,6 +161,15 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	eventExtraSize int
 	startTime      time.Time
+
+	_statAllStreamPendingLen atomic.Int64
+	_statAddPathCount        atomic.Uint64
+	_statRemovePathCount     atomic.Uint64
+	_statArrangeStreamCount  struct {
+		createSolo atomic.Uint64
+		removeSolo atomic.Uint64
+		shuffle    atomic.Uint64
+	}
 }
 
 func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
@@ -167,9 +200,6 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		trackTopPaths:   TrackTopPaths,
 		baseStreamCount: option.StreamCount,
 
-		eventChan: make(chan T, option.InputBufferSize),
-		wakeChan:  make(chan P, 1024),
-
 		reportChan: make(chan streamStat[A, P, T, D, H], 64),
 		cmdToSched: make(chan *command, 64),
 		cmdToDist:  make(chan *command, option.StreamCount),
@@ -177,6 +207,18 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		streamInfos:    make([]*streamInfo[A, P, T, D, H], 0, option.StreamCount),
 		eventExtraSize: eventExtraSize,
 		startTime:      time.Now(),
+	}
+	if option.UseBuffer {
+		ds.inChan = make(chan T, option.InputChanSize)
+		ds.outChan = make(chan T, 64)
+		ds.wakeInChan = make(chan P, 64)
+		ds.wakeOutChan = make(chan P, 64)
+
+		ds.eventChan = ds.outChan
+		ds.wakeChan = ds.wakeOutChan
+	} else {
+		ds.eventChan = make(chan T, option.InputChanSize)
+		ds.wakeChan = make(chan P, 64)
 	}
 	if option.EnableMemoryControl {
 		if len(feedbackChan) == 0 {
@@ -190,11 +232,19 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) In(path ...P) chan<- T {
-	return d.eventChan
+	if d.option.UseBuffer {
+		return d.inChan
+	} else {
+		return d.eventChan
+	}
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Wake(path ...P) chan<- P {
-	return d.wakeChan
+	if d.option.UseBuffer {
+		return d.wakeInChan
+	} else {
+		return d.wakeChan
+	}
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
@@ -202,6 +252,11 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
+	if d.option.UseBuffer {
+		go receiver(d.inChan, d.outChan, &d.bufferCount)
+		go receiver(d.wakeInChan, d.wakeOutChan, &d.wakeBufferCount)
+	}
+
 	d.schedWg.Add(1)
 	go d.scheduler()
 	d.distWg.Add(1)
@@ -210,6 +265,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Close() {
 	if d.hasClosed.CompareAndSwap(false, true) {
+		if d.option.UseBuffer {
+			close(d.inChan)
+			close(d.wakeInChan)
+		} else {
+			close(d.eventChan)
+			close(d.wakeChan)
+		}
 		close(d.cmdToSched)
 		if d.feedbackChan != nil {
 			close(d.feedbackChan)
@@ -265,6 +327,29 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings Area
 	if d.memControl != nil {
 		d.memControl.setAreaSettings(area, settings)
 	}
+}
+
+func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
+	m := Metrics{
+		PendingQueueLen: int(d._statAllStreamPendingLen.Load()),
+		AddPath:         int(d._statAddPathCount.Load()),
+		RemovePath:      int(d._statRemovePathCount.Load()),
+		ArrangeStream: struct {
+			CreateSolo int
+			RemoveSolo int
+			Shuffle    int
+		}{
+			CreateSolo: int(d._statArrangeStreamCount.createSolo.Load()),
+			RemoveSolo: int(d._statArrangeStreamCount.removeSolo.Load()),
+			Shuffle:    int(d._statArrangeStreamCount.shuffle.Load()),
+		},
+	}
+	if d.option.UseBuffer {
+		m.EventChanSize = int(d.bufferCount.Load()) + len(d.inChan) + len(d.outChan)
+	} else {
+		m.EventChanSize = len(d.eventChan)
+	}
+	return m
 }
 
 // Make the scheduler to balance immediately. Only used for test.
@@ -361,11 +446,15 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 
 			for i := 0; i < d.baseStreamCount; i++ {
 				si := d.streamInfos[i]
-				period := si.period()
+				period, ok := si.period()
+				if !ok {
+					newStreamInfos = append(newStreamInfos, si)
+					continue
+				}
 				if testPeriod != 0 {
 					period = testPeriod
 				}
-				if si.busyRatio(period) < BusyStreamRatio {
+				if ratio, ok := si.busyRatio(period); !ok || ratio < BusyStreamRatio {
 					newStreamInfos = append(newStreamInfos, si)
 					continue
 				}
@@ -404,6 +493,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 					newStreamPaths = append(newStreamPaths, SetToSlice(newCurrentStreamInfo.pathMap))
 
 					arranges = append(arranges, &arrangeStreamCmd[A, P, T, D, H]{
+						ruleType:       createSoloPath,
 						oldStreams:     []*stream[A, P, T, D, H]{si.stream},
 						newStreams:     newStreams,
 						newStreamPaths: newStreamPaths,
@@ -446,7 +536,8 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 					// The solo stream is empty, we should remove it
 					idleSoloStreams = append(idleSoloStreams, si.stream)
 					idleSoloStreamInfos = append(idleSoloStreamInfos, si)
-				} else if si.busyRatio(testPeriod) < IdlePathRatio {
+				} else if ratio, ok := si.busyRatio(testPeriod); ok && ratio < IdlePathRatio {
+					// The solo stream is idle, we shoudl merge it
 					if len(si.pathMap) != 1 {
 						panic("The solo stream should have only one path")
 					}
@@ -480,6 +571,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				oldStreams = append(oldStreams, mostIdleStream.stream)
 
 				arrange := &arrangeStreamCmd[A, P, T, D, H]{
+					ruleType:       removeSoloPath,
 					oldStreams:     oldStreams,
 					newStreams:     []*stream[A, P, T, D, H]{newStream},
 					newStreamPaths: [][]*pathInfo[A, P, T, D, H]{newPaths},
@@ -515,8 +607,11 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				leastBusy := baseStreamInfos[i]
 				mostBusy := baseStreamInfos[d.baseStreamCount-1-i]
 
-				if mostBusy.busyRatio(testPeriod) < BusyStreamRatio ||
-					mostBusy.busyRatio(testPeriod) < leastBusy.busyRatio(testPeriod)*2 ||
+				ratio1, ok1 := mostBusy.busyRatio(testPeriod)
+				ratio2, ok2 := leastBusy.busyRatio(testPeriod)
+				if (!ok1 || !ok2) ||
+					ratio1 < BusyStreamRatio ||
+					ratio1 < ratio2*2 ||
 					len(mostBusy.pathMap) == 1 {
 					newStreamInfos = append(newStreamInfos, leastBusy, mostBusy)
 					continue
@@ -598,6 +693,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				// Instead, we put the paths to streamXPaths and send it.
 				// Because pathMap will be changed later.
 				arranges = append(arranges, &arrangeStreamCmd[A, P, T, D, H]{
+					ruleType:       shuffleStreams,
 					oldStreams:     []*stream[A, P, T, D, H]{mostBusy.stream, leastBusy.stream},
 					newStreams:     []*stream[A, P, T, D, H]{stream1, stream2},
 					newStreamPaths: [][]*pathInfo[A, P, T, D, H]{stream1Paths, stream2Paths},
@@ -631,7 +727,8 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 	}
 
 	scheduleRule := NewRoundRobin(3)
-	ticker := time.NewTicker(d.option.SchedulerInterval)
+	schedulerTicker := time.NewTicker(d.option.SchedulerInterval)
+	statTicker := time.NewTicker(50 * time.Millisecond)
 	for {
 		select {
 		case cmd, ok := <-d.cmdToSched:
@@ -648,7 +745,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 					area := d.handler.GetArea(path, add.path.Dest)
 					pi := newPathInfo[A, P, T, D, H](area, path, add.path.Dest)
 					si := nextStream()
-					pi.stream = si.stream
+					pi.setStream(si.stream)
 					si.pathMap[pi] = struct{}{}
 					globalPathMap[path] = pi
 					add.pi = pi
@@ -710,11 +807,18 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				continue
 			}
 			si.streamStat = stat
-		case <-ticker.C:
+		case <-schedulerTicker.C:
 			doSchedule(ruleType(scheduleRule.Next()), 0, nil)
+		case <-statTicker.C:
+			// Update the metrics
 			if d.memControl != nil {
 				d.memControl.updateMetrics()
 			}
+			allStreamPendingLen := 0
+			for _, si := range d.streamInfos {
+				allStreamPendingLen += si.stream.getPendingSize()
+			}
+			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
 		}
 	}
 }
@@ -726,7 +830,10 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 
 	for {
 		select {
-		case e := <-d.eventChan:
+		case e, ok := <-d.eventChan:
+			if !ok {
+				return
+			}
 			eventType := d.handler.GetType(e)
 			if pi, ok := pathMap[d.handler.Path(e)]; ok {
 				e := eventWrap[A, P, T, D, H]{
@@ -743,11 +850,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				}
 				pi.stream.in() <- e
 			} else {
-				// Otherwise, drop the event. If the event is not a periodic signal,
-				// we should notify the handler that the event is dropped.
+				// Otherwise, drop the event and notify the handler
 				d.handler.OnDrop(e)
 			}
-		case p := <-d.wakeChan:
+		case p, ok := <-d.wakeChan:
+			if !ok {
+				return
+			}
 			if pi, ok := pathMap[p]; ok {
 				pi.stream.in() <- eventWrap[A, P, T, D, H]{wake: true, pathInfo: pi}
 			}
@@ -772,6 +881,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 					}
 				}
 				cmd.wg.Done()
+				d._statAddPathCount.Add(1)
 			case typeRemovePath:
 				remove := cmd.cmd.(*removePathCmd[P])
 				// We don't need to remove the path in distributor if there was an error
@@ -792,6 +902,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 					}
 				}
 				cmd.wg.Done()
+				d._statRemovePathCount.Add(1)
 			case typeArrangeStream:
 				arranges := cmd.cmd.([]*arrangeStreamCmd[A, P, T, D, H])
 				for _, arrange := range arranges {
@@ -801,11 +912,23 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 							if _, ok := pathMap[pi.path]; !ok {
 								panic(fmt.Sprintf("Path %v doesn't exist in distributor", pi.path))
 							}
-							pi.stream = newStream
+							// We must set the stream of this path here immediately.
+							// Because we might send the event to the path shortly, before the asynchronous initialization of the stream finish.
+							pi.setStream(newStream)
 						}
 						// Streams must be started and closed in the distributor.
 						// Otherwise, the distributor will send the events to the closed streams.
 						newStream.start(paths, arrange.oldStreams...)
+					}
+					switch arrange.ruleType {
+					case createSoloPath:
+						d._statArrangeStreamCount.createSolo.Add(1)
+					case removeSoloPath:
+						d._statArrangeStreamCount.removeSolo.Add(1)
+					case shuffleStreams:
+						d._statArrangeStreamCount.shuffle.Add(1)
+					default:
+						panic("Unknown rule")
 					}
 				}
 				if cmd.wg != nil {
@@ -813,6 +936,36 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				}
 			default:
 				panic("Unknown command type")
+			}
+		}
+	}
+}
+
+func receiver[E any](inChan <-chan E, outChan chan<- E, bufferCount *atomic.Int64) {
+	defer close(outChan)
+
+	buffer := deque.NewDequeDefault[E]()
+
+	for {
+		event, ok := buffer.FrontRef()
+		if !ok {
+			e, ok := <-inChan
+			if !ok {
+				return
+			}
+			buffer.PushBack(e)
+			bufferCount.Add(1)
+		} else {
+			select {
+			case e, ok := <-inChan:
+				if !ok {
+					return
+				}
+				buffer.PushBack(e)
+				bufferCount.Add(1)
+			case outChan <- *event:
+				buffer.PopFront()
+				bufferCount.Add(-1)
 			}
 		}
 	}

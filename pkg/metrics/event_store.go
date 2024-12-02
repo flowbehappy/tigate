@@ -42,6 +42,14 @@ var (
 			Help:      "The number of bytes written by event store.",
 		})
 
+	EventStoreWriteDurationHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "ticdc",
+		Subsystem: "event_store",
+		Name:      "write_duration",
+		Help:      "Bucketed histogram of event store write duration",
+		Buckets:   prometheus.ExponentialBuckets(0.004, 2.0, 10),
+	})
+
 	EventStoreScanRequestsCount = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "ticdc",
@@ -75,12 +83,12 @@ var (
 			Buckets:   LagBucket(),
 		})
 
-	EventStoreMaxResolvedTsLagGauge = prometheus.NewGauge(
+	EventStoreResolvedTsLagGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_store",
-			Name:      "max_resolved_ts_lag",
-			Help:      "The max resolved ts lag of event store.",
+			Name:      "resolved_ts_lag",
+			Help:      "The resolved ts lag of event store.",
 		})
 
 	EventStoreDispatcherWatermarkLagHist = prometheus.NewHistogram(
@@ -99,17 +107,47 @@ var (
 			Name:      "compress_ratio",
 			Help:      "The compression ratio of the event data.",
 		})
+
+	EventStoreWriteBatchEventsCountHist = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "write_batch_events_count",
+			Help:      "Batch event count histogram for write task pool.",
+			Buckets:   prometheus.ExponentialBuckets(8, 2, 20),
+		})
+
+	EventStoreWriteBatchSizeHist = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "write_batch_size",
+			Help:      "Batch event size histogram for write task pool.",
+			Buckets:   prometheus.ExponentialBuckets(32, 2, 20),
+		})
+
+	EventStoreWriteRequestsCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "write_requests_count",
+			Help:      "The number of write requests received by event store.",
+		})
 )
 
 func InitEventStoreMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventStoreSubscriptionGauge)
 	registry.MustRegister(EventStoreReceivedEventCount)
 	registry.MustRegister(EventStoreWriteBytes)
+	registry.MustRegister(EventStoreWriteDurationHistogram)
 	registry.MustRegister(EventStoreScanRequestsCount)
 	registry.MustRegister(EventStoreScanBytes)
 	registry.MustRegister(EventStoreDeleteRangeCount)
 	registry.MustRegister(EventStoreDispatcherResolvedTsLagHist)
-	registry.MustRegister(EventStoreMaxResolvedTsLagGauge)
+	registry.MustRegister(EventStoreResolvedTsLagGauge)
 	registry.MustRegister(EventStoreDispatcherWatermarkLagHist)
 	registry.MustRegister(EventStoreCompressRatio)
+	registry.MustRegister(EventStoreWriteBatchEventsCountHist)
+	registry.MustRegister(EventStoreWriteBatchSizeHist)
+	registry.MustRegister(EventStoreWriteRequestsCount)
 }

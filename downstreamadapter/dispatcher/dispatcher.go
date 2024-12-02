@@ -25,11 +25,24 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
-	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
 )
+
+// EventDispatcher is the interface that responsible for receiving events from Event Service
+type EventDispatcher interface {
+	GetId() common.DispatcherID
+	GetStartTs() uint64
+	GetChangefeedID() common.ChangeFeedID
+	GetTableSpan() *heartbeatpb.TableSpan
+	GetFilterConfig() *eventpb.FilterConfig
+	EnableSyncPoint() bool
+	GetSyncPointInterval() time.Duration
+	GetResolvedTs() uint64
+	SetInitialTableInfo(tableInfo *common.TableInfo)
+	HandleEvents(events []DispatcherEvent, wakeCallback func()) (block bool)
+}
 
 /*
 Dispatcher is responsible for getting events from Event Service and sending them to Sink in appropriate order.
@@ -81,10 +94,10 @@ type Dispatcher struct {
 	// componentStatus is the status of the dispatcher, such as working, removing, stopped.
 	componentStatus *ComponentStateWithMutex
 	// the config of filter
-	filterConfig *config.FilterConfig
+	filterConfig *eventpb.FilterConfig
 
 	// tableInfo is the latest table info of the dispatcher
-	tableInfo atomic.Pointer[common.TableInfo]
+	tableInfo *common.TableInfo
 
 	// shared by the event dispatcher manager
 	sink sink.Sink
@@ -103,7 +116,7 @@ type Dispatcher struct {
 	syncPointConfig *syncpoint.SyncPointConfig
 
 	// the max resolvedTs received by the dispatcher
-	resolvedTs *TsWithMutex
+	resolvedTs uint64
 
 	// blockEventStatus is used to store the current pending ddl/sync point event and its block status.
 	blockEventStatus BlockEventStatus
@@ -139,7 +152,7 @@ func NewDispatcher(
 	schemaID int64,
 	schemaIDToDispatchers *SchemaIDToDispatchers,
 	syncPointConfig *syncpoint.SyncPointConfig,
-	filterConfig *config.FilterConfig,
+	filterConfig *eventpb.FilterConfig,
 	currentPdTs uint64,
 	errCh chan error) *Dispatcher {
 	dispatcher := &Dispatcher{
@@ -151,7 +164,7 @@ func NewDispatcher(
 		blockStatusesChan:     blockStatusesChan,
 		syncPointConfig:       syncPointConfig,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
-		resolvedTs:            newTsWithMutex(startTs),
+		resolvedTs:            startTs,
 		filterConfig:          filterConfig,
 		isRemoving:            atomic.Bool{},
 		blockEventStatus:      BlockEventStatus{blockPendingEvent: nil},
@@ -245,7 +258,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 	for _, dispatcherEvent := range dispatcherEvents {
 		event := dispatcherEvent.Event
 		// Pre-check, make sure the event is not stale
-		if event.GetCommitTs() < d.resolvedTs.Get() {
+		if event.GetCommitTs() < atomic.LoadUint64(&d.resolvedTs) {
 			log.Info("Received a stale event, should ignore it",
 				zap.Any("commitTs", event.GetCommitTs()),
 				zap.Any("seq", event.GetSeq()),
@@ -257,12 +270,12 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 
 		switch event.GetType() {
 		case commonEvent.TypeResolvedEvent:
-			d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
+			atomic.StoreUint64(&d.resolvedTs, event.(commonEvent.ResolvedEvent).ResolvedTs)
 		case commonEvent.TypeDMLEvent:
 			block = true
 			dml := event.(*commonEvent.DMLEvent)
 			dml.ReplicatingTs = d.creatationPDTs
-			dml.AssembleRows(d.tableInfo.Load())
+			dml.AssembleRows(d.tableInfo)
 			dml.AddPostFlushFunc(func() {
 				// Considering dml event in sink may be write to downstream not in order,
 				// thus, we use tableProgress.Empty() to ensure these events are flushed to downstream completely
@@ -279,7 +292,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 			block = true
 			event := event.(*commonEvent.DDLEvent)
 			// Update the table info of the dispatcher, when it receive ddl event.
-			d.tableInfo.Store(event.TableInfo)
+			d.tableInfo = event.TableInfo
 			log.Info("dispatcher receive ddl event",
 				zap.Stringer("dispatcher", d.id),
 				zap.String("query", event.Query),
@@ -313,7 +326,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 }
 
 func (d *Dispatcher) SetInitialTableInfo(tableInfo *common.TableInfo) {
-	d.tableInfo.Store(tableInfo)
+	d.tableInfo = tableInfo
 }
 
 func isCompleteSpan(tableSpan *heartbeatpb.TableSpan) bool {
@@ -389,7 +402,28 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 				CommitTs:    event.GetCommitTs(),
 				IsSyncPoint: false,
 			}
-			d.resendTaskMap.Set(identifier, newResendTask(message, d))
+
+			if event.GetNeedAddedTables() != nil {
+				// When the ddl need add tables, we need the maintainer to block the forwarding of checkpointTs
+				// Because the the new add table should join the calculation of checkpointTs
+				// So the forwarding of checkpointTs should be blocked until the new dispatcher is created.
+				// While there is a time gap between dispatcher send the block status and
+				// maintainer begin to create dispatcher(and block the forwaring checkpoint)
+				// in order to avoid the checkpointTs forward unexceptedly,
+				// we need to block the checkpoint forwarding in this dispatcher until receive the ack from maintainer.
+				//
+				//     |----> block checkpointTs forwaring of this dispatcher ------>|-----> forwarding checkpointTs normally
+				//     |        send block stauts                 send ack           |
+				// dispatcher -------------------> maintainer ----------------> dispatcher
+				//                                     |
+				//                                     |----------> Block CheckpointTs Forwarding and create new dispatcher
+				// Thus, we add the event to tableProgress again, and call event postFunc when the ack is received from maintainer.
+				event.ClearPostFlushFunc()
+				d.tableProgress.Add(event)
+				d.resendTaskMap.Set(identifier, newResendTask(message, d, event.PostFlush))
+			} else {
+				d.resendTaskMap.Set(identifier, newResendTask(message, d, nil))
+			}
 			d.blockStatusesChan <- message
 		}
 	} else {
@@ -411,7 +445,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 			CommitTs:    event.GetCommitTs(),
 			IsSyncPoint: event.GetType() == commonEvent.TypeSyncPointEvent,
 		}
-		d.resendTaskMap.Set(identifier, newResendTask(message, d))
+		d.resendTaskMap.Set(identifier, newResendTask(message, d, nil))
 		d.blockStatusesChan <- message
 	}
 
@@ -449,7 +483,7 @@ func (d *Dispatcher) GetStartTs() uint64 {
 }
 
 func (d *Dispatcher) GetResolvedTs() uint64 {
-	return d.resolvedTs.Get()
+	return atomic.LoadUint64(&d.resolvedTs)
 }
 
 func (d *Dispatcher) GetCheckpointTs() uint64 {
@@ -494,33 +528,7 @@ func (d *Dispatcher) EnableSyncPoint() bool {
 }
 
 func (d *Dispatcher) GetFilterConfig() *eventpb.FilterConfig {
-	return toFilterConfigPB(d.filterConfig)
-}
-
-func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
-	filterConfig := &eventpb.FilterConfig{
-		Rules:            filter.Rules,
-		IgnoreTxnStartTs: filter.IgnoreTxnStartTs,
-		EventFilters:     make([]*eventpb.EventFilterRule, len(filter.EventFilters)),
-	}
-
-	for _, eventFilter := range filter.EventFilters {
-		ignoreEvent := make([]string, len(eventFilter.IgnoreEvent))
-		for _, event := range eventFilter.IgnoreEvent {
-			ignoreEvent = append(ignoreEvent, string(event))
-		}
-		filterConfig.EventFilters = append(filterConfig.EventFilters, &eventpb.EventFilterRule{
-			Matcher:                  eventFilter.Matcher,
-			IgnoreEvent:              ignoreEvent,
-			IgnoreSql:                eventFilter.IgnoreSQL,
-			IgnoreInsertValueExpr:    eventFilter.IgnoreInsertValueExpr,
-			IgnoreUpdateNewValueExpr: eventFilter.IgnoreUpdateNewValueExpr,
-			IgnoreUpdateOldValueExpr: eventFilter.IgnoreUpdateOldValueExpr,
-			IgnoreDeleteValueExpr:    eventFilter.IgnoreDeleteValueExpr,
-		})
-	}
-
-	return filterConfig
+	return d.filterConfig
 }
 
 func (d *Dispatcher) GetSyncPointInterval() time.Duration {
@@ -602,11 +610,14 @@ func (d *Dispatcher) GetBlockEventStatus() *heartbeatpb.State {
 func (d *Dispatcher) GetHeartBeatInfo(h *HeartBeatInfo) {
 	h.Watermark.CheckpointTs = d.GetCheckpointTs()
 	h.Watermark.ResolvedTs = d.GetResolvedTs()
-	h.EventSizePerSecond = d.tableProgress.GetEventSizePerSecond()
 	h.Id = d.GetId()
 	h.ComponentStatus = d.GetComponentStatus()
 	h.TableSpan = d.GetTableSpan()
 	h.IsRemoving = d.GetRemovingStatus()
+}
+
+func (d *Dispatcher) GetEventSizePerSecond() float32 {
+	return d.tableProgress.GetEventSizePerSecond()
 }
 
 func (d *Dispatcher) HandleCheckpointTs(checkpointTs uint64) {

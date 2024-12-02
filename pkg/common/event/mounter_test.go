@@ -647,13 +647,13 @@ func TestNullColumn(t *testing.T) {
 	defer helper.Close()
 
 	job := helper.DDL2Job(`create table test.t(
-	a tinyint primary key, b tinyint, c bool, d bool, e smallint, 
-	f smallint, g int, h int, i float, j float, 
-	k double, l double, m timestamp, n timestamp, o bigint, 
-	p bigint, q mediumint, r mediumint, s date, t date, 
-	u time, v time, w datetime, x datetime, y year, 
-	z year, aa varchar(10), ab varchar(10), ac varbinary(10), ad varbinary(10), 
-	ae bit(10), af bit(10), ag json, ah json, ai decimal(10,2), 
+	a tinyint primary key, b tinyint, c bool, d bool, e smallint,
+	f smallint, g int, h int, i float, j float,
+	k double, l double, m timestamp, n timestamp, o bigint,
+	p bigint, q mediumint, r mediumint, s date, t date,
+	u time, v time, w datetime, x datetime, y year,
+	z year, aa varchar(10), ab varchar(10), ac varbinary(10), ad varbinary(10),
+	ae bit(10), af bit(10), ag json, ah json, ai decimal(10,2),
 	aj decimal(10,2))`)
 
 	require.NotNil(t, job)

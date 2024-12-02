@@ -211,7 +211,6 @@ func (w *changeEventProcessor) doHandle(
 					zap.Uint64("regionID", regionID))
 				return errUnreachable
 			}
-
 			revent, err := w.assembleRowEvent(regionID, entry)
 			if err != nil {
 				return errors.Trace(err)
@@ -303,7 +302,7 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 		if state.isStale() || !state.isInitialized() {
 			continue
 		}
-
+		state.matcher.tryCleanUnmatchedValue()
 		regionID := state.getRegionID()
 		lastResolvedTs := state.getLastResolvedTs()
 		if batch.ts < lastResolvedTs {
@@ -322,7 +321,7 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 	span := batch.regions[0].region.subscribedSpan
 	now := time.Now().UnixMilli()
 	lastAdvance := span.lastAdvanceTime.Load()
-	if now-lastAdvance > int64(w.client.config.AdvanceResolvedTsIntervalInMs) && span.lastAdvanceTime.CompareAndSwap(lastAdvance, now) {
+	if now-lastAdvance > span.advanceInterval && span.lastAdvanceTime.CompareAndSwap(lastAdvance, now) {
 		ts := span.rangeLock.ResolvedTs()
 		if ts > span.startTs {
 			e := newLogEvent(&common.RawKVEntry{

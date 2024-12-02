@@ -43,7 +43,7 @@ var (
 )
 
 type DispatcherRequest struct {
-	Dispatcher *dispatcher.Dispatcher
+	Dispatcher dispatcher.EventDispatcher
 	ActionType eventpb.ActionType
 	StartTs    uint64
 	OnlyUse    bool
@@ -136,7 +136,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 	return &eventCollector
 }
 
-func (c *EventCollector) AddDispatcher(target *dispatcher.Dispatcher, memoryQuota int) {
+func (c *EventCollector) AddDispatcher(target dispatcher.EventDispatcher, memoryQuota int) {
 	log.Info("add dispatcher", zap.Stringer("dispatcher", target.GetId()))
 	defer func() {
 		log.Info("add dispatcher done", zap.Stringer("dispatcher", target.GetId()))
@@ -375,16 +375,13 @@ func (c *EventCollector) updateResolvedTsMetric() {
 	if minResolvedTs > 0 {
 		phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 		lagMs := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
-		log.Info("EventCollector resolved ts lag",
-			zap.Uint64("resolvedTs", minResolvedTs),
-			zap.Float64("lagMs", lagMs))
 		metrics.EventCollectorResolvedTsLagGauge.Set(lagMs)
 	}
 }
 
 type DispatcherStat struct {
 	dispatcherID common.DispatcherID
-	target       *dispatcher.Dispatcher
+	target       dispatcher.EventDispatcher
 
 	eventServiceInfo struct {
 		sync.RWMutex
@@ -415,6 +412,90 @@ func (d *DispatcherStat) reset() {
 	}
 	d.lastEventSeq.Store(0)
 	d.waitHandshake.Store(true)
+}
+
+func (d *DispatcherStat) checkEventSeq(event dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
+	switch event.GetType() {
+	case commonEvent.TypeDMLEvent,
+		commonEvent.TypeDDLEvent,
+		commonEvent.TypeHandshakeEvent:
+		expectedSeq := d.lastEventSeq.Add(1)
+		if event.GetSeq() != expectedSeq {
+			log.Warn("Received an out-of-order event, reset the dispatcher",
+				zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
+				zap.Stringer("dispatcher", d.target.GetId()),
+				zap.Uint64("receivedSeq", event.GetSeq()),
+				zap.Uint64("expectedSeq", expectedSeq),
+				zap.Uint64("commitTs", event.GetCommitTs()))
+			d.reset()
+			eventCollector.addDispatcherRequestToSendingQueue(d.eventServiceInfo.serverID, eventServiceTopic, DispatcherRequest{
+				Dispatcher: d.target,
+				StartTs:    d.sendCommitTs.Load(),
+				ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
+			})
+			log.Info("reset dispatcher",
+				zap.Stringer("dispatcher", d.target.GetId()),
+				zap.Uint64("startTs", d.sendCommitTs.Load()))
+			return false
+		}
+		return true
+	default:
+		return true
+	}
+}
+
+func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
+	if d.eventServiceInfo.serverID != event.From {
+		// TODO: unregister from this invalid event service if it send events for a long time
+		return true
+	}
+	if d.waitHandshake.Load() {
+		log.Warn("Receive event before handshake event, ignore it",
+			zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
+			zap.Stringer("dispatcher", d.target.GetId()))
+		return true
+	}
+	if !d.checkEventSeq(event, eventCollector) {
+		return true
+	}
+	// Note: a commit ts may have multiple transactions.
+	// it is ok to send the same txn multiple times?
+	// (we just want to avoid send old dml after new ddl)
+	if event.GetCommitTs() < d.sendCommitTs.Load() {
+		log.Warn("Receive resolved event before sendCommitTs, ignore it",
+			zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
+			zap.Stringer("dispatcher", d.target.GetId()),
+			zap.Uint64("sendCommitTs", d.sendCommitTs.Load()))
+		return true
+	}
+	d.sendCommitTs.Store(event.GetCommitTs())
+	return false
+}
+
+func (d *DispatcherStat) handleHandshakeEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) {
+	d.eventServiceInfo.Lock()
+	defer d.eventServiceInfo.Unlock()
+	if event.GetType() != commonEvent.TypeHandshakeEvent {
+		log.Panic("should not happen")
+	}
+	if d.eventServiceInfo.serverID == "" {
+		log.Panic("should not happen: not server ID set")
+	}
+	if d.eventServiceInfo.serverID != event.From {
+		// check invariant: if the handshake event is not from the current event service, we must be reading from local event service.
+		if d.eventServiceInfo.serverID != eventCollector.serverId {
+			log.Panic("receive handshake event from remote event service, but current event service is not local event service",
+				zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
+				zap.Stringer("dispatcher", d.target.GetId()),
+				zap.Stringer("from", event.From))
+		}
+		return
+	}
+	if !d.checkEventSeq(event, eventCollector) {
+		return
+	}
+	d.waitHandshake.Store(false)
+	d.target.SetInitialTableInfo(event.Event.(*commonEvent.HandshakeEvent).TableInfo)
 }
 
 func (d *DispatcherStat) handleReadyEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) {
@@ -475,23 +556,28 @@ func (d *DispatcherStat) handleReadyEvent(event dispatcher.DispatcherEvent, even
 	}
 }
 
-func (d *DispatcherStat) isHandshakeEventValid(event dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
+func (d *DispatcherStat) handleNotReusableEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) {
 	d.eventServiceInfo.Lock()
 	defer d.eventServiceInfo.Unlock()
-	if event.GetType() != commonEvent.TypeHandshakeEvent {
+	if event.GetType() != commonEvent.TypeNotReusableEvent {
 		log.Panic("should not happen")
 	}
-	if d.eventServiceInfo.serverID != event.From {
-		// check invariant: if the handshake event is not from the current event service, we must be reading from local event service.
-		if d.eventServiceInfo.serverID != eventCollector.serverId {
-			log.Panic("receive handshake event from remote event service, but current event service is not local event service",
-				zap.String("changefeedID", d.target.GetChangefeedID().ID().String()),
-				zap.Stringer("dispatcher", d.target.GetId()),
-				zap.Stringer("from", event.From))
+	if event.From == d.eventServiceInfo.serverID {
+		if len(d.eventServiceInfo.remoteCandiates) > 0 {
+			eventCollector.addDispatcherRequestToSendingQueue(
+				d.eventServiceInfo.remoteCandiates[0],
+				eventServiceTopic,
+				DispatcherRequest{
+					Dispatcher: d.target,
+					StartTs:    d.target.GetStartTs(),
+					ActionType: eventpb.ActionType_ACTION_TYPE_REGISTER,
+					OnlyUse:    true,
+				},
+			)
+			d.eventServiceInfo.serverID = d.eventServiceInfo.remoteCandiates[0]
+			d.eventServiceInfo.remoteCandiates = d.eventServiceInfo.remoteCandiates[1:]
 		}
-		return false
 	}
-	return true
 }
 
 func (d *DispatcherStat) unregisterDispatcher(eventCollector *EventCollector) {
@@ -519,11 +605,6 @@ func (d *DispatcherStat) resetDispatcher(eventCollector *EventCollector) {
 		log.Panic("should not happen: reset dispatcher before receiving ready signal")
 	}
 
-	eventCollector.addDispatcherRequestToSendingQueue(d.eventServiceInfo.serverID, eventServiceTopic, DispatcherRequest{
-		Dispatcher: d.target,
-		StartTs:    d.sendCommitTs.Load(),
-		ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
-	})
 }
 
 func (d *DispatcherStat) pauseDispatcher(eventCollector *EventCollector) {
@@ -580,22 +661,4 @@ func (d *DispatcherStat) setRemoteCandidates(nodes []string, eventCollector *Eve
 			OnlyUse:    true,
 		},
 	)
-}
-
-func (d *DispatcherStat) tryNextRemoteCandidate(eventCollector *EventCollector) {
-	d.eventServiceInfo.Lock()
-	defer d.eventServiceInfo.Unlock()
-	if len(d.eventServiceInfo.remoteCandiates) > 0 {
-		eventCollector.addDispatcherRequestToSendingQueue(
-			d.eventServiceInfo.remoteCandiates[0],
-			eventServiceTopic,
-			DispatcherRequest{
-				Dispatcher: d.target,
-				StartTs:    d.target.GetStartTs(),
-				ActionType: eventpb.ActionType_ACTION_TYPE_REGISTER,
-				OnlyUse:    true,
-			},
-		)
-		d.eventServiceInfo.remoteCandiates = d.eventServiceInfo.remoteCandiates[1:]
-	}
 }

@@ -27,7 +27,7 @@ import (
 // returns the table size need to be moved
 func CheckBalanceStatus(nodeTaskSize map[node.ID]int, allNodes map[node.ID]*node.Info) int {
 	// add the absent node to the node size map
-	for nodeID, _ := range allNodes {
+	for nodeID := range allNodes {
 		if _, ok := nodeTaskSize[nodeID]; !ok {
 			nodeTaskSize[nodeID] = 0
 		}
@@ -58,7 +58,7 @@ func Balance[T Replication](batchSize int,
 	random *rand.Rand,
 	activeNodes map[node.ID]*node.Info,
 	replicating []T,
-	move func(T, node.ID) bool) {
+	move func(T, node.ID) bool) (hasPending bool) {
 	nodeTasks := make(map[node.ID][]T)
 	for _, cf := range replicating {
 		nodeID := cf.GetNodeID()
@@ -67,26 +67,34 @@ func Balance[T Replication](batchSize int,
 		}
 		nodeTasks[nodeID] = append(nodeTasks[nodeID], cf)
 	}
+
+	absentNodeCnt := 0
 	// add the absent node to the node size map
-	for nodeID, _ := range activeNodes {
+	for nodeID := range activeNodes {
 		if _, ok := nodeTasks[nodeID]; !ok {
 			nodeTasks[nodeID] = make([]T, 0)
+			absentNodeCnt++
 		}
 	}
 
-	totalSize := 0
-	for _, ts := range nodeTasks {
-		totalSize += len(ts)
-	}
-
+	totalSize := len(replicating)
 	upperLimitPerCapture := int(math.Ceil(float64(totalSize) / float64(len(nodeTasks))))
 	// victims holds tasks which need to be moved
-	victims := make([]T, 0)
+	victims := make([]T, 0, max(0, absentNodeCnt*upperLimitPerCapture))
 	priorityQueue := heap.NewHeap[*Item]()
-	for nodeID, ts := range nodeTasks {
-		var stms []T
-		for _, value := range ts {
-			stms = append(stms, value)
+	for nodeID, tasks := range nodeTasks {
+		tableNum2Remove := len(tasks) - upperLimitPerCapture
+		if tableNum2Remove <= 0 {
+			priorityQueue.AddOrUpdate(&Item{
+				Node: nodeID,
+				Load: len(tasks),
+			})
+			continue
+		} else {
+			priorityQueue.AddOrUpdate(&Item{
+				Node: nodeID,
+				Load: len(tasks) - tableNum2Remove,
+			})
 		}
 
 		// Complexity note: Shuffle has O(n), where `n` is the number of tables.
@@ -95,34 +103,19 @@ func Balance[T Replication](batchSize int,
 		// Only called when a rebalance is triggered, which happens rarely,
 		// we do not expect a performance degradation as a result of adding
 		// the randomness.
-		random.Shuffle(len(stms), func(i, j int) {
-			stms[i], stms[j] = stms[j], stms[i]
+		random.Shuffle(len(tasks), func(i, j int) {
+			tasks[i], tasks[j] = tasks[j], tasks[i]
 		})
-
-		tableNum2Remove := len(stms) - upperLimitPerCapture
-		if tableNum2Remove <= 0 {
-			priorityQueue.AddOrUpdate(&Item{
-				Node: nodeID,
-				Load: len(ts),
-			})
-			continue
-		} else {
-			priorityQueue.AddOrUpdate(&Item{
-				Node: nodeID,
-				Load: len(ts) - tableNum2Remove,
-			})
-		}
-
-		for _, cf := range stms {
+		for _, t := range tasks {
 			if tableNum2Remove <= 0 {
 				break
 			}
-			victims = append(victims, cf)
+			victims = append(victims, t)
 			tableNum2Remove--
 		}
 	}
 	if len(victims) == 0 {
-		return
+		return false
 	}
 
 	movedSize := 0
@@ -146,6 +139,7 @@ func Balance[T Replication](batchSize int,
 	log.Info("balance done",
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
+	return len(victims) > batchSize
 }
 
 // BasicSchedule schedules the absent tasks to the available nodes

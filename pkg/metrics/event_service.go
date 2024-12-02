@@ -78,12 +78,12 @@ var (
 			Name:      "drop_scan_task_count",
 			Help:      "The number of scan tasks dropped",
 		})
-	EventServiceDropResolvedTsCount = prometheus.NewCounter(
+	EventServiceScanTaskCount = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
-			Name:      "drop_resolved_ts_count",
-			Help:      "The number of resolved ts dropped",
+			Name:      "scan_task_count",
+			Help:      "The number of scan tasks that have been done",
 		})
 	EventServiceScanTaskQueueDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -93,20 +93,20 @@ var (
 			Help:      "The duration of a scan task being queued",
 			Buckets:   prometheus.DefBuckets,
 		})
-	EventServiceHandleDuration = prometheus.NewHistogram(
+	EventServiceTaskHandleDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
-			Name:      "handle_duration",
+			Name:      "task_handle_duration",
 			Help:      "The duration of handling a scan task",
 			Buckets:   prometheus.DefBuckets,
 		})
-	EventServiceDropNotificationCount = prometheus.NewCounter(
-		prometheus.CounterOpts{
+	EventServicePendingScanTaskCount = prometheus.NewGauge(
+		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
-			Name:      "drop_notification_count",
-			Help:      "The number of notifications dropped",
+			Name:      "pending_scan_task_count",
+			Help:      "The number of pending scan tasks",
 		})
 )
 
@@ -120,8 +120,8 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceScanDuration)
 	registry.MustRegister(EventServiceDispatcherGauge)
 	registry.MustRegister(EventServiceDropScanTaskCount)
-	registry.MustRegister(EventServiceDropResolvedTsCount)
+	registry.MustRegister(EventServiceScanTaskCount)
 	registry.MustRegister(EventServiceScanTaskQueueDuration)
-	registry.MustRegister(EventServiceHandleDuration)
-	registry.MustRegister(EventServiceDropNotificationCount)
+	registry.MustRegister(EventServiceTaskHandleDuration)
+	registry.MustRegister(EventServicePendingScanTaskCount)
 }

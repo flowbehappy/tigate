@@ -37,7 +37,7 @@ func VerifyChecksum(event *commonEvent.RowChangedEvent, db *sql.DB) error {
 	// if expected is 0, it means the checksum is not enabled, so we don't need to verify it.
 	// the data maybe restored by br, and the checksum is not enabled, so no expected here.
 	if event.Checksum.Current != 0 {
-		checksum, err := calculateChecksum(event.Columns, event.TableInfo.Columns)
+		checksum, err := calculateChecksum(event.Columns, event.TableInfo.GetColumns())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -56,7 +56,7 @@ func VerifyChecksum(event *commonEvent.RowChangedEvent, db *sql.DB) error {
 		}
 	}
 	if event.Checksum.Previous != 0 {
-		checksum, err := calculateChecksum(event.PreColumns, event.TableInfo.Columns)
+		checksum, err := calculateChecksum(event.PreColumns, event.TableInfo.GetColumns())
 		if err != nil {
 			return errors.Trace(err)
 		}

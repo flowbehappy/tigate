@@ -47,9 +47,6 @@ type spanProgress struct {
 	resolvedTsUpdated atomic.Int64
 	resolvedTs        atomic.Uint64
 
-	// tag is supplied at subscription time and is passed to the consume function.
-	tag interface{}
-
 	consume struct {
 		// This lock is used to prevent the table progress from being
 		// removed while consuming events.
@@ -77,7 +74,7 @@ func (p *spanProgress) resolveLock(currentTime time.Time) {
 type LogPuller struct {
 	client  *SubscriptionClient
 	pdClock pdutil.Clock
-	consume func(context.Context, *common.RawKVEntry, SubscriptionID, interface{}) error
+	consume func(context.Context, *common.RawKVEntry, SubscriptionID) error
 
 	subscriptions struct {
 		sync.RWMutex
@@ -92,7 +89,7 @@ type LogPuller struct {
 func NewLogPuller(
 	client *SubscriptionClient,
 	pdClock pdutil.Clock,
-	consume func(context.Context, *common.RawKVEntry, SubscriptionID, interface{}) error,
+	consume func(context.Context, *common.RawKVEntry, SubscriptionID) error,
 ) *LogPuller {
 	puller := &LogPuller{
 		client:  client,
@@ -102,6 +99,22 @@ func NewLogPuller(
 	puller.subscriptions.spanProgressMap = make(map[SubscriptionID]*spanProgress)
 
 	return puller
+}
+
+func (p *LogPuller) updateMetrics(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			resolvedTsLag := p.client.GetResolvedTsLag()
+			if resolvedTsLag > 0 {
+				metrics.LogPullerResolvedTsLag.Set(resolvedTsLag)
+			}
+		}
+	}
 }
 
 func (p *LogPuller) Run(ctx context.Context) (err error) {
@@ -148,6 +161,8 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 
 	eg.Go(func() error { return p.runResolveLockChecker(ctx) })
 
+	eg.Go(func() error { return p.updateMetrics(ctx) })
+
 	log.Info("LogPuller starts")
 	return eg.Wait()
 }
@@ -159,7 +174,6 @@ func (p *LogPuller) Close(ctx context.Context) error {
 func (p *LogPuller) Subscribe(
 	span heartbeatpb.TableSpan,
 	startTs uint64,
-	tag interface{},
 ) SubscriptionID {
 	p.subscriptions.Lock()
 
@@ -168,7 +182,6 @@ func (p *LogPuller) Subscribe(
 	progress := &spanProgress{
 		span:  span,
 		subID: subID,
-		tag:   tag,
 	}
 
 	progress.consume.f = func(
@@ -179,7 +192,7 @@ func (p *LogPuller) Subscribe(
 		progress.consume.RLock()
 		defer progress.consume.RUnlock()
 		if !progress.consume.removed {
-			return p.consume(ctx, raw, subID, progress.tag)
+			return p.consume(ctx, raw, subID)
 		}
 		return nil
 	}

@@ -143,6 +143,7 @@ func (r *SpanReplication) NewAddDispatcherMessage(server node.ID) (*messaging.Ta
 			ChangefeedID: r.ChangefeedID.ToPB(),
 			Config: &heartbeatpb.DispatcherConfig{
 				DispatcherID: r.ID.ToPB(),
+				SchemaID:     r.schemaID,
 				Span:         r.Span,
 				StartTs:      r.status.Load().CheckpointTs,
 				CurrentPdTs:  ts,
