@@ -159,7 +159,7 @@ func (q *eventQueue[A, P, T, D, H]) updateHeapAfterUpdatePath(path *pathInfo[A, 
 	}
 }
 
-func (q *eventQueue[A, P, T, D, H]) addPath(path *pathInfo[A, P, T, D, H]) {
+func (q *eventQueue[A, P, T, D, H]) initPath(path *pathInfo[A, P, T, D, H]) {
 	area, ok := q.areaMap[path.area]
 	if !ok {
 		area = &streamAreaInfo[A, P, T, D, H]{
@@ -207,7 +207,7 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 	path := event.pathInfo
 	if path.streamAreaInfo == nil {
 		// A newly added path sends the first event.
-		q.addPath(path)
+		q.initPath(path)
 	}
 	// If memory control is enabled, use the memory control to append the event.
 	if path.areaMemStat != nil {
@@ -230,6 +230,7 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 	// }
 	if !replaced {
 		path.pendingQueue.PushBack(event)
+		path.pendingSize += event.eventSize
 		q.updateHeapAfterUpdatePath(path)
 		q.totalPendingLength.Add(1)
 	}
@@ -311,6 +312,7 @@ func (q *eventQueue[A, P, T, D, H]) blockPath(path *pathInfo[A, P, T, D, H]) {
 }
 
 func (q *eventQueue[A, P, T, D, H]) wakePath(path *pathInfo[A, P, T, D, H]) {
+	path.blocking = false
 	q.updateHeapAfterUpdatePath(path)
 }
 

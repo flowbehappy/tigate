@@ -148,7 +148,10 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	reportChan chan streamStat[A, P, T, D, H] // The channel to receive the report by scheduler
 	cmdToSched chan *command                  // The channel to send the commands to the scheduler
-	cmdToDist  chan *command                  // The channel to send the commands to the distributor
+
+	// FIXME: It is not safe to send message to distributor by two channels, eventChan and cmdToDist. Use one channel instread!
+	// If create stream cmd has not been executed before events are sent to distributor, the distributor will stuck on sending events to the stream.
+	cmdToDist chan *command // The channel to send the commands to the distributor
 
 	// The streams to handle the events. Only used in the scheduler.
 	// We put it here mainly to make the tests easier.
@@ -871,14 +874,16 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				// We don't need to add the path in distributor if there was an error
 				// occurred in the scheduler.
 				if add.err == nil {
-					path := add.pi.path
+					pi := add.pi
+					path := pi.path
 					if _, ok := pathMap[path]; ok {
 						panic(fmt.Sprintf("Path %v already exists in distributor", path))
 					}
-					pathMap[path] = add.pi
+					pathMap[path] = pi
 					if d.memControl != nil {
-						d.memControl.addPathToArea(add.pi, add.settings, d.feedbackChan)
+						d.memControl.addPathToArea(pi, add.settings, d.feedbackChan)
 					}
+					pi.stream.in() <- eventWrap[A, P, T, D, H]{pathInfo: pi, newPath: true}
 				}
 				cmd.wg.Done()
 				d._statAddPathCount.Add(1)
