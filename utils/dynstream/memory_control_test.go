@@ -28,7 +28,7 @@ func setupTestComponents() (*memControl[int, string, *mockEvent, any, *mockHandl
 		path:           "test-path",
 		dest:           "test-dest",
 		streamAreaInfo: sai,
-		pendingQueue:   deque.NewDeque[eventWrap[int, string, *mockEvent, any, *mockHandler]](32, 0),
+		pendingQueue:   deque.NewDeque[eventWrap[int, string, *mockEvent, any, *mockHandler]](32),
 	}
 
 	return mc, path
@@ -69,7 +69,7 @@ func TestAreaMemStatAppendEvent(t *testing.T) {
 	option := NewOption()
 	option.EnableMemoryControl = true
 	eventQueue := newEventQueue(option, handler)
-	eventQueue.addPath(path1)
+	eventQueue.initPath(path1)
 
 	// 1. Append normal event, it should be accepted
 	normalEvent1 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
@@ -157,10 +157,10 @@ func TestAreaMemStatAppendEvent(t *testing.T) {
 		area:           1,
 		path:           "test-path-2",
 		streamAreaInfo: path1.streamAreaInfo,
-		pendingQueue:   deque.NewDeque[eventWrap[int, string, *mockEvent, any, *mockHandler]](32, 0),
+		pendingQueue:   deque.NewDeque[eventWrap[int, string, *mockEvent, any, *mockHandler]](32),
 	}
 	mc.addPathToArea(path2, newSettings, feedbackChan)
-	eventQueue.addPath(path2)
+	eventQueue.initPath(path2)
 	largeEvent := eventWrap[int, string, *mockEvent, any, *mockHandler]{
 		event:     &mockEvent{id: 6, path: "test-path-2"},
 		timestamp: 6,
