@@ -125,6 +125,7 @@ func FindHoles(currentSpan utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplic
 	// the lastSpan not reach the totalSpan end
 	if !bytes.Equal(lastSpan.EndKey, totalSpan.EndKey) {
 		holes = append(holes, &heartbeatpb.TableSpan{
+			TableID:  totalSpan.TableID,
 			StartKey: lastSpan.EndKey,
 			EndKey:   totalSpan.EndKey,
 		})
