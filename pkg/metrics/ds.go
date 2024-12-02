@@ -54,7 +54,7 @@ var (
 			Subsystem: "dynamic_stream",
 			Name:      "arrange_stream_num",
 			Help:      "The number of arrange stream command",
-		}, []string{"component"})
+		}, []string{"component", "type"})
 )
 
 func InitDynamicStreamMetrics(registry *prometheus.Registry) {

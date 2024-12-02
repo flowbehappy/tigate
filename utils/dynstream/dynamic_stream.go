@@ -57,6 +57,7 @@ type removePathCmd[P Path] struct {
 }
 
 type arrangeStreamCmd[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
+	ruleType   ruleType
 	oldStreams []*stream[A, P, T, D, H]
 
 	newStreams     []*stream[A, P, T, D, H]
@@ -162,10 +163,13 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 	startTime      time.Time
 
 	_statAllStreamPendingLen atomic.Int64
-	_statMinHandledTS        atomic.Uint64
 	_statAddPathCount        atomic.Uint64
 	_statRemovePathCount     atomic.Uint64
-	_statArrangeStreamCount  atomic.Uint64
+	_statArrangeStreamCount  struct {
+		createSolo atomic.Uint64
+		removeSolo atomic.Uint64
+		shuffle    atomic.Uint64
+	}
 }
 
 func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
@@ -328,10 +332,17 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings Area
 func (d *dynamicStreamImpl[A, P, T, D, H]) GetMetrics() Metrics {
 	m := Metrics{
 		PendingQueueLen: int(d._statAllStreamPendingLen.Load()),
-		MinHandleTS:     d._statMinHandledTS.Load(),
 		AddPath:         int(d._statAddPathCount.Load()),
 		RemovePath:      int(d._statRemovePathCount.Load()),
-		ArrangeStream:   int(d._statArrangeStreamCount.Load()),
+		ArrangeStream: struct {
+			CreateSolo int
+			RemoveSolo int
+			Shuffle    int
+		}{
+			CreateSolo: int(d._statArrangeStreamCount.createSolo.Load()),
+			RemoveSolo: int(d._statArrangeStreamCount.removeSolo.Load()),
+			Shuffle:    int(d._statArrangeStreamCount.shuffle.Load()),
+		},
 	}
 	if d.option.UseBuffer {
 		m.EventChanSize = int(d.bufferCount.Load()) + len(d.inChan) + len(d.outChan)
@@ -437,6 +448,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				si := d.streamInfos[i]
 				period, ok := si.period()
 				if !ok {
+					newStreamInfos = append(newStreamInfos, si)
 					continue
 				}
 				if testPeriod != 0 {
@@ -481,6 +493,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 					newStreamPaths = append(newStreamPaths, SetToSlice(newCurrentStreamInfo.pathMap))
 
 					arranges = append(arranges, &arrangeStreamCmd[A, P, T, D, H]{
+						ruleType:       createSoloPath,
 						oldStreams:     []*stream[A, P, T, D, H]{si.stream},
 						newStreams:     newStreams,
 						newStreamPaths: newStreamPaths,
@@ -558,6 +571,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				oldStreams = append(oldStreams, mostIdleStream.stream)
 
 				arrange := &arrangeStreamCmd[A, P, T, D, H]{
+					ruleType:       removeSoloPath,
 					oldStreams:     oldStreams,
 					newStreams:     []*stream[A, P, T, D, H]{newStream},
 					newStreamPaths: [][]*pathInfo[A, P, T, D, H]{newPaths},
@@ -679,6 +693,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				// Instead, we put the paths to streamXPaths and send it.
 				// Because pathMap will be changed later.
 				arranges = append(arranges, &arrangeStreamCmd[A, P, T, D, H]{
+					ruleType:       shuffleStreams,
 					oldStreams:     []*stream[A, P, T, D, H]{mostBusy.stream, leastBusy.stream},
 					newStreams:     []*stream[A, P, T, D, H]{stream1, stream2},
 					newStreamPaths: [][]*pathInfo[A, P, T, D, H]{stream1Paths, stream2Paths},
@@ -800,16 +815,10 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				d.memControl.updateMetrics()
 			}
 			allStreamPendingLen := 0
-			minHandleTS := uint64(0)
 			for _, si := range d.streamInfos {
 				allStreamPendingLen += si.stream.getPendingSize()
-				handledTs := si.stream.getMinHandledTS()
-				if minHandleTS == 0 || (minHandleTS > handledTs && handledTs != 0) {
-					minHandleTS = handledTs
-				}
 			}
 			d._statAllStreamPendingLen.Store(int64(allStreamPendingLen))
-			d._statMinHandledTS.Store(minHandleTS)
 		}
 	}
 }
@@ -911,7 +920,16 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 						// Otherwise, the distributor will send the events to the closed streams.
 						newStream.start(paths, arrange.oldStreams...)
 					}
-					d._statArrangeStreamCount.Add(1)
+					switch arrange.ruleType {
+					case createSoloPath:
+						d._statArrangeStreamCount.createSolo.Add(1)
+					case removeSoloPath:
+						d._statArrangeStreamCount.removeSolo.Add(1)
+					case shuffleStreams:
+						d._statArrangeStreamCount.shuffle.Add(1)
+					default:
+						panic("Unknown rule")
+					}
 				}
 				if cmd.wg != nil {
 					cmd.wg.Done()

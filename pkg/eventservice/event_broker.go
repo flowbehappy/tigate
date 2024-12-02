@@ -29,7 +29,7 @@ import (
 
 const (
 	resolvedTsCacheSize = 8192
-	streamCount         = 8
+	streamCount         = 16
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -83,6 +83,13 @@ type eventBroker struct {
 	metricEventServiceSentResolvedTs     prometheus.Gauge
 	metricEventServiceResolvedTsLag      prometheus.Gauge
 	metricScanEventDuration              prometheus.Observer
+	metricEventStoreDSAddPathNum         prometheus.Gauge
+	metricEventStoreDSRemovePathNum      prometheus.Gauge
+	metricEventStoreDSArrangeStreamNum   struct {
+		createSolo prometheus.Gauge
+		removeSolo prometheus.Gauge
+		shuffle    prometheus.Gauge
+	}
 }
 
 type pathHasher struct {
@@ -134,6 +141,18 @@ func newEventBroker(
 		metricEventServiceResolvedTsLag:      metrics.EventServiceResolvedTsLagGauge.WithLabelValues("received"),
 		metricEventServiceSentResolvedTs:     metrics.EventServiceResolvedTsLagGauge.WithLabelValues("sent"),
 		metricScanEventDuration:              metrics.EventServiceScanDuration,
+
+		metricEventStoreDSAddPathNum:    metrics.DynamicStreamAddPathNum.WithLabelValues("event-service"),
+		metricEventStoreDSRemovePathNum: metrics.DynamicStreamRemovePathNum.WithLabelValues("event-service"),
+		metricEventStoreDSArrangeStreamNum: struct {
+			createSolo prometheus.Gauge
+			removeSolo prometheus.Gauge
+			shuffle    prometheus.Gauge
+		}{
+			createSolo: metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-service", "create-solo"),
+			removeSolo: metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-service", "remove-solo"),
+			shuffle:    metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-service", "shuffle"),
+		},
 	}
 
 	for i := 0; i < messageWorkerCount; i++ {
@@ -147,7 +166,6 @@ func newEventBroker(
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
-	// c.updateDispatcherSendTs(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
 }
@@ -328,7 +346,7 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	if task.resetTs.Load() == 0 {
 		remoteID := node.ID(task.info.GetServerID())
 		c.sendReadyEvent(remoteID, task)
-		log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.id))
+		//log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.id))
 		return false, common.DataRange{}
 	}
 
@@ -351,12 +369,7 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	}
 
 	// target ts range: (dataRange.StartTs, dataRange.EndTs]
-	ok, dmlState := c.eventStore.GetDispatcherDMLEventState(task.id)
-	if !ok {
-		return false, dataRange
-	}
-
-	if dataRange.StartTs >= dmlState.MaxEventCommitTs && dataRange.StartTs >= ddlState.MaxEventCommitTs {
+	if dataRange.StartTs >= task.latestCommitTs.Load() && dataRange.StartTs >= ddlState.MaxEventCommitTs {
 		// The dispatcher has no new events. In such case, we don't need to scan the event store.
 		// We just send the watermark to the dispatcher.
 		remoteID := node.ID(task.info.GetServerID())
@@ -396,7 +409,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 			task.isInitialized.Store(true)
 		},
 	}
-	log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.id))
+	//log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.id))
 	c.getMessageCh(task.workerIndex) <- wrapE
 }
 
@@ -527,6 +540,8 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 	c.wg.Add(1)
 	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 300)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
+	messageCh := c.messageCh[workerIndex]
+	tickCh := flushResolvedTsTicker.C
 	go func() {
 		defer c.wg.Done()
 		defer flushResolvedTsTicker.Stop()
@@ -534,7 +549,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 			select {
 			case <-ctx.Done():
 				return
-			case m := <-c.messageCh[workerIndex]:
+			case m := <-messageCh:
 				if m.msgType == pevent.TypeResolvedEvent {
 					// The message is a watermark, we need to cache it, and send it to the dispatcher
 					// when cache is full to reduce the number of messages.
@@ -561,7 +576,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 				// to keep the order of the resolvedTs and the message.
 				c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
 				c.sendMsg(ctx, tMsg, m.postSendFunc)
-			case <-flushResolvedTsTicker.C:
+			case <-tickCh:
 				for serverID, cache := range resolvedTsCacheMap {
 					c.flushResolvedTs(ctx, cache, serverID)
 				}
@@ -631,7 +646,7 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
 	c.wg.Add(1)
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(10 * time.Second)
 	go func() {
 		defer c.wg.Done()
 		log.Info("update metrics goroutine is started")
@@ -641,40 +656,41 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				log.Info("update metrics goroutine is closing")
 				return
 			case <-ticker.C:
-				// receivedMinResolvedTs := uint64(0)
-				// sentMinWaterMark := uint64(0)
-				// c.dispatchers.Range(func(key, value interface{}) bool {
-				// 	dispatcher := value.(*dispatcherStat)
-				// 	resolvedTs := dispatcher.resolvedTs.Load()
-				// 	if receivedMinResolvedTs == 0 || resolvedTs < receivedMinResolvedTs {
-				// 		receivedMinResolvedTs = resolvedTs
-				// 	}
-				// 	watermark := dispatcher.watermark.Load()
-				// 	if sentMinWaterMark == 0 || watermark < sentMinWaterMark {
-				// 		sentMinWaterMark = watermark
-				// 	}
-				// 	return true
-				// })
-				// if receivedMinResolvedTs == 0 {
-				// 	continue
-				// }
-				// phyResolvedTs := oracle.ExtractPhysical(receivedMinResolvedTs)
-				// lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
-				// c.metricEventServiceReceivedResolvedTs.Set(float64(phyResolvedTs))
-				// c.metricEventServiceResolvedTsLag.Set(lag)
-				// lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(sentMinWaterMark)) / 1e3
-				// c.metricEventServiceSentResolvedTs.Set(lag)
+				receivedMinResolvedTs := uint64(0)
+				sentMinWaterMark := uint64(0)
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
+					resolvedTs := dispatcher.resolvedTs.Load()
+					if receivedMinResolvedTs == 0 || resolvedTs < receivedMinResolvedTs {
+						receivedMinResolvedTs = resolvedTs
+					}
+					watermark := dispatcher.watermark.Load()
+					if sentMinWaterMark == 0 || watermark < sentMinWaterMark {
+						sentMinWaterMark = watermark
+					}
+					return true
+				})
+				if receivedMinResolvedTs == 0 {
+					continue
+				}
+				phyResolvedTs := oracle.ExtractPhysical(receivedMinResolvedTs)
+				lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
+				c.metricEventServiceReceivedResolvedTs.Set(float64(phyResolvedTs))
+				c.metricEventServiceResolvedTsLag.Set(lag)
+				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(sentMinWaterMark)) / 1e3
+				c.metricEventServiceSentResolvedTs.Set(lag)
 
 				dsMetrics := c.ds.GetMetrics()
-
-				if dsMetrics.MinHandleTS != 0 {
-					lag := float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dsMetrics.MinHandleTS)) / 1e3
-					c.metricEventServiceSentResolvedTs.Set(lag)
-				}
 
 				metricEventBrokerDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 				metricEventBrokerDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 				metricEventBrokerPendingScanTaskCount.Set(float64(len(c.taskQueue)))
+
+				c.metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))
+				c.metricEventStoreDSRemovePathNum.Set(float64(dsMetrics.RemovePath))
+				c.metricEventStoreDSArrangeStreamNum.createSolo.Set(float64(dsMetrics.ArrangeStream.CreateSolo))
+				c.metricEventStoreDSArrangeStreamNum.removeSolo.Set(float64(dsMetrics.ArrangeStream.RemoveSolo))
+				c.metricEventStoreDSArrangeStreamNum.shuffle.Set(float64(dsMetrics.ArrangeStream.Shuffle))
 			}
 		}
 	}()
@@ -712,8 +728,9 @@ func (c *eventBroker) close() {
 	c.ds.Close()
 }
 
-func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
+func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommitTs uint64) {
 	if d.onResolvedTs(resolvedTs) {
+		d.onLatestCommitTs(latestCommitTs)
 		// Note: don't block the caller of this function.
 		// select {
 		// case c.ds.In(d.id) <- newScanTask(d):
@@ -760,7 +777,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		id,
 		span,
 		info.GetStartTs(),
-		func(resolvedTs uint64) { c.onNotify(dispatcher, resolvedTs) },
+		func(resolvedTs uint64, latestCommitTs uint64) { c.onNotify(dispatcher, resolvedTs, latestCommitTs) },
 		info.IsOnlyReuse(),
 	)
 	if err != nil {
@@ -854,6 +871,8 @@ type dispatcherStat struct {
 	startTs uint64
 	// The max resolved ts received from event store.
 	resolvedTs atomic.Uint64
+	// The max latest commit ts received from event store.
+	latestCommitTs atomic.Uint64
 	// events <= checkpointTs will not needed by the dispatcher anymore
 	// TODO: maintain it
 	checkpointTs atomic.Uint64
@@ -933,6 +952,13 @@ func (a *dispatcherStat) onResolvedTs(resolvedTs uint64) bool {
 		log.Panic("resolved ts should not fallback")
 	}
 	return util.CompareAndMonotonicIncrease(&a.resolvedTs, resolvedTs)
+}
+
+func (a *dispatcherStat) onLatestCommitTs(latestCommitTs uint64) bool {
+	if latestCommitTs < a.latestCommitTs.Load() {
+		log.Panic("latest commit ts should not fallback")
+	}
+	return util.CompareAndMonotonicIncrease(&a.latestCommitTs, latestCommitTs)
 }
 
 // getDataRange returns the the data range that the dispatcher needs to scan.
