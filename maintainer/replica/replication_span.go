@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/retry"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/tikv/client-go/v2/oracle"
@@ -40,10 +41,11 @@ type SpanReplication struct {
 	Span         *heartbeatpb.TableSpan
 	ChangefeedID common.ChangeFeedID
 
-	schemaID int64
-	nodeID   node.ID
-	groupID  GroupID
-	status   *atomic.Pointer[heartbeatpb.TableSpanStatus]
+	schemaID   int64
+	nodeID     node.ID
+	groupID    GroupID
+	status     *atomic.Pointer[heartbeatpb.TableSpanStatus]
+	blockState *atomic.Pointer[heartbeatpb.State]
 
 	tsoClient TSOClient
 }
@@ -113,10 +115,17 @@ func NewWorkingReplicaSet(
 
 func (r *SpanReplication) initGroupID() {
 	r.groupID = defaultGroupID
-	span := r.Span
+	span := tablepb.Span{TableID: r.Span.TableID, StartKey: r.Span.StartKey, EndKey: r.Span.EndKey}
 	// check if the table is split
-	tableSpan := spanz.TableIDToComparableSpan(span.TableID)
-	if !bytes.Equal(span.StartKey, tableSpan.StartKey) || !bytes.Equal(span.EndKey, tableSpan.EndKey) {
+	totalSpan := spanz.TableIDToComparableSpan(span.TableID)
+	if !spanz.IsSubSpan(span, totalSpan) {
+		log.Panic("invalid span range", zap.String("changefeed id", r.ChangefeedID.Name()),
+			zap.String("id", r.ID.String()), zap.Int64("table id", span.TableID),
+			zap.String("totalSpan", totalSpan.String()),
+			zap.String("start", hex.EncodeToString(span.StartKey)),
+			zap.String("end", hex.EncodeToString(span.EndKey)))
+	}
+	if !bytes.Equal(span.StartKey, totalSpan.StartKey) || !bytes.Equal(span.EndKey, totalSpan.EndKey) {
 		r.groupID = getGroupID(groupTable, span.TableID)
 	}
 }
@@ -128,6 +137,26 @@ func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {
 			r.status.Store(newStatus)
 		}
 	}
+}
+
+func (r *SpanReplication) IsDropped() bool {
+	state := r.blockState.Load()
+	if state != nil && state.NeedDroppedTables != nil {
+		status := r.status.Load()
+		if status == nil || state.BlockTs != status.CheckpointTs+1 {
+			return false
+		}
+		for _, tableID := range state.NeedDroppedTables.TableIDs {
+			if tableID == r.Span.TableID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *SpanReplication) UpdateBlockState(newState heartbeatpb.State) {
+	r.blockState.Store(&newState)
 }
 
 func (r *SpanReplication) GetSchemaID() int64 {

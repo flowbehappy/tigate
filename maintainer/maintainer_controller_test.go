@@ -420,11 +420,12 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 		pdutil.NewTestRegionInfo(3, appendNew(totalSpan.StartKey, 'b'), appendNew(totalSpan.StartKey, 'c'), uint64(1)),
 		pdutil.NewTestRegionInfo(4, appendNew(totalSpan.StartKey, 'c'), totalSpan.EndKey, uint64(1)),
 	}
+	totalSpan2 := spanz.TableIDToComparableSpan(2)
 	pdAPI.regions[2] = []pdutil.RegionInfo{
-		pdutil.NewTestRegionInfo(2, []byte("a"), []byte("b"), uint64(1)),
-		pdutil.NewTestRegionInfo(3, []byte("b"), []byte("c"), uint64(1)),
-		pdutil.NewTestRegionInfo(4, []byte("c"), []byte("d"), uint64(1)),
-		pdutil.NewTestRegionInfo(5, []byte("e"), []byte("f"), uint64(1)),
+		pdutil.NewTestRegionInfo(2, appendNew(totalSpan2.StartKey, 'a'), appendNew(totalSpan2.StartKey, 'b'), uint64(1)),
+		pdutil.NewTestRegionInfo(3, appendNew(totalSpan2.StartKey, 'b'), appendNew(totalSpan2.StartKey, 'c'), uint64(1)),
+		pdutil.NewTestRegionInfo(4, appendNew(totalSpan2.StartKey, 'c'), appendNew(totalSpan2.StartKey, 'd'), uint64(1)),
+		pdutil.NewTestRegionInfo(5, appendNew(totalSpan2.StartKey, 'd'), totalSpan2.EndKey, uint64(1)),
 	}
 	reportedSpans := []*heartbeatpb.BootstrapTableSpan{
 		{
@@ -488,25 +489,26 @@ func TestDynamicSplitTableBasic(t *testing.T) {
 			}}, ddlSpan, 1000, 0)
 	s.taskScheduler = &mockThreadPool{}
 
-	totalSpan := spanz.TableIDToComparableSpan(1)
 	for i := 1; i <= 2; i++ {
-		totalSpan = spanz.TableIDToComparableSpan(int64(i))
+		totalSpan := spanz.TableIDToComparableSpan(int64(i))
 		span := &heartbeatpb.TableSpan{TableID: int64(i), StartKey: totalSpan.StartKey, EndKey: totalSpan.EndKey}
 		dispatcherID := common.NewDispatcherID()
 		spanReplica := replica.NewReplicaSet(cfID, dispatcherID, tsoClient, 1, span, 1)
 		spanReplica.SetNodeID(node.ID(fmt.Sprintf("node%d", i)))
 		s.replicationDB.AddReplicatingSpan(spanReplica)
 	}
+	totalSpan := spanz.TableIDToComparableSpan(1)
 	pdAPI.regions[1] = []pdutil.RegionInfo{
 		pdutil.NewTestRegionInfo(1, totalSpan.StartKey, appendNew(totalSpan.StartKey, 'a'), uint64(1)),
 		pdutil.NewTestRegionInfo(2, appendNew(totalSpan.StartKey, 'a'), appendNew(totalSpan.StartKey, 'b'), uint64(1)),
 		pdutil.NewTestRegionInfo(3, appendNew(totalSpan.StartKey, 'b'), appendNew(totalSpan.StartKey, 'c'), uint64(1)),
 		pdutil.NewTestRegionInfo(4, appendNew(totalSpan.StartKey, 'c'), totalSpan.EndKey, uint64(1)),
 	}
+	totalSpan2 := spanz.TableIDToComparableSpan(2)
 	pdAPI.regions[2] = []pdutil.RegionInfo{
-		pdutil.NewTestRegionInfo(5, totalSpan.StartKey, appendNew(totalSpan.StartKey, 'a'), uint64(1)),
-		pdutil.NewTestRegionInfo(6, appendNew(totalSpan.StartKey, 'a'), appendNew(totalSpan.StartKey, 'b'), uint64(1)),
-		pdutil.NewTestRegionInfo(7, appendNew(totalSpan.StartKey, 'b'), totalSpan.EndKey, uint64(1)),
+		pdutil.NewTestRegionInfo(5, totalSpan2.StartKey, appendNew(totalSpan2.StartKey, 'a'), uint64(1)),
+		pdutil.NewTestRegionInfo(6, appendNew(totalSpan2.StartKey, 'a'), appendNew(totalSpan2.StartKey, 'b'), uint64(1)),
+		pdutil.NewTestRegionInfo(7, appendNew(totalSpan2.StartKey, 'b'), totalSpan2.EndKey, uint64(1)),
 	}
 	replicas := s.replicationDB.GetReplicating()
 	require.Equal(t, 2, s.replicationDB.GetReplicatingSize())

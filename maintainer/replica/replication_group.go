@@ -107,7 +107,9 @@ func (db *ReplicationDB) GetAbsentByGroup(id GroupID, buffer []*SpanReplication,
 
 	g := db.mustGetGroup(id)
 	for _, stm := range g.absent {
-		buffer = append(buffer, stm)
+		if !stm.IsDropped() {
+			buffer = append(buffer, stm)
+		}
 		if len(buffer) >= maxSize {
 			break
 		}
