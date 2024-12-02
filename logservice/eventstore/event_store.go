@@ -54,7 +54,7 @@ import (
 var metricEventStoreDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-store")
 var metricEventStoreDSChannelSize = metrics.DynamicStreamEventChanSize.WithLabelValues("event-store")
 
-type ResolvedTsNotifier func(watermark uint64)
+type ResolvedTsNotifier func(watermark uint64, latestCommitTs uint64)
 
 type EventStore interface {
 	Name() string

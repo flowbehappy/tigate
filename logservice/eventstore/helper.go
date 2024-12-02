@@ -44,7 +44,7 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) boo
 		subStat.dispatchers.RLock()
 		defer subStat.dispatchers.RUnlock()
 		for _, notifier := range subStat.dispatchers.notifiers {
-			notifier(events[0].raw.CRTs)
+			notifier(events[0].raw.CRTs, subStat.maxEventCommitTs.Load())
 		}
 		return false
 	}

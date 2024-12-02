@@ -29,7 +29,7 @@ import (
 
 const (
 	resolvedTsCacheSize = 8192
-	streamCount         = 8
+	streamCount         = 16
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -166,7 +166,6 @@ func newEventBroker(
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
-	// c.updateDispatcherSendTs(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
 }
@@ -347,7 +346,7 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	if task.resetTs.Load() == 0 {
 		remoteID := node.ID(task.info.GetServerID())
 		c.sendReadyEvent(remoteID, task)
-		log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.id))
+		//log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.id))
 		return false, common.DataRange{}
 	}
 
@@ -370,12 +369,7 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	}
 
 	// target ts range: (dataRange.StartTs, dataRange.EndTs]
-	ok, dmlState := c.eventStore.GetDispatcherDMLEventState(task.id)
-	if !ok {
-		return false, dataRange
-	}
-
-	if dataRange.StartTs >= dmlState.MaxEventCommitTs && dataRange.StartTs >= ddlState.MaxEventCommitTs {
+	if dataRange.StartTs >= task.latestCommitTs.Load() && dataRange.StartTs >= ddlState.MaxEventCommitTs {
 		// The dispatcher has no new events. In such case, we don't need to scan the event store.
 		// We just send the watermark to the dispatcher.
 		remoteID := node.ID(task.info.GetServerID())
@@ -415,7 +409,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 			task.isInitialized.Store(true)
 		},
 	}
-	log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.id))
+	//log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.id))
 	c.getMessageCh(task.workerIndex) <- wrapE
 }
 
@@ -734,8 +728,9 @@ func (c *eventBroker) close() {
 	c.ds.Close()
 }
 
-func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
+func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommitTs uint64) {
 	if d.onResolvedTs(resolvedTs) {
+		d.onLatestCommitTs(latestCommitTs)
 		// Note: don't block the caller of this function.
 		// select {
 		// case c.ds.In(d.id) <- newScanTask(d):
@@ -782,7 +777,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		id,
 		span,
 		info.GetStartTs(),
-		func(resolvedTs uint64) { c.onNotify(dispatcher, resolvedTs) },
+		func(resolvedTs uint64, latestCommitTs uint64) { c.onNotify(dispatcher, resolvedTs, latestCommitTs) },
 		info.IsOnlyReuse(),
 	)
 	if err != nil {
@@ -876,6 +871,8 @@ type dispatcherStat struct {
 	startTs uint64
 	// The max resolved ts received from event store.
 	resolvedTs atomic.Uint64
+	// The max latest commit ts received from event store.
+	latestCommitTs atomic.Uint64
 	// events <= checkpointTs will not needed by the dispatcher anymore
 	// TODO: maintain it
 	checkpointTs atomic.Uint64
@@ -955,6 +952,13 @@ func (a *dispatcherStat) onResolvedTs(resolvedTs uint64) bool {
 		log.Panic("resolved ts should not fallback")
 	}
 	return util.CompareAndMonotonicIncrease(&a.resolvedTs, resolvedTs)
+}
+
+func (a *dispatcherStat) onLatestCommitTs(latestCommitTs uint64) bool {
+	if latestCommitTs < a.latestCommitTs.Load() {
+		log.Panic("latest commit ts should not fallback")
+	}
+	return util.CompareAndMonotonicIncrease(&a.latestCommitTs, latestCommitTs)
 }
 
 // getDataRange returns the the data range that the dispatcher needs to scan.
