@@ -73,6 +73,7 @@ func (oc *Controller) Execute() time.Time {
 
 		// is the lock necessary?
 		oc.lock.RLock()
+		// maybe check the the node state when scheduling the operator
 		msg := r.Schedule()
 		oc.lock.RUnlock()
 

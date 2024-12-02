@@ -97,6 +97,7 @@ func NewWorkingReplicaSet(
 		ChangefeedID: cfID,
 		nodeID:       nodeID,
 		status:       atomic.NewPointer(status),
+		blockState:   atomic.NewPointer[heartbeatpb.State](nil),
 		tsoClient:    tsoClient,
 	}
 	r.initGroupID()
