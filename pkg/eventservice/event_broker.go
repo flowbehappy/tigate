@@ -356,18 +356,18 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	}
 
 	// 2. Constrain the data range by the ddl state of the table.
-	// FIXME: remove this comment after testing
-	// ddlState := c.schemaStore.GetTableDDLEventState(task.info.GetTableSpan().TableID)
-	// if ddlState.ResolvedTs < dataRange.EndTs {
-	// 	dataRange.EndTs = ddlState.ResolvedTs
-	// }
+	ddlState := c.schemaStore.GetTableDDLEventState(task.info.GetTableSpan().TableID)
+	if ddlState.ResolvedTs < dataRange.EndTs {
+		dataRange.EndTs = ddlState.ResolvedTs
+	}
 
 	if dataRange.EndTs <= dataRange.StartTs {
 		return false, dataRange
 	}
 
 	// target ts range: (dataRange.StartTs, dataRange.EndTs]
-	if dataRange.StartTs >= task.latestCommitTs.Load() {
+	if dataRange.StartTs >= task.latestCommitTs.Load() &&
+		dataRange.StartTs >= ddlState.MaxEventCommitTs {
 		// The dispatcher has no new events. In such case, we don't need to scan the event store.
 		// We just send the watermark to the dispatcher.
 		remoteID := node.ID(task.info.GetServerID())
