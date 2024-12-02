@@ -160,14 +160,18 @@ func (s *hotSpans) clearHotSpansByGroup(groupID GroupID, spans ...*HotSpan) {
 	}
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	log.Info("clear outdated hot spans", zap.Int("count", len(spans)))
 	s.doClear(groupID, spans...)
 }
 
 func (s *hotSpans) doClear(groupID GroupID, spans ...*HotSpan) {
+	log.Info("clear hot spans", zap.String("group", printGroupID(groupID)), zap.Int("count", len(spans)))
 	hotSpanCache := s.getOrCreateGroup(groupID)
 	for _, span := range spans {
-		delete(hotSpanCache, span.ID)
+		if groupID == defaultGroupID {
+			delete(hotSpanCache, span.ID)
+		} else {
+			span.score = 0
+		}
 	}
 }
 
@@ -183,13 +187,13 @@ func (s *hotSpans) stat() string {
 		}
 		res.WriteString(printGroupID(groupID))
 		res.WriteString(": [")
-		cnt := [HotSpanScoreThreshold + 1]int{}
+		cnts := [HotSpanScoreThreshold + 1]int{}
 		for _, span := range hotSpanCache {
 			score := min(HotSpanScoreThreshold, span.score)
-			cnt[score]++
+			cnts[score]++
 			total++
 		}
-		for i, cnt := range cnt {
+		for i, cnt := range cnts {
 			if cnt == 0 {
 				continue
 			}
@@ -197,9 +201,12 @@ func (s *hotSpans) stat() string {
 			res.WriteString(strconv.Itoa(i + 1))
 			res.WriteString("->")
 			res.WriteString(strconv.Itoa(cnt))
-			res.WriteString("; ")
+			res.WriteString(";")
+			if i < len(cnts)-1 {
+				res.WriteString(" ")
+			}
 		}
-		res.WriteString("]")
+		res.WriteString("] ")
 	}
 	if total == 0 {
 		return "No hot spans"
