@@ -2,7 +2,6 @@ package schemastore
 
 import (
 	"context"
-	"math"
 	"sync/atomic"
 	"time"
 
@@ -139,7 +138,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 	tryUpdateResolvedTs := func() {
 		pendingTs := s.pendingResolvedTs.Load()
 		defer func() {
-			currentPhyTs := oracle.GetPhysical(s.pdClock.CurrentTime())
+			currentPhyTs := oracle.GetPhysical(time.Now())
 			resolvedPhyTs := oracle.ExtractPhysical(pendingTs)
 			resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
 			metrics.SchemaStoreResolvedTsLagGauge.Set(float64(resolvedLag))
@@ -241,7 +240,7 @@ func (s *schemaStore) GetTableDDLEventState(tableID int64) DDLEventState {
 	resolvedTs := s.resolvedTs.Load()
 	maxEventCommitTs := s.dataStorage.getMaxEventCommitTs(tableID, resolvedTs)
 	return DDLEventState{
-		ResolvedTs:       math.MaxUint64,
+		ResolvedTs:       resolvedTs,
 		MaxEventCommitTs: maxEventCommitTs,
 	}
 }
