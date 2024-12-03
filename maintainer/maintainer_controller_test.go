@@ -399,12 +399,37 @@ func TestBalanceUnEvenTask(t *testing.T) {
 	// add new node
 	nodeManager.GetAliveNodes()["node3"] = &node.Info{ID: "node3"}
 	s.schedulerController.GetScheduler(scheduler.BalanceScheduler).Execute()
-	require.Equal(t, 4, s.replicationDB.GetReplicatingSize())
-	require.Equal(t, 0, s.operatorController.OperatorSize())
+	require.Equal(t, 3, s.replicationDB.GetReplicatingSize())
+	require.Equal(t, 1, s.operatorController.OperatorSize())
 	//still on the primary node
 	require.Equal(t, 2, s.GetTaskSizeByNodeID("node1"))
 	require.Equal(t, 2, s.GetTaskSizeByNodeID("node2"))
 	require.Equal(t, 0, s.GetTaskSizeByNodeID("node3"))
+
+	for _, span := range s.replicationDB.GetTasksBySchemaID(1) {
+		if op := s.operatorController.GetOperator(span.ID); op != nil {
+			msg := op.Schedule()
+			require.NotNil(t, msg)
+			req := msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
+			require.True(t, req.ScheduleAction == heartbeatpb.ScheduleAction_Remove)
+			op.Check(msg.To, &heartbeatpb.TableSpanStatus{
+				ID:              span.ID.ToPB(),
+				ComponentStatus: heartbeatpb.ComponentState_Stopped,
+			})
+			require.False(t, op.IsFinished())
+
+			msg = op.Schedule()
+			req = msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
+			require.True(t, req.ScheduleAction == heartbeatpb.ScheduleAction_Create)
+			op.Check(msg.To, &heartbeatpb.TableSpanStatus{
+				ID:              span.ID.ToPB(),
+				ComponentStatus: heartbeatpb.ComponentState_Working,
+			})
+			require.True(t, op.IsFinished())
+			op.PostFinish()
+		}
+	}
+	require.Equal(t, 1, s.GetTaskSizeByNodeID("node3"))
 }
 
 func TestSplitTableWhenBootstrapFinished(t *testing.T) {
