@@ -276,8 +276,9 @@ func TestMaintainerSchedule(t *testing.T) {
 	var tables = make([]commonEvent.Table, 0, tableSize)
 	for id := 1; id <= tableSize; id++ {
 		tables = append(tables, commonEvent.Table{
-			SchemaID: 1,
-			TableID:  int64(id),
+			SchemaID:        1,
+			TableID:         int64(id),
+			SchemaTableName: &commonEvent.SchemaTableName{},
 		})
 	}
 	schemaStore := &mockSchemaStore{tables: tables}
