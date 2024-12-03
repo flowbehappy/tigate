@@ -121,7 +121,7 @@ func (r *SpanReplication) initGroupID() {
 	// check if the table is split
 	totalSpan := spanz.TableIDToComparableSpan(span.TableID)
 	if !spanz.IsSubSpan(span, totalSpan) {
-		log.Panic("invalid span range", zap.String("changefeed id", r.ChangefeedID.Name()),
+		log.Warn("invalid span range", zap.String("changefeed id", r.ChangefeedID.Name()),
 			zap.String("id", r.ID.String()), zap.Int64("table id", span.TableID),
 			zap.String("totalSpan", totalSpan.String()),
 			zap.String("start", hex.EncodeToString(span.StartKey)),
