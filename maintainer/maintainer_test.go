@@ -28,10 +28,8 @@ import (
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
-	configNew "github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
-	_ "github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils/dynstream"
@@ -309,12 +307,12 @@ func TestMaintainerSchedule(t *testing.T) {
 	taskScheduler := threadpool.NewThreadPoolDefault()
 	tsoClient := &mockTsoClient{}
 	maintainer := NewMaintainer(cfID,
-		&configNew.SchedulerConfig{
-			CheckBalanceInterval: configNew.TomlDuration(time.Minute),
+		&config.SchedulerConfig{
+			CheckBalanceInterval: config.TomlDuration(time.Minute),
 			AddTableBatchSize:    10000,
 		},
-		&configNew.ChangeFeedInfo{
-			Config: configNew.GetDefaultReplicaConfig(),
+		&config.ChangeFeedInfo{
+			Config: config.GetDefaultReplicaConfig(),
 		}, n, stream, taskScheduler, nil, tsoClient, nil, 10)
 	_ = stream.AddPath(cfID.Id, maintainer)
 
