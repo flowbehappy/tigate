@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"math"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -251,8 +250,8 @@ func loadAndApplyDDLHistory(
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
 	partitionMap map[int64]BasicPartitionInfo,
-) (sync.Map, []uint64, error) {
-	tablesDDLHistory := sync.Map{}
+) (map[int64][]uint64, []uint64, error) {
+	tablesDDLHistory := make(map[int64][]uint64)
 	tableTriggerDDLHistory := make([]uint64, 0)
 
 	// apply ddl jobs
