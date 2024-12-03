@@ -22,6 +22,7 @@ import (
 type mockSink struct {
 	dmls     []*commonEvent.DMLEvent
 	isNormal bool
+	sinkType common.SinkType
 }
 
 func (s *mockSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {
@@ -55,7 +56,7 @@ func (s *mockSink) Close(bool) error {
 }
 
 func (s *mockSink) SinkType() common.SinkType {
-	return common.MysqlSinkType
+	return s.sinkType
 }
 
 func (s *mockSink) IsNormal() bool {
@@ -69,10 +70,11 @@ func (s *mockSink) flushDMLs() {
 	s.dmls = make([]*commonEvent.DMLEvent, 0)
 }
 
-func newMockSink() *mockSink {
+func newMockSink(sinkType common.SinkType) *mockSink {
 	return &mockSink{
 		dmls:     make([]*commonEvent.DMLEvent, 0),
 		isNormal: true,
+		sinkType: sinkType,
 	}
 }
 
@@ -139,7 +141,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 
 	tableInfo := dmlEvent.TableInfo
 
-	sink := newMockSink()
+	sink := newMockSink(common.MysqlSinkType)
 	tableSpan := getCompleteTableSpan()
 	dispatcher := newDispatcherForTest(sink, tableSpan)
 	dispatcher.SetInitialTableInfo(tableInfo)
@@ -413,7 +415,7 @@ func TestUncompeleteTableSpanDispatcherHandleEvents(t *testing.T) {
 	ddlJob := helper.DDL2Job("create table t(id int primary key, v int)")
 	require.NotNil(t, ddlJob)
 
-	sink := newMockSink()
+	sink := newMockSink(common.MysqlSinkType)
 	tableSpan := getUncompleteTableSpan()
 	dispatcher := newDispatcherForTest(sink, tableSpan)
 
@@ -470,13 +472,16 @@ func TestUncompeleteTableSpanDispatcherHandleEvents(t *testing.T) {
 
 }
 
-func TestTableTriggerEventDispatcher(t *testing.T) {
+func TestTableTriggerEventDispatcherInMysql(t *testing.T) {
 	count = 0
 
 	ddlTableSpan := heartbeatpb.DDLSpan
-	sink := newMockSink()
+	sink := newMockSink(common.MysqlSinkType)
 	tableTriggerEventDispatcher := newDispatcherForTest(sink, ddlTableSpan)
-	require.NotNil(t, tableTriggerEventDispatcher.tableSchemaStore)
+	require.Nil(t, tableTriggerEventDispatcher.tableSchemaStore)
+
+	err := tableTriggerEventDispatcher.InitalizeTableSchemaStore([]*heartbeatpb.SchemaInfo{})
+	require.NoError(t, err)
 
 	helper := commonEvent.NewEventTestHelper(t)
 	defer helper.Close()
@@ -503,9 +508,6 @@ func TestTableTriggerEventDispatcher(t *testing.T) {
 	tableIds := tableTriggerEventDispatcher.tableSchemaStore.GetAllTableIds()
 	require.Equal(t, 1, len(tableIds))
 	require.Equal(t, int64(0), tableIds[0])
-
-	tableNames := tableTriggerEventDispatcher.tableSchemaStore.GetAllTableNames(2)
-	require.Equal(t, int(0), len(tableNames))
 
 	// ddl influences tableSchemaStore
 	ddlEvent = &commonEvent.DDLEvent{
@@ -540,6 +542,72 @@ func TestTableTriggerEventDispatcher(t *testing.T) {
 	require.Equal(t, int(2), len(tableIds))
 	require.Equal(t, int64(1), tableIds[0])
 	require.Equal(t, int64(0), tableIds[1])
+}
+
+func TestTableTriggerEventDispatcherInKafka(t *testing.T) {
+	count = 0
+
+	ddlTableSpan := heartbeatpb.DDLSpan
+	sink := newMockSink(common.KafkaSinkType)
+	tableTriggerEventDispatcher := newDispatcherForTest(sink, ddlTableSpan)
+	require.Nil(t, tableTriggerEventDispatcher.tableSchemaStore)
+
+	err := tableTriggerEventDispatcher.InitalizeTableSchemaStore([]*heartbeatpb.SchemaInfo{})
+	require.NoError(t, err)
+
+	helper := commonEvent.NewEventTestHelper(t)
+	defer helper.Close()
+
+	helper.Tk().MustExec("use test")
+	ddlJob := helper.DDL2Job("create table t(id int primary key, v int)")
+	require.NotNil(t, ddlJob)
+
+	// basic ddl event(non-block)
+	ddlEvent := &commonEvent.DDLEvent{
+		FinishedTs: 2,
+		BlockedTables: &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{0},
+		},
+	}
+
+	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	require.Equal(t, true, block)
+	// no pending event
+	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
+	require.Equal(t, 1, count)
+
+	tableNames := tableTriggerEventDispatcher.tableSchemaStore.GetAllTableNames(2)
+	require.Equal(t, int(0), len(tableNames))
+
+	// ddl influences tableSchemaStore
+	ddlEvent = &commonEvent.DDLEvent{
+		FinishedTs: 4,
+		BlockedTables: &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{0},
+		},
+		NeedAddedTables: []commonEvent.Table{
+			{
+				SchemaID: 1,
+				TableID:  1,
+			},
+		},
+		TableNameChange: &commonEvent.TableNameChange{
+			AddName: []commonEvent.SchemaTableName{
+				{
+					SchemaName: "test",
+					TableName:  "t1",
+				},
+			},
+		},
+	}
+
+	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	require.Equal(t, true, block)
+	// no pending event
+	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
+	require.Equal(t, 2, count)
 
 	tableNames = tableTriggerEventDispatcher.tableSchemaStore.GetAllTableNames(3)
 	require.Equal(t, int(0), len(tableNames))
@@ -565,7 +633,7 @@ func TestDispatcherClose(t *testing.T) {
 	tableInfo := dmlEvent.TableInfo
 
 	{
-		sink := newMockSink()
+		sink := newMockSink(common.MysqlSinkType)
 		dispatcher := newDispatcherForTest(sink, getCompleteTableSpan())
 
 		dispatcher.SetInitialTableInfo(tableInfo)
@@ -587,7 +655,7 @@ func TestDispatcherClose(t *testing.T) {
 
 	// test sink is not normal
 	{
-		sink := newMockSink()
+		sink := newMockSink(common.MysqlSinkType)
 		dispatcher := newDispatcherForTest(sink, getCompleteTableSpan())
 
 		dispatcher.SetInitialTableInfo(tableInfo)
