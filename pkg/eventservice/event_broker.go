@@ -31,6 +31,7 @@ const (
 	defaultScanWorkerCount = 64
 	resolvedTsCacheSize    = 8192
 	streamCount            = 4
+	checkNeedScanInterval  = time.Millisecond * 500
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -159,7 +160,7 @@ func newEventBroker(
 }
 
 func (c *eventBroker) runCheckNeedScanWorker(ctx context.Context) {
-	ticker := time.NewTicker(time.Millisecond * 10)
+	ticker := time.NewTicker(time.Millisecond * 50)
 	go func() {
 		defer ticker.Stop()
 		for {
@@ -169,13 +170,11 @@ func (c *eventBroker) runCheckNeedScanWorker(ctx context.Context) {
 			case <-ticker.C:
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
-
 					needScan, _ := c.checkNeedScan(dispatcher, false)
 					if needScan {
 						dispatcher.scanning.Store(true)
 						c.taskQueue <- dispatcher
 					}
-
 					return true
 				})
 			}
@@ -351,8 +350,10 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 // If the dispatcher needs to scan the event store, it returns true.
 // If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
 func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common.DataRange) {
-	if !mustCheck && task.scanning.Load() {
-		return false, common.DataRange{}
+	if !mustCheck {
+		if task.scanning.Load() || time.Since(task.lastCheckTime) < checkNeedScanInterval {
+			return false, common.DataRange{}
+		}
 	}
 
 	if task.resetTs.Load() == 0 {
@@ -399,6 +400,8 @@ func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common
 		c.sendWatermark(remoteID, task, resolvedTs, task.metricEventServiceSendResolvedTsCount)
 		return false, dataRange
 	}
+
+	task.lastCheckTime = time.Now()
 
 	return true, dataRange
 }

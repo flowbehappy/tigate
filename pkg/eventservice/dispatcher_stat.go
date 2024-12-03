@@ -63,7 +63,8 @@ type dispatcherStat struct {
 	// scanning is used to indicate whether the scan task is running.
 	// If so, we should wait until it is done before we send next resolvedTs event of
 	// this dispatcher.
-	scanning atomic.Bool
+	scanning      atomic.Bool
+	lastCheckTime time.Time
 
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
