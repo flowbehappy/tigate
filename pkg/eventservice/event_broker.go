@@ -31,7 +31,7 @@ const (
 	defaultScanWorkerCount = 32
 	resolvedTsCacheSize    = 8192
 	streamCount            = 4
-	checkNeedScanInterval  = time.Millisecond * 2000
+	checkNeedScanInterval  = time.Millisecond * 1000
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -172,11 +172,13 @@ func (c *eventBroker) runCheckDDLStateWorker(ctx context.Context) {
 				currentDDLResolvedTs := c.schemaStore.GetResolvedTs()
 				if currentDDLResolvedTs > lastDDLResolvedTs {
 					lastDDLResolvedTs = currentDDLResolvedTs
+
 					c.dispatchers.Range(func(key, value interface{}) bool {
 						d := value.(*dispatcherStat)
 						if time.Since(d.lastSentTime.Load()) < checkNeedScanInterval {
 							return true
 						}
+
 						needScan, _ := c.checkNeedScan(d, false)
 						if needScan {
 							c.taskQueue <- d
@@ -201,8 +203,8 @@ func (c *eventBroker) sendWatermark(
 		server,
 		re,
 		d.getEventSenderState())
-	c.getMessageCh(d.workerIndex) <- resolvedEvent
 	d.lastSentTime.Store(time.Now())
+	c.getMessageCh(d.workerIndex) <- resolvedEvent
 	// We comment out the following code is because we found when some resolvedTs are dropped,
 	// the lag of the resolvedTs will increase.
 	// select {
