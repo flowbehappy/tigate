@@ -121,9 +121,6 @@ func (a *dispatcherStat) onResolvedTs(resolvedTs uint64) bool {
 }
 
 func (a *dispatcherStat) onLatestCommitTs(latestCommitTs uint64) bool {
-	if latestCommitTs < a.latestCommitTs.Load() {
-		log.Panic("latest commit ts should not fallback")
-	}
 	return util.CompareAndMonotonicIncrease(&a.latestCommitTs, latestCommitTs)
 }
 
