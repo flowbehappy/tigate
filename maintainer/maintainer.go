@@ -557,6 +557,8 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 	m.barrier = barrier
 	m.bootstrapped = true
 
+	// Memory Consumption is 64(tableName/schemaName limit) * 4(utf8.UTFMax) * 2(tableName+schemaName) * tableNum
+	// For 100w tables, it's about 488MB memory.
 	m.postBootstrapMsg = msg
 	m.sendPostBootstrapRequest()
 }
