@@ -178,7 +178,10 @@ func (c *Controller) AddNewTable(table commonEvent.Table, startTs uint64) {
 
 // FinishBootstrap adds working state tasks to this controller directly,
 // it reported by the bootstrap response
-func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.MaintainerBootstrapResponse) (*Barrier, error) {
+func (c *Controller) FinishBootstrap(
+	cachedResp map[node.ID]*heartbeatpb.MaintainerBootstrapResponse,
+	isMysqlCompatibleBackend bool,
+) (*Barrier, *heartbeatpb.MaintainerPostBootstrapRequest, error) {
 	if c.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", c.changefeedID.Name()),
@@ -210,7 +213,7 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 		log.Error("load table from scheme store failed",
 			zap.String("changefeed", c.changefeedID.Name()),
 			zap.Error(err))
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication])
@@ -247,7 +250,24 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 		}
 	}
 
+	schemaInfos := map[int64]*heartbeatpb.SchemaInfo{}
 	for _, table := range tables {
+		if _, ok := schemaInfos[table.SchemaID]; !ok {
+			schemaInfos[table.SchemaID] = &heartbeatpb.SchemaInfo{}
+			if isMysqlCompatibleBackend {
+				schemaInfos[table.SchemaID].SchemaID = table.SchemaID
+			} else {
+				schemaInfos[table.SchemaID].SchemaName = table.SchemaName
+			}
+		}
+		tableInfo := &heartbeatpb.TableInfo{}
+		if isMysqlCompatibleBackend {
+			tableInfo.TableID = table.TableID
+		} else {
+			tableInfo.TableName = table.TableName
+		}
+		schemaInfos[table.SchemaID].Tables = append(schemaInfos[table.SchemaID].Tables, tableInfo)
+
 		tableMap, ok := workingMap[table.TableID]
 		if !ok {
 			c.AddNewTable(table, c.startCheckpointTs)
@@ -294,7 +314,16 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 	c.taskHandlers = append(c.taskHandlers, c.taskScheduler.Submit(c.operatorController, time.Now()))
 
 	c.bootstrapped = true
-	return barrier, nil
+
+	initSchemaInfos := make([]*heartbeatpb.SchemaInfo, 0, len(schemaInfos))
+	for _, info := range schemaInfos {
+		initSchemaInfos = append(initSchemaInfos, info)
+	}
+	return barrier, &heartbeatpb.MaintainerPostBootstrapRequest{
+		ChangefeedID:                  c.changefeedID.ToPB(),
+		TableTriggerEventDispatcherId: c.ddlDispatcherID.ToPB(),
+		Schemas:                       initSchemaInfos,
+	}, nil
 }
 
 func (c *Controller) Stop() {

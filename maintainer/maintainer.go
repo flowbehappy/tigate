@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
@@ -75,7 +76,8 @@ type Maintainer struct {
 
 	removed *atomic.Bool
 
-	bootstrapped bool
+	bootstrapped     bool
+	postBootstrapMsg *heartbeatpb.MaintainerPostBootstrapRequest
 
 	// startCheckpointTs is the check point ts when the maintainer is created
 	// it's will be sent to dispatcher manager to initialize the checkpoint ts and get the real checkpoint ts
@@ -332,6 +334,8 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) {
 		m.onBlockStateRequest(msg)
 	case messaging.TypeMaintainerBootstrapResponse:
 		m.onMaintainerBootstrapResponse(msg)
+	case messaging.TypeMaintainerPostBootstrapResponse:
+		m.onMaintainerPostBootstrapResponse(msg)
 	case messaging.TypeMaintainerCloseResponse:
 		m.onNodeClosed(msg.From, msg.Message[0].(*heartbeatpb.MaintainerCloseResponse))
 	case messaging.TypeRemoveMaintainerRequest:
@@ -477,16 +481,21 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 	if req.Err != nil {
 		log.Warn("dispatcher report an error",
 			zap.String("changefeed", m.id.Name()),
+			zap.String("from", msg.From.String()),
 			zap.String("error", req.Err.Message))
-		m.errLock.Lock()
-		m.statusChanged.Store(true)
-		m.runningErrors[msg.From] = req.Err
-		req.Err.Node = msg.From.String()
-		if info, ok := m.nodeManager.GetAliveNodes()[msg.From]; ok {
-			req.Err.Node = info.AdvertiseAddr
-		}
-		m.errLock.Unlock()
+		m.onError(msg.From, req.Err)
 	}
+}
+
+func (m *Maintainer) onError(from node.ID, err *heartbeatpb.RunningError) {
+	err.Node = from.String()
+	if info, ok := m.nodeManager.GetAliveNodes()[from]; ok {
+		err.Node = info.AdvertiseAddr
+	}
+	m.errLock.Lock()
+	m.statusChanged.Store(true)
+	m.runningErrors[from] = err
+	m.errLock.Unlock()
 }
 
 func (m *Maintainer) onBlockStateRequest(msg *messaging.TargetMessage) {
@@ -508,31 +517,58 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 		log.Warn("maintainer bootstrap failed",
 			zap.String("changefeed", m.id.Name()),
 			zap.String("error", resp.Err.Message))
-		m.errLock.Lock()
-		m.statusChanged.Store(true)
-		m.runningErrors[msg.From] = resp.Err
-		resp.Err.Node = msg.From.String()
-		if info, ok := m.nodeManager.GetAliveNodes()[msg.From]; ok {
-			resp.Err.Node = info.AdvertiseAddr
-		}
-		m.errLock.Unlock()
+		m.onError(msg.From, resp.Err)
 		return
 	}
 	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse))
 	m.onBootstrapDone(cachedResp)
 }
 
+func (m *Maintainer) onMaintainerPostBootstrapResponse(msg *messaging.TargetMessage) {
+	log.Info("received maintainer post bootstrap response",
+		zap.String("changefeed", m.id.Name()),
+		zap.Any("server", msg.From))
+	resp := msg.Message[0].(*heartbeatpb.MaintainerPostBootstrapResponse)
+	if resp.Err != nil {
+		log.Warn("maintainer post bootstrap failed",
+			zap.String("changefeed", m.id.Name()),
+			zap.String("error", resp.Err.Message))
+		m.onError(msg.From, resp.Err)
+		return
+	}
+	// disable resend post bootstrap message
+	m.postBootstrapMsg = nil
+}
+
 func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.MaintainerBootstrapResponse) {
 	if cachedResp == nil {
 		return
 	}
-	barrier, err := m.controller.FinishBootstrap(cachedResp)
+	isMysqlCompatibleBackend, err := util.IsMysqlCompatibleBackend(m.config.SinkURI)
+	if err != nil {
+		m.handleError(err)
+		return
+	}
+	barrier, msg, err := m.controller.FinishBootstrap(cachedResp, isMysqlCompatibleBackend)
 	if err != nil {
 		m.handleError(err)
 		return
 	}
 	m.barrier = barrier
 	m.bootstrapped = true
+
+	// Memory Consumption is 64(tableName/schemaName limit) * 4(utf8.UTFMax) * 2(tableName+schemaName) * tableNum
+	// For a extreme case(100w tables, and 64 utf8 characters for each name), the memory consumption is about 488MB.
+	// For a normal case(100w tables, and 16 ascii characters for each name), the memory consumption is about 30MB.
+	m.postBootstrapMsg = msg
+	m.sendPostBootstrapRequest()
+}
+
+func (m *Maintainer) sendPostBootstrapRequest() {
+	if m.postBootstrapMsg != nil {
+		msg := messaging.NewSingleTargetMessage(m.selfNode.ID, messaging.DispatcherManagerManagerTopic, m.postBootstrapMsg)
+		m.sendMessages([]*messaging.TargetMessage{msg})
+	}
 }
 
 func (m *Maintainer) onNodeClosed(from node.ID, response *heartbeatpb.MaintainerCloseResponse) {
@@ -551,6 +587,9 @@ func (m *Maintainer) handleResendMessage() {
 	}
 	// resend bootstrap message
 	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
+	if m.postBootstrapMsg != nil {
+		m.sendPostBootstrapRequest()
+	}
 	if m.barrier != nil {
 		// resend barrier ack messages
 		m.sendMessages(m.barrier.Resend())

@@ -110,6 +110,9 @@ func (m *Manager) recvMessages(ctx context.Context, msg *messaging.TargetMessage
 	case messaging.TypeMaintainerBootstrapResponse:
 		req := msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse)
 		return m.dispatcherMaintainerMessage(ctx, common.NewChangefeedIDFromPB(req.ChangefeedID), msg)
+	case messaging.TypeMaintainerPostBootstrapResponse:
+		req := msg.Message[0].(*heartbeatpb.MaintainerPostBootstrapResponse)
+		return m.dispatcherMaintainerMessage(ctx, common.NewChangefeedIDFromPB(req.ChangefeedID), msg)
 	// receive heartbeat message from dispatchers
 	case messaging.TypeHeartBeatRequest:
 		req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
