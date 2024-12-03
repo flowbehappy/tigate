@@ -218,6 +218,12 @@ func (e *EventDispatcherManager) close(remove bool) {
 	toCloseDispatchers := make([]*dispatcher.Dispatcher, 0)
 	e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) {
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
+		if dispatcher.IsTableTriggerEventDispatcher() && e.sink.SinkType() != common.MysqlSinkType {
+			err := appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RemoveCheckpointTsMessage(e.changefeedID)
+			if err != nil {
+				log.Error("remove checkpointTs message failed", zap.Error(err), zap.Any("changefeedID", e.changefeedID))
+			}
+		}
 		dispatcher.Remove()
 		_, ok := dispatcher.TryClose()
 		if !ok {
@@ -298,6 +304,11 @@ func (e *EventDispatcherManager) InitalizeTableTriggerEventDispatcher(schemaInfo
 	// table trigger event dispatcher can register to event collector to receive events after finish the initial table schema store from the maintainer.
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).AddDispatcher(e.tableTriggerEventDispatcher, int(e.config.MemoryQuota))
 
+	// when sink is not mysql-class, table trigger event dispatcher need to receive the checkpointTs message from maintainer.
+	if e.sink.SinkType() != common.MysqlSinkType {
+		appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterCheckpointTsMessageDs(e)
+	}
+
 	return nil
 }
 
@@ -353,7 +364,7 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 			e.heartBeatTask = newHeartBeatTask(e)
 		}
 
-		if tableSpans[idx].Equal(heartbeatpb.DDLSpan) {
+		if d.IsTableTriggerEventDispatcher() {
 			e.tableTriggerEventDispatcher = d
 		} else {
 			e.schemaIDToDispatchers.Set(schemaIds[idx], id)

@@ -86,13 +86,12 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if m.sink.SinkType() != common.MysqlSinkType {
-		err = c.checkpointTsMessageDynamicStream.AddPath(m.changefeedID, m)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	return nil
+}
+
+func (c *HeartBeatCollector) RegisterCheckpointTsMessageDs(m *EventDispatcherManager) error {
+	err := c.checkpointTsMessageDynamicStream.AddPath(m.changefeedID, m)
+	return errors.Trace(err)
 }
 
 func (c *HeartBeatCollector) RemoveEventDispatcherManager(m *EventDispatcherManager) error {
@@ -103,12 +102,6 @@ func (c *HeartBeatCollector) RemoveEventDispatcherManager(m *EventDispatcherMana
 	err = c.schedulerDispatcherRequestDynamicStream.RemovePath(m.changefeedID)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if m.sink.SinkType() != common.MysqlSinkType {
-		err = c.checkpointTsMessageDynamicStream.RemovePath(m.changefeedID)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
 	return nil
 }
