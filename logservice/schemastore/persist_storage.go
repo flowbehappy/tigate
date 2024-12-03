@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -48,46 +49,61 @@ const dataDir = "schema_store"
 //  2. incremental ddl jobs
 //  3. metadata which describes the valid data range on disk
 type persistentStorage struct {
-	pdCli pd.Client
-
+	pdCli     pd.Client
 	kvStorage kv.Storage
+	db        *pebble.DB
 
-	db *pebble.DB
-
-	mu sync.RWMutex
-
-	// the current gcTs on disk
-	gcTs uint64
-
-	upperBound UpperBoundMeta
-
-	upperBoundChanged bool
-
-	tableMap map[int64]*BasicTableInfo
-
-	partitionMap map[int64]BasicPartitionInfo
-
-	// schemaID -> database info
-	// it contains all databases and deleted databases
-	// will only be removed when its delete version is smaller than gc ts
+	// This mutex protects the following fields:
+	//  1. databaseMap
+	//  2. tableTriggerDDLHistory
+	//  3. upperBound
+	mu          sync.RWMutex
 	databaseMap map[int64]*BasicDatabaseInfo
-
-	// table id -> a sorted list of finished ts for the table's ddl events
-	tablesDDLHistory map[int64][]uint64
-
 	// it has two use cases:
 	// 1. store the ddl events need to send to a table dispatcher
 	//    Note: some ddl events in the history may never be send,
 	//          for example the create table ddl, truncate table ddl(usually the first event)
 	// 2. build table info store for a table
 	tableTriggerDDLHistory []uint64
+	upperBound             UpperBoundMeta
+	upperBoundChanged      bool
 
+	// shards is a slice of storageShard, each storageShard contains a group of tables
+	shards   []*storageShard
+	shardNum int
+
+	// the current gcTs on disk
+	gcTs atomic.Uint64
+}
+
+type storageShard struct {
+	mu sync.RWMutex
+
+	// shard by tableID
+	tableMap     map[int64]*BasicTableInfo
+	partitionMap map[int64]BasicPartitionInfo
+	// table id -> a sorted list of finished ts for the table's ddl events
+	tablesDDLHistory map[int64][]uint64
 	// tableID -> versioned store
 	// it just contains tables which is used by dispatchers
 	tableInfoStoreMap map[int64]*versionedTableInfoStore
-
 	// tableID -> total registered count
 	tableRegisteredCount map[int64]int
+}
+
+func newStorageShard() *storageShard {
+	return &storageShard{
+		tableMap:             make(map[int64]*BasicTableInfo),
+		partitionMap:         make(map[int64]BasicPartitionInfo),
+		tablesDDLHistory:     make(map[int64][]uint64),
+		tableInfoStoreMap:    make(map[int64]*versionedTableInfoStore),
+		tableRegisteredCount: make(map[int64]int),
+	}
+}
+
+// get shard by tableID
+func (p *persistentStorage) getShard(tableID int64) *storageShard {
+	return p.shards[tableID%int64(p.shardNum)]
 }
 
 func exists(path string) bool {
@@ -143,15 +159,15 @@ func newPersistentStorage(
 	}
 
 	dataStorage := &persistentStorage{
-		pdCli:                  pdCli,
-		kvStorage:              storage,
-		tableMap:               make(map[int64]*BasicTableInfo),
-		partitionMap:           make(map[int64]BasicPartitionInfo),
-		databaseMap:            make(map[int64]*BasicDatabaseInfo),
-		tablesDDLHistory:       make(map[int64][]uint64),
-		tableTriggerDDLHistory: make([]uint64, 0),
-		tableInfoStoreMap:      make(map[int64]*versionedTableInfoStore),
-		tableRegisteredCount:   make(map[int64]int),
+		pdCli:     pdCli,
+		kvStorage: storage,
+		shards:    make([]*storageShard, 100),
+		shardNum:  100,
+		gcTs:      atomic.Uint64{},
+	}
+
+	for i := 0; i < dataStorage.shardNum; i++ {
+		dataStorage.shards[i] = newStorageShard()
 	}
 
 	isDataReusable := false
@@ -176,7 +192,7 @@ func newPersistentStorage(
 
 		if isDataReusable {
 			dataStorage.db = db
-			dataStorage.gcTs = gcTs
+			dataStorage.gcTs.Store(gcTs)
 			dataStorage.upperBound = upperBound
 			dataStorage.initializeFromDisk()
 		} else {
@@ -209,11 +225,21 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 		zap.Uint64("snapTs", gcTs))
 
 	var err error
-	if p.databaseMap, p.tableMap, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs, true); err != nil {
-		// TODO: retry
+	databaseMap, tableMap, err := writeSchemaSnapshotAndMeta(p.db, storage, gcTs, true)
+
+	if err != nil {
 		log.Fatal("fail to initialize from kv snapshot")
 	}
-	p.gcTs = gcTs
+
+	p.databaseMap = databaseMap
+
+	tableCount := 0
+	for tableID, tableInfo := range tableMap {
+		p.getShard(tableID).tableMap[tableID] = tableInfo
+		tableCount++
+	}
+
+	p.gcTs.Store(gcTs)
 	p.upperBound = UpperBoundMeta{
 		FinishedDDLTs: 0,
 		SchemaVersion: 0,
@@ -221,33 +247,50 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	}
 	writeUpperBoundMeta(p.db, p.upperBound)
 	log.Info("schema store initialize from kv storage done",
-		zap.Int("databaseMapLen", len(p.databaseMap)),
-		zap.Int("tableMapLen", len(p.tableMap)),
+		zap.Int("databaseCount", len(p.databaseMap)),
+		zap.Int("tableCount", tableCount),
 		zap.Any("duration(s)", time.Since(now).Seconds()))
 }
 
 func (p *persistentStorage) initializeFromDisk() {
-	cleanObsoleteData(p.db, 0, p.gcTs)
+	cleanObsoleteData(p.db, 0, p.gcTs.Load())
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
 
 	var err error
-	if p.databaseMap, err = loadDatabasesInKVSnap(storageSnap, p.gcTs); err != nil {
+	if p.databaseMap, err = loadDatabasesInKVSnap(storageSnap, p.gcTs.Load()); err != nil {
 		log.Fatal("load database info from disk failed")
 	}
 
-	if p.tableMap, p.partitionMap, err = loadTablesInKVSnap(storageSnap, p.gcTs, p.databaseMap); err != nil {
+	tableMap, partitionMap, err := loadTablesInKVSnap(storageSnap, p.gcTs.Load(), p.databaseMap)
+	if err != nil {
 		log.Fatal("load tables in kv snapshot failed")
 	}
 
-	if p.tablesDDLHistory, p.tableTriggerDDLHistory, err = loadAndApplyDDLHistory(
+	for tableID, tableInfo := range tableMap {
+		p.getShard(tableID).tableMap[tableID] = tableInfo
+	}
+
+	for tableID, partitionInfo := range partitionMap {
+		p.getShard(tableID).partitionMap[tableID] = partitionInfo
+	}
+
+	tablesDDLHistory, tableTriggerDDLHistory, err := loadAndApplyDDLHistory(
 		storageSnap,
-		p.gcTs,
+		p.gcTs.Load(),
 		p.upperBound.FinishedDDLTs,
 		p.databaseMap,
-		p.tableMap,
-		p.partitionMap); err != nil {
+		tableMap,
+		partitionMap)
+
+	p.tableTriggerDDLHistory = tableTriggerDDLHistory
+
+	for tableID, ddlHistory := range tablesDDLHistory {
+		p.getShard(tableID).tablesDDLHistory[tableID] = ddlHistory
+	}
+
+	if err != nil {
 		log.Fatal("fail to initialize from disk")
 	}
 }
@@ -258,12 +301,10 @@ func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filt
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
 
-	p.mu.Lock()
-	if snapTs < p.gcTs {
+	if snapTs < p.gcTs.Load() {
 		return nil, fmt.Errorf("snapTs %d is smaller than gcTs %d", snapTs, p.gcTs)
 	}
-	gcTs := p.gcTs
-	p.mu.Unlock()
+	gcTs := p.gcTs.Load()
 
 	start := time.Now()
 	defer func() {
@@ -276,18 +317,21 @@ func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filt
 
 // only return when table info is initialized
 func (p *persistentStorage) registerTable(tableID int64, startTs uint64) error {
-	p.mu.Lock()
-	if startTs < p.gcTs {
-		p.mu.Unlock()
-		return fmt.Errorf("startTs %d is smaller than gcTs %d", startTs, p.gcTs)
+	if startTs < p.gcTs.Load() {
+		return fmt.Errorf("startTs %d is smaller than gcTs %d", startTs, p.gcTs.Load())
 	}
-	p.tableRegisteredCount[tableID] += 1
-	store, ok := p.tableInfoStoreMap[tableID]
+	shardStore := p.getShard(tableID)
+
+	shardStore.mu.Lock()
+	shardStore.tableRegisteredCount[tableID] += 1
+	store, ok := shardStore.tableInfoStoreMap[tableID]
 	if !ok {
 		store = newEmptyVersionedTableInfoStore(tableID)
-		p.tableInfoStoreMap[tableID] = store
+		shardStore.tableInfoStoreMap[tableID] = store
 	}
-	p.mu.Unlock()
+	// Must unlock before buildVersionedTableInfoStore, because buildVersionedTableInfoStore will also
+	// need to lock the shard store
+	shardStore.mu.Unlock()
 
 	if !ok {
 		return p.buildVersionedTableInfoStore(store)
@@ -301,14 +345,16 @@ func (p *persistentStorage) registerTable(tableID int64, startTs uint64) error {
 }
 
 func (p *persistentStorage) unregisterTable(tableID int64) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.tableRegisteredCount[tableID] -= 1
-	if p.tableRegisteredCount[tableID] <= 0 {
-		if _, ok := p.tableInfoStoreMap[tableID]; !ok {
+	shardStore := p.getShard(tableID)
+	shardStore.mu.Lock()
+	defer shardStore.mu.Unlock()
+
+	shardStore.tableRegisteredCount[tableID] -= 1
+	if shardStore.tableRegisteredCount[tableID] <= 0 {
+		if _, ok := shardStore.tableInfoStoreMap[tableID]; !ok {
 			return fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 		}
-		delete(p.tableInfoStoreMap, tableID)
+		delete(shardStore.tableInfoStoreMap, tableID)
 		log.Info("unregister table",
 			zap.Int64("tableID", tableID))
 	}
@@ -316,39 +362,43 @@ func (p *persistentStorage) unregisterTable(tableID int64) error {
 }
 
 func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {
-	p.mu.Lock()
-	store, ok := p.tableInfoStoreMap[tableID]
+	shardStore := p.getShard(tableID)
+	shardStore.mu.RLock()
+	store, ok := shardStore.tableInfoStoreMap[tableID]
+	shardStore.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 	}
-	p.mu.Unlock()
 	return store.getTableInfo(ts)
 }
 
 // TODO: this may consider some shouldn't be send ddl, like create table, does it matter?
 func (p *persistentStorage) getMaxEventCommitTs(tableID int64, ts uint64) uint64 {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if len(p.tablesDDLHistory[tableID]) == 0 {
+	shardStore := p.getShard(tableID)
+	shardStore.mu.RLock()
+	defer shardStore.mu.RUnlock()
+
+	if len(shardStore.tablesDDLHistory[tableID]) == 0 {
 		return 0
 	}
-	index := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
-		return p.tablesDDLHistory[tableID][i] > ts
+	index := sort.Search(len(shardStore.tablesDDLHistory[tableID]), func(i int) bool {
+		return shardStore.tablesDDLHistory[tableID][i] > ts
 	})
 	if index == 0 {
 		return 0
 	}
-	return p.tablesDDLHistory[tableID][index-1]
+	return shardStore.tablesDDLHistory[tableID][index-1]
 }
 
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
 func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, error) {
 	// TODO: check a dispatcher won't fetch the ddl events that create it(create table/rename table)
-	p.mu.RLock()
+	shardStore := p.getShard(tableID)
+	shardStore.mu.RLock()
+	defer shardStore.mu.RUnlock()
 	// fast check
-	history := p.tablesDDLHistory[tableID]
+	history := shardStore.tablesDDLHistory[tableID]
 	if len(history) == 0 || start >= history[len(history)-1] {
-		p.mu.RUnlock()
 		return nil, nil
 	}
 	index := sort.Search(len(history), func(i int) bool {
@@ -364,17 +414,13 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 			allTargetTs = append(allTargetTs, history[i])
 		}
 	}
-	p.mu.RUnlock()
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
 
-	p.mu.RLock()
-	if start < p.gcTs {
-		p.mu.RUnlock()
-		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
+	if start < p.gcTs.Load() {
+		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs.Load())
 	}
-	p.mu.RUnlock()
 
 	// TODO: if the first event is a create table ddl, return error?
 	events := make([]commonEvent.DDLEvent, 0, len(allTargetTs))
@@ -401,17 +447,16 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, error) {
 	// fast check
 	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	if len(p.tableTriggerDDLHistory) == 0 || start >= p.tableTriggerDDLHistory[len(p.tableTriggerDDLHistory)-1] {
-		p.mu.RUnlock()
 		return nil, nil
 	}
-	p.mu.RUnlock()
 
 	events := make([]commonEvent.DDLEvent, 0)
 	nextStartTs := start
 	for {
 		allTargetTs := make([]uint64, 0, limit)
-		p.mu.RLock()
 		// log.Debug("fetchTableTriggerDDLEvents in persistentStorage",
 		// 	zap.Any("start", start),
 		// 	zap.Int("limit", limit),
@@ -421,7 +466,6 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		})
 		// no more events to read
 		if index == len(p.tableTriggerDDLHistory) {
-			p.mu.RUnlock()
 			return events, nil
 		}
 		for i := index; i < len(p.tableTriggerDDLHistory); i++ {
@@ -430,7 +474,6 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 				break
 			}
 		}
-		p.mu.RUnlock()
 
 		if len(allTargetTs) == 0 {
 			return events, nil
@@ -438,12 +481,9 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 
 		// ensure the order: get target ts -> get storage snap -> check gc ts
 		storageSnap := p.db.NewSnapshot()
-		p.mu.RLock()
-		if allTargetTs[0] < p.gcTs {
-			p.mu.RUnlock()
+		if allTargetTs[0] < p.gcTs.Load() {
 			return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", allTargetTs[0], p.gcTs)
 		}
-		p.mu.RUnlock()
 		for _, ts := range allTargetTs {
 			rawEvent := readPersistedDDLEvent(storageSnap, ts)
 			if tableFilter != nil {
@@ -483,11 +523,12 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
 
-	p.mu.RLock()
-	kvSnapVersion := p.gcTs
+	kvSnapVersion := p.gcTs.Load()
 	var allDDLFinishedTs []uint64
-	allDDLFinishedTs = append(allDDLFinishedTs, p.tablesDDLHistory[tableID]...)
-	p.mu.RUnlock()
+	shardStore := p.getShard(tableID)
+	shardStore.mu.RLock()
+	allDDLFinishedTs = append(allDDLFinishedTs, shardStore.tablesDDLHistory[tableID]...)
+	shardStore.mu.RUnlock()
 
 	if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap); err != nil {
 		return err
@@ -531,18 +572,15 @@ func (p *persistentStorage) gc(ctx context.Context) error {
 }
 
 func (p *persistentStorage) doGc(gcTs uint64) error {
-	p.mu.Lock()
 	if gcTs > p.upperBound.ResolvedTs {
 		log.Panic("gc safe point is larger than resolvedTs",
 			zap.Uint64("gcTs", gcTs),
 			zap.Uint64("resolvedTs", p.upperBound.ResolvedTs))
 	}
-	if gcTs <= p.gcTs {
-		p.mu.Unlock()
+	if gcTs <= p.gcTs.Load() {
 		return nil
 	}
-	oldGcTs := p.gcTs
-	p.mu.Unlock()
+	oldGcTs := p.gcTs.Load()
 
 	serverConfig := config.GetGlobalServerConfig()
 	if !serverConfig.Debug.SchemaStore.EnableGC {
@@ -578,24 +616,30 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 }
 
 func (p *persistentStorage) cleanObsoleteDataInMemory(gcTs uint64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.gcTs = gcTs
+	p.gcTs.Store(gcTs)
 
 	// clean tablesDDLHistory
 	tablesToRemove := make(map[int64]interface{})
-	for tableID := range p.tablesDDLHistory {
-		i := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
-			return p.tablesDDLHistory[tableID][i] > gcTs
-		})
-		if i == len(p.tablesDDLHistory[tableID]) {
-			tablesToRemove[tableID] = nil
-			continue
+	for _, shareStore := range p.shards {
+		shareStore.mu.Lock()
+		for tableID := range shareStore.tablesDDLHistory {
+			i := sort.Search(len(shareStore.tablesDDLHistory[tableID]), func(i int) bool {
+				return shareStore.tablesDDLHistory[tableID][i] > gcTs
+			})
+			if i == len(shareStore.tablesDDLHistory[tableID]) {
+				tablesToRemove[tableID] = nil
+				continue
+			}
+			shareStore.tablesDDLHistory[tableID] = shareStore.tablesDDLHistory[tableID][i:]
 		}
-		p.tablesDDLHistory[tableID] = p.tablesDDLHistory[tableID][i:]
+		shareStore.mu.Unlock()
 	}
+
 	for tableID := range tablesToRemove {
-		delete(p.tablesDDLHistory, tableID)
+		shardStore := p.getShard(tableID)
+		shardStore.mu.Lock()
+		delete(shardStore.tablesDDLHistory, tableID)
+		shardStore.mu.Unlock()
 	}
 
 	// clean tableTriggerDDLHistory
@@ -608,13 +652,18 @@ func (p *persistentStorage) cleanObsoleteDataInMemory(gcTs uint64) {
 	// Note: tableInfoStoreMap need to keep one version before gcTs,
 	//  so it has different gc logic with tablesDDLHistory
 	tablesToRemove = make(map[int64]interface{})
-	for tableID, store := range p.tableInfoStoreMap {
-		if needRemove := store.gc(gcTs); needRemove {
-			tablesToRemove[tableID] = nil
+	for _, shareStore := range p.shards {
+		for tableID, store := range shareStore.tableInfoStoreMap {
+			if needRemove := store.gc(gcTs); needRemove {
+				tablesToRemove[tableID] = nil
+			}
 		}
 	}
 	for tableID := range tablesToRemove {
-		delete(p.tableInfoStoreMap, tableID)
+		shardStore := p.getShard(tableID)
+		shardStore.mu.Lock()
+		delete(shardStore.tableInfoStoreMap, tableID)
+		shardStore.mu.Unlock()
 	}
 }
 
@@ -647,22 +696,23 @@ func (p *persistentStorage) persistUpperBoundPeriodically(ctx context.Context) e
 			upperBound := p.upperBound
 			p.upperBoundChanged = false
 			p.mu.Unlock()
-
 			writeUpperBoundMeta(p.db, upperBound)
 		}
 	}
 }
 
 func (p *persistentStorage) handleDDLJob(job *model.Job) error {
-	p.mu.Lock()
+	// Note: Truncate table's job.TableID is the old table id,
+	tableID := job.TableID
+	shardStore := p.getShard(tableID)
+	shardStore.mu.Lock()
+	defer shardStore.mu.Unlock()
 
-	ddlEvent := buildPersistedDDLEventFromJob(job, p.databaseMap, p.tableMap, p.partitionMap)
-	if shouldSkipDDL(&ddlEvent, p.databaseMap, p.tableMap) {
-		p.mu.Unlock()
+	ddlEvent := buildPersistedDDLEventFromJob(job, p.databaseMap, shardStore.tableMap, shardStore.partitionMap)
+	if shouldSkipDDL(&ddlEvent, p.databaseMap, shardStore.tableMap) {
 		return nil
 	}
 
-	p.mu.Unlock()
 	// log.Info("handle resolved ddl event",
 	// 	zap.Int64("schemaID", ddlEvent.CurrentSchemaID),
 	// 	zap.Int64("tableID", ddlEvent.CurrentTableID),
@@ -675,7 +725,6 @@ func (p *persistentStorage) handleDDLJob(job *model.Job) error {
 	// becuase other goroutines may read ddl events from disk according to ddl history
 	writePersistedDDLEvent(p.db, &ddlEvent)
 
-	p.mu.Lock()
 	var err error
 	// Note: `updateDDLHistory` must be before `updateDatabaseInfoAndTableInfo`,
 	// because `updateDDLHistory` will refer to the info in databaseMap and tableMap,
@@ -683,21 +732,17 @@ func (p *persistentStorage) handleDDLJob(job *model.Job) error {
 	if p.tableTriggerDDLHistory, err = updateDDLHistory(
 		&ddlEvent,
 		p.databaseMap,
-		p.tableMap,
-		p.tablesDDLHistory,
+		shardStore.tableMap,
+		shardStore.tablesDDLHistory,
 		p.tableTriggerDDLHistory); err != nil {
-		p.mu.Unlock()
 		return err
 	}
-	if err := updateDatabaseInfoAndTableInfo(&ddlEvent, p.databaseMap, p.tableMap, p.partitionMap); err != nil {
-		p.mu.Unlock()
+	if err := updateDatabaseInfoAndTableInfo(&ddlEvent, p.databaseMap, shardStore.tableMap, shardStore.partitionMap); err != nil {
 		return err
 	}
-	if err := updateRegisteredTableInfoStore(&ddlEvent, p.tableInfoStoreMap); err != nil {
-		p.mu.Unlock()
+	if err := updateRegisteredTableInfoStore(&ddlEvent, shardStore.tableInfoStoreMap); err != nil {
 		return err
 	}
-	p.mu.Unlock()
 	return nil
 }
 
