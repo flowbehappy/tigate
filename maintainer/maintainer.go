@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
@@ -543,7 +544,12 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 	if cachedResp == nil {
 		return
 	}
-	barrier, msg, err := m.controller.FinishBootstrap(cachedResp)
+	isMysqlCompatibleBackend, err := util.IsMysqlCompatibleBackend(m.config.SinkURI)
+	if err != nil {
+		m.handleError(err)
+		return
+	}
+	barrier, msg, err := m.controller.FinishBootstrap(cachedResp, isMysqlCompatibleBackend)
 	if err != nil {
 		m.handleError(err)
 		return

@@ -12,6 +12,7 @@ import (
 	ticonfig "github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/sink/codec/common"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/sink"
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 )
@@ -262,4 +263,14 @@ func (s *TableIDStore) GetAllTableIds() []int64 {
 	// Each influence-DB ddl must have table trigger event dispatcher's participation
 	tableIds = append(tableIds, heartbeatpb.DDLSpan.TableID)
 	return tableIds
+}
+
+// IsMysqlCompatibleBackend returns true if the sinkURIStr is mysql compatible.
+func IsMysqlCompatibleBackend(sinkURIStr string) (bool, error) {
+	sinkURI, err := url.Parse(sinkURIStr)
+	if err != nil {
+		return false, cerror.WrapError(cerror.ErrSinkURIInvalid, err)
+	}
+	scheme := sink.GetScheme(sinkURI)
+	return sink.IsMySQLCompatibleScheme(scheme), nil
 }

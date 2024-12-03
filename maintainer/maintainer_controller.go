@@ -180,6 +180,7 @@ func (c *Controller) AddNewTable(table commonEvent.Table, startTs uint64) {
 // it reported by the bootstrap response
 func (c *Controller) FinishBootstrap(
 	cachedResp map[node.ID]*heartbeatpb.MaintainerBootstrapResponse,
+	isMysqlCompatibleBackend bool,
 ) (*Barrier, *heartbeatpb.MaintainerPostBootstrapRequest, error) {
 	if c.bootstrapped {
 		log.Panic("already bootstrapped",
@@ -252,15 +253,20 @@ func (c *Controller) FinishBootstrap(
 	schemaInfos := map[int64]*heartbeatpb.SchemaInfo{}
 	for _, table := range tables {
 		if _, ok := schemaInfos[table.SchemaID]; !ok {
-			schemaInfos[table.SchemaID] = &heartbeatpb.SchemaInfo{
-				SchemaID:   table.SchemaID,
-				SchemaName: table.SchemaName,
+			schemaInfos[table.SchemaID] = &heartbeatpb.SchemaInfo{}
+			if isMysqlCompatibleBackend {
+				schemaInfos[table.SchemaID].SchemaID = table.SchemaID
+			} else {
+				schemaInfos[table.SchemaID].SchemaName = table.SchemaName
 			}
 		}
-		schemaInfos[table.SchemaID].Tables = append(schemaInfos[table.SchemaID].Tables, &heartbeatpb.TableInfo{
-			TableID:   table.TableID,
-			TableName: table.TableName,
-		})
+		tableInfo := &heartbeatpb.TableInfo{}
+		if isMysqlCompatibleBackend {
+			tableInfo.TableID = table.TableID
+		} else {
+			tableInfo.TableName = table.TableName
+		}
+		schemaInfos[table.SchemaID].Tables = append(schemaInfos[table.SchemaID].Tables, tableInfo)
 
 		tableMap, ok := workingMap[table.TableID]
 		if !ok {
