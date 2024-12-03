@@ -256,7 +256,7 @@ func (e *EventDispatcherManager) close(remove bool) {
 	e.cancel()
 	e.wg.Wait()
 
-	e.tableEventDispatcherCount.Sub(float64(e.dispatcherMap.Len()))
+	metrics.TableEventDispatcherGauge.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
 	metrics.CreateDispatcherDuration.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
 	metrics.EventDispatcherManagerCheckpointTsGauge.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
 	metrics.EventDispatcherManagerResolvedTsGauge.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
