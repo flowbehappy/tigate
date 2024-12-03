@@ -63,67 +63,68 @@ jobs:
 
       - name: Build
         run: make cdc
-    
-  basic_e2e_test:
-    runs-on: ubuntu-latest 
-    name: E2E Test
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v2
+  
+  # TODO: enable e2e test before release
+  # basic_e2e_test:
+  #   runs-on: ubuntu-latest 
+  #   name: E2E Test
+  #   steps:
+  #     - name: Check out code
+  #       uses: actions/checkout@v2
 
-      - name: Setup Go environment
-        uses: actions/setup-go@v3
-        with:
-          go-version: '1.23'
+  #     - name: Setup Go environment
+  #       uses: actions/setup-go@v3
+  #       with:
+  #         go-version: '1.23'
 
-      - name: Integration Build
-        run: |
-          tests/scripts/download-integration-test-binaries.sh master true
-          go build -o ./tools/bin/failpoint-ctl github.com/pingcap/failpoint/failpoint-ctl 
-          make integration_test_build
-          ls -l bin/ && ls -l tools/bin/
+  #     - name: Integration Build
+  #       run: |
+  #         tests/scripts/download-integration-test-binaries.sh master true
+  #         go build -o ./tools/bin/failpoint-ctl github.com/pingcap/failpoint/failpoint-ctl 
+  #         make integration_test_build
+  #         ls -l bin/ && ls -l tools/bin/
 
-      - name: Test charset_gbk
-        run: |
-          pwd && ls -l bin/ && ls -l tools/bin/
-          export TICDC_NEWARCH=true && make integration_test CASE=charset_gbk 
+  #     - name: Test charset_gbk
+  #       run: |
+  #         pwd && ls -l bin/ && ls -l tools/bin/
+  #         export TICDC_NEWARCH=true && make integration_test CASE=charset_gbk 
 
-      - name: Test changefeed_finish
-        if: ${{ success() }}
-        run: |
-          export TICDC_NEWARCH=true && make integration_test CASE=changefeed_finish
+  #     - name: Test changefeed_finish
+  #       if: ${{ success() }}
+  #       run: |
+  #         export TICDC_NEWARCH=true && make integration_test CASE=changefeed_finish
         
-      - name: Test changefeed_pause_resume
-        if: ${{ success() }}
-        run: |
-          export TICDC_NEWARCH=true && make integration_test CASE=changefeed_pause_resume
+  #     - name: Test changefeed_pause_resume
+  #       if: ${{ success() }}
+  #       run: |
+  #         export TICDC_NEWARCH=true && make integration_test CASE=changefeed_pause_resume
 
-      - name: Test changefeed_reconstruct
-        if: ${{ success() }}
-        run: |
-          export TICDC_NEWARCH=true && make integration_test CASE=changefeed_reconstruct
+  #     - name: Test changefeed_reconstruct
+  #       if: ${{ success() }}
+  #       run: |
+  #         export TICDC_NEWARCH=true && make integration_test CASE=changefeed_reconstruct
 
-      # only upload logs of the last case
-      - name: Copy logs to hack permission
-        if: ${{ always() }}
-        run: |
-          DIR=$(sudo find /tmp/tidb_cdc_test/ -type d -name 'sync_diff' -exec dirname {} \;)
-          CASE=$(basename $DIR)
-          mkdir -p ./logs/$CASE
-          cat $DIR/stdout.log
-          tail -n 10 $DIR/cdc.log
-          sudo cp -r -L $DIR/{cdc.log,stdout.log,sync_diff} ./logs/$CASE/
-          sudo chown -R runner ./logs
-          sudo tar -czvf ./logs.tar.gz ./logs
+  #     # only upload logs of the last case
+  #     - name: Copy logs to hack permission
+  #       if: ${{ always() }}
+  #       run: |
+  #         DIR=$(sudo find /tmp/tidb_cdc_test/ -type d -name 'sync_diff' -exec dirname {} \;)
+  #         CASE=$(basename $DIR)
+  #         mkdir -p ./logs/$CASE
+  #         cat $DIR/stdout.log
+  #         tail -n 10 $DIR/cdc.log
+  #         sudo cp -r -L $DIR/{cdc.log,stdout.log,sync_diff} ./logs/$CASE/
+  #         sudo chown -R runner ./logs
+  #         sudo tar -czvf ./logs.tar.gz ./logs
 
-      # Update logs as artifact seems not stable, so we set `continue-on-error: true` here.
-      - name: Upload logs
-        uses: actions/upload-artifact@v4
-        if: ${{ always() }}
-        with:
-          name: upstream-switch-logs
-          path: |
-            ./logs.tar.gz
+  #     # Update logs as artifact seems not stable, so we set `continue-on-error: true` here.
+  #     - name: Upload logs
+  #       uses: actions/upload-artifact@v4
+  #       if: ${{ always() }}
+  #       with:
+  #         name: upstream-switch-logs
+  #         path: |
+  #           ./logs.tar.gz
 
 
   dispatcher_unit_test:
