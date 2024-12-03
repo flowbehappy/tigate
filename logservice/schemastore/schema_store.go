@@ -2,6 +2,7 @@ package schemastore
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -240,7 +241,7 @@ func (s *schemaStore) GetTableDDLEventState(tableID int64) DDLEventState {
 	resolvedTs := s.resolvedTs.Load()
 	maxEventCommitTs := s.dataStorage.getMaxEventCommitTs(tableID, resolvedTs)
 	return DDLEventState{
-		ResolvedTs:       resolvedTs,
+		ResolvedTs:       math.MaxUint64,
 		MaxEventCommitTs: maxEventCommitTs,
 	}
 }
