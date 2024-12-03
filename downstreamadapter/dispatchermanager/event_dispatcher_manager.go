@@ -182,7 +182,7 @@ func NewEventDispatcherManager(
 	var tableTriggerStartTs uint64 = 0
 	// init table trigger event dispatcher when tableTriggerEventDispatcherID is not nil
 	if tableTriggerEventDispatcherID != nil {
-		tableTriggerStartTs, err = manager.newTableTriggerEventDispatcher(tableTriggerEventDispatcherID, startTs)
+		tableTriggerStartTs, err = manager.NewTableTriggerEventDispatcher(tableTriggerEventDispatcherID, startTs)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -266,7 +266,7 @@ type dispatcherCreateInfo struct {
 	CurrentPDTs uint64
 }
 
-func (e *EventDispatcherManager) newTableTriggerEventDispatcher(id *heartbeatpb.DispatcherID, startTs uint64) (uint64, error) {
+func (e *EventDispatcherManager) NewTableTriggerEventDispatcher(id *heartbeatpb.DispatcherID, startTs uint64) (uint64, error) {
 	err := e.newDispatchers([]dispatcherCreateInfo{
 		{
 			Id:          common.NewDispatcherIDFromPB(id),
@@ -616,6 +616,10 @@ func (e *EventDispatcherManager) GetMaintainerID() node.ID {
 
 func (e *EventDispatcherManager) GetChangeFeedID() common.ChangeFeedID {
 	return e.changefeedID
+}
+
+func (e *EventDispatcherManager) GetTableTriggerEventDispatcher() *dispatcher.Dispatcher {
+	return e.tableTriggerEventDispatcher
 }
 
 func (e *EventDispatcherManager) SetHeartbeatRequestQueue(heartbeatRequestQueue *HeartbeatRequestQueue) {
