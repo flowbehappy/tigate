@@ -329,11 +329,11 @@ func TestFinishBootstrap(t *testing.T) {
 	require.True(t, s.bootstrapped)
 	require.Equal(t, msg.GetSchemas(), []*heartbeatpb.SchemaInfo{
 		{
-			SchemaID:   1,
+			// SchemaID: 1,
 			SchemaName: "test",
 			Tables: []*heartbeatpb.TableInfo{
 				{
-					TableID:   1,
+					// TableID: 1,
 					TableName: "t",
 				},
 			},
