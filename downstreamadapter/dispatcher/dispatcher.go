@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/ticdc/downstreamadapter/syncpoint"
 	"github.com/pingcap/ticdc/eventpb"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/sink/util"
@@ -176,17 +177,26 @@ func NewDispatcher(
 		errCh:                 errCh,
 	}
 
-	// when the dispatcher is a table trigger event dispatcher, we need to create a tableSchemaStore
-	// Because we only need to calculate the tableNames or TableIds in the sink
-	// when the event dispatcher manager have table trigger event dispatcher
-	if tableSpan.Equal(heartbeatpb.DDLSpan) {
-		dispatcher.tableSchemaStore = util.NewTableSchemaStore()
-		dispatcher.sink.SetTableSchemaStore(dispatcher.tableSchemaStore)
-	}
-
 	dispatcher.addToStatusDynamicStream()
 
 	return dispatcher
+}
+
+func (d *Dispatcher) InitalizeTableSchemaStore(schemaInfo []*heartbeatpb.SchemaInfo) error {
+	// Only the table trigger event dispatcher need to create a tableSchemaStore
+	// Because we only need to calculate the tableNames or TableIds in the sink
+	// when the event dispatcher manager have table trigger event dispatcher
+	if !d.tableSpan.Equal(heartbeatpb.DDLSpan) {
+		log.Error("InitalizeTableSchemaStore should only be received by table trigger event dispatcher", zap.Any("dispatcher", d.id))
+		return apperror.ErrChangefeedInitTableTriggerEventDispatcherFailed.GenWithStackByArgs("InitalizeTableSchemaStore should only be received by table trigger event dispatcher")
+	}
+
+	if d.tableSchemaStore != nil {
+		log.Info("tableSchemaStore has already been initialized", zap.Any("dispatcher", d.id))
+		return nil
+	}
+	d.tableSchemaStore = util.NewTableSchemaStore(schemaInfo, d.sink.SinkType())
+	return nil
 }
 
 // HandleDispatcherStatus is used to handle the dispatcher status from the Maintainer to deal with the block event.
@@ -567,6 +577,11 @@ func (d *Dispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
 		w.ResolvedTs = d.GetResolvedTs()
 
 		d.componentStatus.Set(heartbeatpb.ComponentState_Stopped)
+
+		if d.IsTableTriggerEventDispatcher() {
+			d.tableSchemaStore.Clear()
+		}
+
 		return w, true
 	}
 	return w, false
@@ -622,4 +637,8 @@ func (d *Dispatcher) GetEventSizePerSecond() float32 {
 
 func (d *Dispatcher) HandleCheckpointTs(checkpointTs uint64) {
 	d.sink.AddCheckpointTs(checkpointTs)
+}
+
+func (d *Dispatcher) IsTableTriggerEventDispatcher() bool {
+	return d.tableSpan == heartbeatpb.DDLSpan
 }

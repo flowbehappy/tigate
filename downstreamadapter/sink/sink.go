@@ -26,13 +26,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/sink"
 )
 
-type SinkType int
-
-const (
-	MysqlSinkType SinkType = iota
-	KafkaSinkType
-)
-
 type Sink interface {
 	AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress)
 	WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error
@@ -41,7 +34,7 @@ type Sink interface {
 	SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore)
 	CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error)
 	Close(removeDDLTsItem bool) error
-	SinkType() SinkType
+	SinkType() common.SinkType
 	IsNormal() bool
 }
 

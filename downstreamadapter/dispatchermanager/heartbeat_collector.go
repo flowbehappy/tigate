@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
-	"github.com/pingcap/ticdc/downstreamadapter/sink"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
@@ -87,7 +86,7 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if m.sink.SinkType() != sink.MysqlSinkType {
+	if m.sink.SinkType() != common.MysqlSinkType {
 		err = c.checkpointTsMessageDynamicStream.AddPath(m.changefeedID, m)
 		if err != nil {
 			return errors.Trace(err)
@@ -105,13 +104,18 @@ func (c *HeartBeatCollector) RemoveEventDispatcherManager(m *EventDispatcherMana
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if m.sink.SinkType() != sink.MysqlSinkType {
+	if m.sink.SinkType() != common.MysqlSinkType {
 		err = c.checkpointTsMessageDynamicStream.RemovePath(m.changefeedID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
+}
+
+func (c *HeartBeatCollector) RemoveCheckpointTsMessage(changefeedID common.ChangeFeedID) error {
+	err := c.checkpointTsMessageDynamicStream.RemovePath(changefeedID)
+	return errors.Trace(err)
 }
 
 func (c *HeartBeatCollector) sendHeartBeatMessages() {
@@ -317,7 +321,7 @@ func (h *CheckpointTsMessageHandler) Handle(eventDispatcherManager *EventDispatc
 		panic("invalid message count")
 	}
 	checkpointTsMessage := messages[0]
-	if eventDispatcherManager.tableTriggerEventDispatcher != nil && eventDispatcherManager.sink.SinkType() != sink.MysqlSinkType {
+	if eventDispatcherManager.tableTriggerEventDispatcher != nil && eventDispatcherManager.sink.SinkType() != common.MysqlSinkType {
 		tableTriggerEventDispatcher := eventDispatcherManager.tableTriggerEventDispatcher
 		tableTriggerEventDispatcher.HandleCheckpointTs(checkpointTsMessage.CheckpointTs)
 	}

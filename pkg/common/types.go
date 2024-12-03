@@ -232,3 +232,10 @@ func ChangefeedID4Test(namespace, name string) ChangeFeedID {
 		Namespace: namespace,
 	})
 }
+
+type SinkType int
+
+const (
+	MysqlSinkType SinkType = iota
+	KafkaSinkType
+)
