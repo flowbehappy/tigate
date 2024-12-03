@@ -50,8 +50,11 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	store := &mockSchemaStore{
 		// 4 tables
 		tables: []commonEvent.Table{
-			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2},
-			{SchemaID: 1, TableID: 3}, {SchemaID: 1, TableID: 4}},
+			{SchemaID: 1, TableID: 1, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t1"}},
+			{SchemaID: 1, TableID: 2, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t2"}},
+			{SchemaID: 1, TableID: 3, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t3"}},
+			{SchemaID: 1, TableID: 4, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t4"}},
+		},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
 	mc := messaging.NewMessageCenter(ctx, selfNode.ID, 0, config.NewDefaultMessageCenterConfig())
@@ -203,8 +206,11 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	store := &mockSchemaStore{
 		// 4 tables
 		tables: []commonEvent.Table{
-			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2},
-			{SchemaID: 1, TableID: 3}, {SchemaID: 1, TableID: 4}},
+			{SchemaID: 1, TableID: 1, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t1"}},
+			{SchemaID: 1, TableID: 2, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t2"}},
+			{SchemaID: 1, TableID: 3, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t3"}},
+			{SchemaID: 1, TableID: 4, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t4"}},
+		},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
 	mc := messaging.NewMessageCenter(ctx, selfNode.ID, 0, config.NewDefaultMessageCenterConfig())
@@ -304,8 +310,11 @@ func TestStopNotExistsMaintainer(t *testing.T) {
 	store := &mockSchemaStore{
 		// 4 tables
 		tables: []commonEvent.Table{
-			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2},
-			{SchemaID: 1, TableID: 3}, {SchemaID: 1, TableID: 4}},
+			{SchemaID: 1, TableID: 1, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t1"}},
+			{SchemaID: 1, TableID: 2, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t2"}},
+			{SchemaID: 1, TableID: 3, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t3"}},
+			{SchemaID: 1, TableID: 4, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t4"}},
+		},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
 	mc := messaging.NewMessageCenter(ctx, selfNode.ID, 0, config.NewDefaultMessageCenterConfig())

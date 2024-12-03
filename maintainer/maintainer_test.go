@@ -86,6 +86,8 @@ func (m *mockDispatcherManager) handleMessage(msg *messaging.TargetMessage) {
 	switch msg.Type {
 	case messaging.TypeMaintainerBootstrapRequest:
 		m.onBootstrapRequest(msg)
+	case messaging.TypeMaintainerPostBootstrapRequest:
+
 	case messaging.TypeScheduleDispatcherRequest:
 		m.onDispatchRequest(msg)
 	case messaging.TypeMaintainerCloseRequest:
@@ -110,6 +112,7 @@ func (m *mockDispatcherManager) recvMessages(ctx context.Context, msg *messaging
 	// receive message from maintainer
 	case messaging.TypeScheduleDispatcherRequest,
 		messaging.TypeMaintainerBootstrapRequest,
+		messaging.TypeMaintainerPostBootstrapRequest,
 		messaging.TypeMaintainerCloseRequest:
 		select {
 		case <-ctx.Done():
@@ -118,7 +121,7 @@ func (m *mockDispatcherManager) recvMessages(ctx context.Context, msg *messaging
 		}
 		return nil
 	default:
-		log.Panic("unknown message type", zap.Any("message", msg.Message))
+		log.Panic("unknown message type", zap.Any("message", msg.Message), zap.Any("type", msg.Type))
 	}
 	return nil
 }
@@ -143,6 +146,27 @@ func (m *mockDispatcherManager) onBootstrapRequest(msg *messaging.TargetMessage)
 	log.Info("New maintainer online",
 		zap.String("server", m.maintainerID.String()))
 }
+
+func (m *mockDispatcherManager) onPostBootstrapRequest(msg *messaging.TargetMessage) {
+	req := msg.Message[0].(*heartbeatpb.MaintainerPostBootstrapRequest)
+	m.maintainerID = msg.From
+	response := &heartbeatpb.MaintainerPostBootstrapResponse{
+		ChangefeedID:                  req.ChangefeedID,
+		TableTriggerEventDispatcherId: req.TableTriggerEventDispatcherId,
+		Err:                           nil,
+	}
+	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
+		m.maintainerID,
+		messaging.MaintainerManagerTopic,
+		response,
+	))
+	if err != nil {
+		log.Warn("send command failed", zap.Error(err))
+	}
+	log.Info("Post bootstrap finished",
+		zap.String("server", m.maintainerID.String()))
+}
+
 func (m *mockDispatcherManager) onDispatchRequest(
 	msg *messaging.TargetMessage,
 ) {
