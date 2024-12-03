@@ -23,6 +23,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"encoding/binary"
+	"hash/fnv"
+
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/bloom"
 	"github.com/pingcap/errors"
@@ -103,7 +106,11 @@ func newStorageShard() *storageShard {
 
 // get shard by tableID
 func (p *persistentStorage) getShard(tableID int64) *storageShard {
-	return p.shards[tableID%int64(p.shardNum)]
+	hash := fnv.New32a()
+	binary.Write(hash, binary.BigEndian, tableID)
+	return p.shards[hash.Sum32()%uint32(p.shardNum)]
+
+	// return p.shards[murmur3.Sum32(tableID)%uint32(p.shardNum)]
 }
 
 func exists(path string) bool {
