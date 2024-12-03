@@ -296,11 +296,19 @@ func TestFinishBootstrap(t *testing.T) {
 		config.GetDefaultReplicaConfig(), ddlSpan, 1000, 0)
 	totalSpan := spanz.TableIDToComparableSpan(1)
 	span := &heartbeatpb.TableSpan{TableID: int64(1), StartKey: totalSpan.StartKey, EndKey: totalSpan.EndKey}
-	schemaStore := &mockSchemaStore{tables: []commonEvent.Table{{TableID: 1, SchemaID: 1}}}
+	schemaStore := &mockSchemaStore{
+		tables: []commonEvent.Table{
+			{
+				TableID:         1,
+				SchemaID:        1,
+				SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t"},
+			},
+		},
+	}
 	appcontext.SetService(appcontext.SchemaStore, schemaStore)
 	dispatcherID2 := common.NewDispatcherID()
 	require.False(t, s.bootstrapped)
-	barrier, err := s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
+	barrier, msg, err := s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
 		"node1": {
 			ChangefeedID: cfID.ToPB(),
 			Spans: []*heartbeatpb.BootstrapTableSpan{
@@ -315,15 +323,28 @@ func TestFinishBootstrap(t *testing.T) {
 			CheckpointTs: 10,
 		},
 	})
+	_ = msg
 	require.Nil(t, err)
 	require.NotNil(t, barrier)
 	require.True(t, s.bootstrapped)
+	require.Equal(t, msg.GetSchemas(), []*heartbeatpb.SchemaInfo{
+		{
+			SchemaID:   1,
+			SchemaName: "test",
+			Tables: []*heartbeatpb.TableInfo{
+				{
+					TableID:   1,
+					TableName: "t",
+				},
+			},
+		},
+	})
 	require.Equal(t, 1, s.replicationDB.GetTaskSizeByNodeID("node1"))
 	require.Equal(t, 1, s.replicationDB.GetReplicatingSize())
 	require.Equal(t, 0, s.replicationDB.GetSchedulingSize())
 	require.NotNil(t, s.replicationDB.GetTaskByID(dispatcherID2))
 	require.Panics(t, func() {
-		_, _ = s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{})
+		_, _, _ = s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{})
 	})
 }
 
@@ -412,7 +433,10 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	s := NewController(cfID, 1,
 		pdAPI, tsoClient, nil, nil, defaultConfig, ddlSpan, 1000, 0)
 	s.taskScheduler = &mockThreadPool{}
-	schemaStore := &mockSchemaStore{tables: []commonEvent.Table{{TableID: 1, SchemaID: 1}, {TableID: 2, SchemaID: 2}}}
+	schemaStore := &mockSchemaStore{tables: []commonEvent.Table{
+		{TableID: 1, SchemaID: 1, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t"}},
+		{TableID: 2, SchemaID: 2, SchemaTableName: &commonEvent.SchemaTableName{SchemaName: "test", TableName: "t2"}},
+	}}
 	appcontext.SetService(appcontext.SchemaStore, schemaStore)
 
 	totalSpan := spanz.TableIDToComparableSpan(1)
@@ -447,7 +471,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	}
 	require.False(t, s.bootstrapped)
 
-	barrier, err := s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
+	barrier, _, err := s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
 		"node1": {
 			ChangefeedID: cfID.ToPB(),
 			Spans:        reportedSpans,

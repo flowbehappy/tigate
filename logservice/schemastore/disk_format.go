@@ -600,7 +600,8 @@ func loadAllPhysicalTablesAtTs(
 				zap.String("tableName", tableInfo.Name),
 				zap.Any("databaseMapLen", len(databaseMap)))
 		}
-		if tableFilter != nil && tableFilter.ShouldIgnoreTable(databaseMap[tableInfo.SchemaID].Name, tableInfo.Name) {
+		schemaName := databaseMap[tableInfo.SchemaID].Name
+		if tableFilter != nil && tableFilter.ShouldIgnoreTable(schemaName, tableInfo.Name) {
 			continue
 		}
 		if partitionInfo, ok := partitionMap[tableID]; ok {
@@ -608,12 +609,20 @@ func loadAllPhysicalTablesAtTs(
 				tables = append(tables, commonEvent.Table{
 					SchemaID: tableInfo.SchemaID,
 					TableID:  partitionID,
+					SchemaTableName: &commonEvent.SchemaTableName{
+						SchemaName: schemaName,
+						TableName:  tableInfo.Name,
+					},
 				})
 			}
 		} else {
 			tables = append(tables, commonEvent.Table{
 				SchemaID: tableInfo.SchemaID,
 				TableID:  tableID,
+				SchemaTableName: &commonEvent.SchemaTableName{
+					SchemaName: schemaName,
+					TableName:  tableInfo.Name,
+				},
 			})
 		}
 	}
