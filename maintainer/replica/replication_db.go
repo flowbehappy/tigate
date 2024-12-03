@@ -432,33 +432,6 @@ func (db *ReplicationDB) addToSchemaAndTableMap(task *SpanReplication) {
 	tableMap[task.ID] = task
 }
 
-func (db *ReplicationDB) getOrCreateGroup(task *SpanReplication) *replicationTaskGroup {
-	groupID := task.groupID
-	g, ok := db.taskGroups[groupID]
-	if !ok {
-		g = newReplicationTaskGroup(db.changefeedID, groupID)
-		db.taskGroups[groupID] = g
-		log.Info("create new task group", zap.Stringer("groupType", getGroupType(groupID)),
-			zap.Int64("tableID", task.Span.TableID))
-	}
-	return g
-}
-
-func (db *ReplicationDB) maybeRemoveGroup(g *replicationTaskGroup) {
-	if g.groupID == defaultGroupID || !g.IsEmpty() {
-		return
-	}
-	delete(db.taskGroups, g.groupID)
-}
-
-func (db *ReplicationDB) mustGetGroup(groupID GroupID) *replicationTaskGroup {
-	g, ok := db.taskGroups[groupID]
-	if !ok {
-		log.Panic("group not found", zap.String("group", printGroupID(groupID)))
-	}
-	return g
-}
-
 // reset resets the maps of ReplicationDB
 func (db *ReplicationDB) reset() {
 	db.schemaTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
