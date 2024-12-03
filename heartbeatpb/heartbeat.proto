@@ -138,6 +138,30 @@ message MaintainerBootstrapResponse {
     uint64 checkpoint_ts = 4; 
 }
 
+message MaintainerPostBootstrapRequest {
+    ChangefeedID changefeedID = 1;
+    DispatcherID table_trigger_event_dispatcher_id = 2;
+    repeated SchemaInfo schemas = 3;
+}
+
+message MaintainerPostBootstrapResponse {
+    ChangefeedID changefeedID = 1;
+    DispatcherID table_trigger_event_dispatcher_id = 2;
+    RunningError err = 3;
+}
+
+message SchemaInfo {
+    int64 SchemaID = 1;
+    string SchemaName = 2;
+    repeated TableInfo Tables = 3;
+}
+
+message TableInfo {
+    int64 TableID = 1;
+    string TableName = 2;
+}
+
+
 enum BlockStage {
     NONE = 0;
     WAITING = 1;

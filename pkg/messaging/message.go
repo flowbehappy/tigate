@@ -50,6 +50,8 @@ const (
 	TypeMaintainerHeartbeatRequest
 	TypeMaintainerBootstrapRequest
 	TypeMaintainerBootstrapResponse
+	TypeMaintainerPostBootstrapRequest
+	TypeMaintainerPostBootstrapResponse
 	TypeMaintainerCloseRequest
 	TypeMaintainerCloseResponse
 
@@ -105,6 +107,10 @@ func (t IOType) String() string {
 		return "BootstrapMaintainerRequest"
 	case TypeMaintainerBootstrapResponse:
 		return "MaintainerBootstrapResponse"
+	case TypeMaintainerPostBootstrapRequest:
+		return "MaintainerPostBootstrapRequest"
+	case TypeMaintainerPostBootstrapResponse:
+		return "MaintainerPostBootstrapResponse"
 	case TypeMaintainerCloseRequest:
 		return "MaintainerCloseRequest"
 	case TypeMaintainerCloseResponse:
@@ -237,6 +243,10 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &RegisterDispatcherRequest{}
 	case TypeMaintainerBootstrapResponse:
 		m = &heartbeatpb.MaintainerBootstrapResponse{}
+	case TypeMaintainerPostBootstrapRequest:
+		m = &heartbeatpb.MaintainerPostBootstrapRequest{}
+	case TypeMaintainerPostBootstrapResponse:
+		m = &heartbeatpb.MaintainerPostBootstrapResponse{}
 	case TypeMaintainerCloseRequest:
 		m = &heartbeatpb.MaintainerCloseRequest{}
 	case TypeMaintainerCloseResponse:
@@ -319,6 +329,10 @@ func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMe
 		ioType = TypeRegisterDispatcherRequest
 	case *heartbeatpb.MaintainerBootstrapResponse:
 		ioType = TypeMaintainerBootstrapResponse
+	case *heartbeatpb.MaintainerPostBootstrapRequest:
+		ioType = TypeMaintainerPostBootstrapRequest
+	case *heartbeatpb.MaintainerPostBootstrapResponse:
+		ioType = TypeMaintainerPostBootstrapResponse
 	case *heartbeatpb.MaintainerCloseRequest:
 		ioType = TypeMaintainerCloseRequest
 	case *heartbeatpb.MaintainerCloseResponse:
