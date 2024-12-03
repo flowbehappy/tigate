@@ -323,21 +323,6 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 	log.Info("calculate real startTs for dispatchers", zap.Any("receive startTs", startTsList), zap.Any("real startTs", newStartTsList))
 
 	for idx, id := range dispatcherIds {
-		if newStartTsList[idx] == -1 {
-			e.statusesChan <- TableSpanStatusWithSeq{
-				TableSpanStatus: &heartbeatpb.TableSpanStatus{
-					ID:              id.ToPB(),
-					ComponentStatus: heartbeatpb.ComponentState_Removed,
-				},
-				Seq: e.dispatcherMap.GetSeq(),
-			}
-			log.Info("this table is dropped, skip it and return removed status to maintainer",
-				zap.Any("tableSpan", tableSpans[idx]),
-				zap.Any("changefeedID", e.changefeedID.Name()),
-				zap.Any("namespace", e.changefeedID.Namespace()))
-			continue
-		}
-
 		d := dispatcher.NewDispatcher(
 			e.changefeedID,
 			id, tableSpans[idx], e.sink,
