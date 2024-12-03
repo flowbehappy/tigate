@@ -2,6 +2,7 @@ package schemastore
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,14 +21,16 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type ResolveTsUpdateNotifier func()
+
 type SchemaStore interface {
 	common.SubModule
 
 	GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]commonEvent.Table, error)
 
-	RegisterTable(tableID int64, startTs uint64) error
+	RegisterTable(dispatcherID common.DispatcherID, tableID int64, startTs uint64, notifier ResolveTsUpdateNotifier) error
 
-	UnregisterTable(tableID int64) error
+	UnregisterTable(dispatcherID common.DispatcherID, tableID int64) error
 
 	// return table info with largest version <= ts
 	GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error)
@@ -66,6 +69,8 @@ type schemaStore struct {
 
 	// max resolvedTs of all applied ddl events
 	resolvedTs atomic.Uint64
+
+	resolveTsUpdateNotifiers sync.Map
 
 	// the following two fields are used to filter out duplicate ddl events
 	// they will just be updated and read by a single goroutine, so no lock is needed
@@ -187,6 +192,10 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 		// so we can only update resolved ts after all ddl jobs are written to disk
 		// Can we optimize it to update resolved ts more eagerly?
 		s.resolvedTs.Store(pendingTs)
+		s.resolveTsUpdateNotifiers.Range(func(_, value interface{}) bool {
+			value.(ResolveTsUpdateNotifier)()
+			return true
+		})
 		s.dataStorage.updateUpperBound(UpperBoundMeta{
 			FinishedDDLTs: s.finishedDDLTs,
 			SchemaVersion: s.schemaVersion,
@@ -211,8 +220,14 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) 
 	return s.dataStorage.getAllPhysicalTables(snapTs, filter)
 }
 
-func (s *schemaStore) RegisterTable(tableID int64, startTs uint64) error {
+func (s *schemaStore) RegisterTable(
+	dispatcherID common.DispatcherID,
+	tableID int64,
+	startTs uint64,
+	notifier ResolveTsUpdateNotifier,
+) error {
 	metrics.SchemaStoreResolvedRegisterTableGauge.Inc()
+	s.resolveTsUpdateNotifiers.Store(dispatcherID, notifier)
 	s.waitResolvedTs(tableID, startTs, 5*time.Second)
 	log.Info("register table",
 		zap.Int64("tableID", tableID),
@@ -221,8 +236,9 @@ func (s *schemaStore) RegisterTable(tableID int64, startTs uint64) error {
 	return s.dataStorage.registerTable(tableID, startTs)
 }
 
-func (s *schemaStore) UnregisterTable(tableID int64) error {
+func (s *schemaStore) UnregisterTable(dispatcherID common.DispatcherID, tableID int64) error {
 	metrics.SchemaStoreResolvedRegisterTableGauge.Dec()
+	s.resolveTsUpdateNotifiers.Delete(dispatcherID)
 	return s.dataStorage.unregisterTable(tableID)
 }
 
