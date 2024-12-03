@@ -193,6 +193,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 			ResolvedTs:    pendingTs,
 		})
 	}
+
 	ticker := time.NewTicker(50 * time.Millisecond)
 	for {
 		select {
