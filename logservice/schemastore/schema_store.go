@@ -67,6 +67,8 @@ type schemaStore struct {
 	// max resolvedTs of all applied ddl events
 	resolvedTs atomic.Uint64
 
+	lastAdvanceTime atomic.Int64
+
 	// the following two fields are used to filter out duplicate ddl events
 	// they will just be updated and read by a single goroutine, so no lock is needed
 
@@ -97,6 +99,7 @@ func New(
 	}
 	s.pendingResolvedTs.Store(upperBound.ResolvedTs)
 	s.resolvedTs.Store(upperBound.ResolvedTs)
+	s.lastAdvanceTime.Store(time.Now().UnixMilli())
 
 	log.Info("new schema store",
 		zap.Uint64("resolvedTs", s.resolvedTs.Load()),
@@ -147,6 +150,12 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 		if pendingTs <= s.resolvedTs.Load() {
 			return
 		}
+
+		now := time.Now().UnixMilli()
+		lastAdvance := s.lastAdvanceTime.Load()
+		log.Info("schema store advanace interval", zap.Int64("ms", now-lastAdvance))
+		s.lastAdvanceTime.Store(now)
+
 		resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(pendingTs)
 		if len(resolvedEvents) != 0 {
 			log.Info("schema store begin to apply resolved ddl events",
