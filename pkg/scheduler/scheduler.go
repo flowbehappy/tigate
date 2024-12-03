@@ -36,13 +36,13 @@ func CheckBalanceStatus(nodeTaskSize map[node.ID]int, allNodes map[node.ID]*node
 	for _, ts := range nodeTaskSize {
 		totalSize += ts
 	}
-	upperLimitPerCapture := int(math.Ceil(float64(totalSize) / float64(len(nodeTaskSize))))
+	lowerLimitPerCapture := int(math.Floor(float64(totalSize) / float64(len(nodeTaskSize))))
 	// tables need to be moved
 	moveSize := 0
 	for _, ts := range nodeTaskSize {
-		tableNum2Remove := ts - upperLimitPerCapture
-		if tableNum2Remove > 0 {
-			moveSize += tableNum2Remove
+		tableNum2Add := lowerLimitPerCapture - ts
+		if tableNum2Add > 0 {
+			moveSize += tableNum2Add
 		}
 	}
 	return moveSize
@@ -54,11 +54,11 @@ type Replication interface {
 }
 
 // Balance balances the running task by task size per node
-func Balance[T Replication](batchSize int,
-	random *rand.Rand,
+func Balance[T Replication](
+	batchSize int, random *rand.Rand,
 	activeNodes map[node.ID]*node.Info,
-	replicating []T,
-	move func(T, node.ID) bool) (movedSize int) {
+	replicating []T, move func(T, node.ID) bool,
+) (movedSize int) {
 	nodeTasks := make(map[node.ID][]T)
 	for _, cf := range replicating {
 		nodeID := cf.GetNodeID()
@@ -78,73 +78,73 @@ func Balance[T Replication](batchSize int,
 	}
 
 	totalSize := len(replicating)
-	upperLimitPerCapture := int(math.Ceil(float64(totalSize) / float64(len(nodeTasks))))
-	// victims holds tasks which need to be moved
-	victims := make([]T, 0, max(0, absentNodeCnt*upperLimitPerCapture))
-	priorityQueue := heap.NewHeap[*Item]()
+	lowerLimitPerCapture := int(math.Floor(float64(totalSize) / float64(len(nodeTasks))))
+	minPriorityQueue := priorityQueue[T]{
+		h:    heap.NewHeap[*Item[T]](),
+		less: func(a, b int) bool { return a < b },
+		rand: random,
+	}
+	maxPriorityQueue := priorityQueue[T]{
+		h:    heap.NewHeap[*Item[T]](),
+		less: func(a, b int) bool { return a > b },
+		rand: random,
+	}
+	totalMoveSize := 0
 	for nodeID, tasks := range nodeTasks {
-		tableNum2Remove := len(tasks) - upperLimitPerCapture
-		if tableNum2Remove <= 0 {
-			priorityQueue.AddOrUpdate(&Item{
-				Node: nodeID,
-				Load: len(tasks),
+		tableNum2Add := lowerLimitPerCapture - len(tasks)
+		if tableNum2Add <= 0 {
+			// Complexity note: Shuffle has O(n), where `n` is the number of tables.
+			// Also, during a single call of `Schedule`, Shuffle can be called at most
+			// `c` times, where `c` is the number of captures (TiCDC nodes).
+			// Only called when a rebalance is triggered, which happens rarely,
+			// we do not expect a performance degradation as a result of adding
+			// the randomness.
+			random.Shuffle(len(tasks), func(i, j int) {
+				tasks[i], tasks[j] = tasks[j], tasks[i]
 			})
+			maxPriorityQueue.InitItem(nodeID, len(tasks), tasks)
 			continue
 		} else {
-			// Is it dummy logic? Since a node can not hold more than upperLimitPerCapture tasks.
-			priorityQueue.AddOrUpdate(&Item{
-				Node: nodeID,
-				Load: upperLimitPerCapture,
-			})
-		}
-
-		// Complexity note: Shuffle has O(n), where `n` is the number of tables.
-		// Also, during a single call of `Schedule`, Shuffle can be called at most
-		// `c` times, where `c` is the number of captures (TiCDC nodes).
-		// Only called when a rebalance is triggered, which happens rarely,
-		// we do not expect a performance degradation as a result of adding
-		// the randomness.
-		random.Shuffle(len(tasks), func(i, j int) {
-			tasks[i], tasks[j] = tasks[j], tasks[i]
-		})
-		for _, t := range tasks {
-			if tableNum2Remove <= 0 {
-				break
-			}
-			victims = append(victims, t)
-			tableNum2Remove--
+			minPriorityQueue.InitItem(nodeID, len(tasks), nil)
+			totalMoveSize += tableNum2Add
 		}
 	}
-	if len(victims) == 0 {
+	if totalMoveSize == 0 {
 		return 0
 	}
 
 	movedSize = 0
-	// for each victim table, find the target for it
-	for idx, cf := range victims {
-		if idx >= batchSize {
-			// We have reached the task limit.
+	for {
+		target, _ := minPriorityQueue.PeekTop()
+		if len(target.tasks) >= lowerLimitPerCapture {
+			// the minimum workload has reached the lower limit
 			break
 		}
-
-		item, _ := priorityQueue.PeekTop()
-
-		// the operator is pushed successfully
-		if move(cf, item.Node) {
+		victim, _ := maxPriorityQueue.PeekTop()
+		task := victim.tasks[0]
+		if move(task, target.Node) {
 			// update the task size priority queue
-			item.Load++
+			target.load++
+			victim.load--
+			victim.tasks = victim.tasks[1:]
 			movedSize++
+			if movedSize >= batchSize {
+				break
+			}
 		}
-		priorityQueue.AddOrUpdate(item)
+
+		minPriorityQueue.AddOrUpdate(target)
+		maxPriorityQueue.AddOrUpdate(victim)
 	}
+
 	log.Info("balance done",
 		zap.Int("movedSize", movedSize),
-		zap.Int("victims", len(victims)))
+		zap.Int("victims", totalMoveSize))
 	return movedSize
 }
 
 // BasicSchedule schedules the absent tasks to the available nodes
-func BasicSchedule[T any](
+func BasicSchedule[T Replication](
 	availableSize int,
 	absent []T,
 	nodeTasks map[node.ID]int,
@@ -153,26 +153,26 @@ func BasicSchedule[T any](
 		log.Warn("no node available, skip")
 		return
 	}
-	priorityQueue := heap.NewHeap[*Item]()
+	minPriorityQueue := priorityQueue[T]{
+		h:    heap.NewHeap[*Item[T]](),
+		less: func(a, b int) bool { return a < b },
+	}
 	for key, size := range nodeTasks {
-		priorityQueue.AddOrUpdate(&Item{
-			Node: key,
-			Load: size,
-		})
+		minPriorityQueue.InitItem(key, size, nil)
 	}
 
 	taskSize := 0
 	for _, cf := range absent {
-		item, _ := priorityQueue.PeekTop()
+		item, _ := minPriorityQueue.PeekTop()
 		// the operator is pushed successfully
 		if schedule(cf, item.Node) {
 			// update the task size priority queue
-			item.Load++
+			item.load++
 			taskSize++
 		}
 		if taskSize >= availableSize {
 			break
 		}
-		priorityQueue.AddOrUpdate(item)
+		minPriorityQueue.AddOrUpdate(item)
 	}
 }
