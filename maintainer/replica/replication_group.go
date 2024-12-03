@@ -160,7 +160,7 @@ func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info)
 		}
 		if totalSpan == 0 {
 			log.Warn("meet empty group", zap.String("changefeed", g.changefeedID.Name()), zap.String("group", g.groupName))
-			delete(db.taskGroups, g.groupID)
+			db.maybeRemoveGroup(g)
 			continue
 		}
 
