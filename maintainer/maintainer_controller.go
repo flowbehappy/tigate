@@ -131,7 +131,9 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 			continue
 		}
 		stm.UpdateStatus(status)
-		c.schedulerController.UpdateStatus(stm, status)
+		if c.spanReplicationEnabled {
+			c.replicationDB.UpdateHotSpan(stm, status)
+		}
 	}
 }
 
@@ -169,7 +171,7 @@ func (c *Controller) AddNewTable(table commonEvent.Table, startTs uint64) {
 	tableSpans := []*heartbeatpb.TableSpan{tableSpan}
 	if c.spanReplicationEnabled {
 		//split the whole table span base on the configuration, todo: background split table
-		tableSpans = c.splitter.SplitSpans(context.Background(), tableSpan, len(c.nodeManager.GetAliveNodes()))
+		tableSpans = c.splitter.SplitSpans(context.Background(), tableSpan, len(c.nodeManager.GetAliveNodes()), 0)
 	}
 	c.addNewSpans(table.SchemaID, tableSpans, startTs)
 }
@@ -189,7 +191,11 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 
 	// 1. get the real start ts from the table trigger event dispatcher
 	startTs := uint64(0)
-	for _, resp := range cachedResp {
+	for node, resp := range cachedResp {
+		log.Info("received bootstrap response",
+			zap.Any("changefeed", resp.ChangefeedID),
+			zap.Any("node", node),
+			zap.Any("startTs", resp.CheckpointTs))
 		if resp.CheckpointTs > startTs {
 			startTs = resp.CheckpointTs
 		}
@@ -358,19 +364,13 @@ func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, 
 	})
 }
 
-func (c *Controller) addNewSpans(schemaID int64,
-	tableSpans []*heartbeatpb.TableSpan, startTs uint64) {
-	for _, newSpan := range tableSpans {
+func (c *Controller) addNewSpans(schemaID int64, tableSpans []*heartbeatpb.TableSpan, startTs uint64) {
+	for _, span := range tableSpans {
 		dispatcherID := common.NewDispatcherID()
-		c.addNewSpan(dispatcherID, schemaID, newSpan, startTs)
+		replicaSet := replica.NewReplicaSet(c.changefeedID,
+			dispatcherID, c.tsoClient, schemaID, span, startTs)
+		c.replicationDB.AddAbsentReplicaSet(replicaSet)
 	}
-}
-
-func (c *Controller) addNewSpan(dispatcherID common.DispatcherID, schemaID int64,
-	span *heartbeatpb.TableSpan, startTs uint64) {
-	replicaSet := replica.NewReplicaSet(c.changefeedID,
-		dispatcherID, c.tsoClient, schemaID, span, startTs)
-	c.replicationDB.AddAbsentReplicaSet(replicaSet)
 }
 
 func (c *Controller) loadTables(startTs uint64) ([]commonEvent.Table, error) {

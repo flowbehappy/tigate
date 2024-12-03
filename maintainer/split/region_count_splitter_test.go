@@ -128,7 +128,7 @@ func TestRegionCountSplitSpan(t *testing.T) {
 			RegionThreshold:        1,
 		}
 		splitter := newRegionCountSplitter(cfID, cache, cfg.RegionThreshold)
-		spans := splitter.split(context.Background(), cs.span, cs.totalCaptures)
+		spans := splitter.split(context.Background(), cs.span, cs.totalCaptures, defaultMaxSpanNumber)
 		require.Equalf(t, cs.expectSpans, spans, "%d %s", i, cs.span.String())
 	}
 }
@@ -206,6 +206,7 @@ func TestRegionCountEvenlySplitSpan(t *testing.T) {
 			context.Background(),
 			&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")},
 			cs.totalCaptures,
+			defaultMaxSpanNumber,
 		)
 
 		require.Equalf(t, cs.expectedSpans, len(spans), "%d %v", i, cs)
@@ -241,7 +242,7 @@ func TestSplitSpanRegionOutOfOrder(t *testing.T) {
 	cfID := common.NewChangeFeedIDWithName("test")
 	splitter := newRegionCountSplitter(cfID, cache, cfg.RegionThreshold)
 	span := &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}
-	spans := splitter.split(context.Background(), span, 1)
+	spans := splitter.split(context.Background(), span, 1, defaultMaxSpanNumber)
 	require.Equal(
 		t, []*heartbeatpb.TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}}, spans)
 }

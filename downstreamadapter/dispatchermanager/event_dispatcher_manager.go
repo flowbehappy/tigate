@@ -182,12 +182,16 @@ func NewEventDispatcherManager(
 	var tableTriggerStartTs uint64 = 0
 	// init table trigger event dispatcher when tableTriggerEventDispatcherID is not nil
 	if tableTriggerEventDispatcherID != nil {
-		tableTriggerStartTs, err = manager.newTableTriggerEventDispatcher(tableTriggerEventDispatcherID, startTs)
+		tableTriggerStartTs, err = manager.NewTableTriggerEventDispatcher(tableTriggerEventDispatcherID, startTs)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
 	}
-
+	log.Info("event dispatcher manager created",
+		zap.Stringer("changefeedID", changefeedID),
+		zap.Stringer("maintainerID", maintainerID),
+		zap.Uint64("startTs", startTs),
+		zap.Uint64("tableTriggerStartTs", tableTriggerStartTs))
 	return manager, tableTriggerStartTs, nil
 }
 
@@ -262,7 +266,7 @@ type dispatcherCreateInfo struct {
 	CurrentPDTs uint64
 }
 
-func (e *EventDispatcherManager) newTableTriggerEventDispatcher(id *heartbeatpb.DispatcherID, startTs uint64) (uint64, error) {
+func (e *EventDispatcherManager) NewTableTriggerEventDispatcher(id *heartbeatpb.DispatcherID, startTs uint64) (uint64, error) {
 	err := e.newDispatchers([]dispatcherCreateInfo{
 		{
 			Id:          common.NewDispatcherIDFromPB(id),
@@ -316,22 +320,9 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 		return errors.Trace(err)
 	}
 
-	for idx, id := range dispatcherIds {
-		if newStartTsList[idx] == -1 {
-			e.statusesChan <- TableSpanStatusWithSeq{
-				TableSpanStatus: &heartbeatpb.TableSpanStatus{
-					ID:              id.ToPB(),
-					ComponentStatus: heartbeatpb.ComponentState_Removed,
-				},
-				Seq: e.dispatcherMap.GetSeq(),
-			}
-			log.Info("this table is dropped, skip it and return removed status to maintainer",
-				zap.Any("tableSpan", tableSpans[idx]),
-				zap.Any("changefeedID", e.changefeedID.Name()),
-				zap.Any("namespace", e.changefeedID.Namespace()))
-			continue
-		}
+	log.Info("calculate real startTs for dispatchers", zap.Any("receive startTs", startTsList), zap.Any("real startTs", newStartTsList))
 
+	for idx, id := range dispatcherIds {
 		d := dispatcher.NewDispatcher(
 			e.changefeedID,
 			id, tableSpans[idx], e.sink,
@@ -625,6 +616,10 @@ func (e *EventDispatcherManager) GetMaintainerID() node.ID {
 
 func (e *EventDispatcherManager) GetChangeFeedID() common.ChangeFeedID {
 	return e.changefeedID
+}
+
+func (e *EventDispatcherManager) GetTableTriggerEventDispatcher() *dispatcher.Dispatcher {
+	return e.tableTriggerEventDispatcher
 }
 
 func (e *EventDispatcherManager) SetHeartbeatRequestQueue(heartbeatRequestQueue *HeartbeatRequestQueue) {

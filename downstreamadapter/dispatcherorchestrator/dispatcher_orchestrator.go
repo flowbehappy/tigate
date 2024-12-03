@@ -89,10 +89,32 @@ func (m *DispatcherOrchestrator) handleAddDispatcherManager(from node.ID, req *h
 		}
 		m.dispatcherManagers[cfId] = manager
 		metrics.EventDispatcherManagerGauge.WithLabelValues(cfId.Namespace(), cfId.Name()).Inc()
+	} else {
+		// check whether the event dispatcher manager has the table trigger event dispatcher
+		// when maintainer is transferred to a new node, maybe there has an event dispatcher manager without table trigger event dispatcher
+		// so we need to add a table trigger event dispatcher to the event dispatcher manager
+		if manager.GetTableTriggerEventDispatcher() == nil && req.TableTriggerEventDispatcherId != nil {
+			startTs, err = manager.NewTableTriggerEventDispatcher(req.TableTriggerEventDispatcherId, req.StartTs)
+			if err != nil {
+				log.Error("failed to create new table trigger event dispatcher", zap.Error(err), zap.Any("ChangefeedID", cfId.Name()))
+
+				response := &heartbeatpb.MaintainerBootstrapResponse{
+					ChangefeedID: req.ChangefeedID,
+					Err: &heartbeatpb.RunningError{
+						Time:    time.Now().String(),
+						Node:    from.String(),
+						Code:    string(apperror.ErrorCode(err)),
+						Message: err.Error(),
+					},
+				}
+				return m.sendResponse(from, messaging.MaintainerManagerTopic, response)
+			}
+		}
 	}
 
 	if manager.GetMaintainerID() != from {
 		manager.SetMaintainerID(from)
+		log.Info("maintainer changed", zap.String("changefeed", cfId.Name()), zap.String("maintainer", from.String()))
 	}
 
 	response := createBootstrapResponse(req.ChangefeedID, manager, startTs)
