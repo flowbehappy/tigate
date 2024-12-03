@@ -327,19 +327,18 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 
 // TODO: this may consider some shouldn't be send ddl, like create table, does it matter?
 func (p *persistentStorage) getMaxEventCommitTs(tableID int64, ts uint64) uint64 {
-	return 0
-	// p.mu.RLock()
-	// defer p.mu.RUnlock()
-	// if len(p.tablesDDLHistory[tableID]) == 0 {
-	// 	return 0
-	// }
-	// index := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
-	// 	return p.tablesDDLHistory[tableID][i] > ts
-	// })
-	// if index == 0 {
-	// 	return 0
-	// }
-	// return p.tablesDDLHistory[tableID][index-1]
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if len(p.tablesDDLHistory[tableID]) == 0 {
+		return 0
+	}
+	index := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
+		return p.tablesDDLHistory[tableID][i] > ts
+	})
+	if index == 0 {
+		return 0
+	}
+	return p.tablesDDLHistory[tableID][index-1]
 }
 
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
