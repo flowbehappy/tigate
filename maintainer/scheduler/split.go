@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/maintainer/split"
@@ -30,7 +29,6 @@ import (
 // splitScheduler is used to check the split status of all spans
 type splitScheduler struct {
 	changefeedID common.ChangeFeedID
-	batchSize    int
 
 	splitter     *split.Splitter
 	opController *operator.Controller
@@ -41,8 +39,7 @@ type splitScheduler struct {
 	checkInterval time.Duration
 	lastCheckTime time.Time
 
-	cachedSpans []*replica.SpanReplication
-	hotSpans    *replica.HotSpans
+	cachedSpans []*replica.HotSpan
 }
 
 func newSplitScheduler(
@@ -51,13 +48,11 @@ func newSplitScheduler(
 ) *splitScheduler {
 	return &splitScheduler{
 		changefeedID: changefeedID,
-		batchSize:    batchSize,
 		splitter:     splitter,
 		opController: oc,
 		db:           db,
 		nodeManager:  nodeManager,
-		hotSpans:     replica.NewHotSpans(),
-		cachedSpans:  make([]*replica.SpanReplication, batchSize),
+		cachedSpans:  make([]*replica.HotSpan, batchSize),
 
 		maxCheckTime:  time.Second * 5,
 		checkInterval: time.Second * 120,
@@ -73,36 +68,44 @@ func (s *splitScheduler) Execute() time.Time {
 	}
 
 	log.Info("check split status", zap.String("changefeed", s.changefeedID.Name()),
-		zap.Stringer("hotSpans", s.hotSpans))
+		zap.String("hotSpans", s.db.GetHotSpanStat()), zap.String("groupDistribution", s.db.GetGroupStat()))
 
-	cachedSpans := s.hotSpans.GetBatch(s.cachedSpans)
-	checkedIndex, start := 0, time.Now()
-	for ; checkedIndex < len(cachedSpans); checkedIndex++ {
-		if time.Since(start) > s.maxCheckTime {
+	batch := cap(s.cachedSpans)
+	needBreak := false
+	for _, group := range s.db.GetGroups() {
+		if needBreak || batch <= 0 {
 			break
 		}
-		span := cachedSpans[checkedIndex]
-		if s.db.GetTaskByID(span.ID) == nil {
-			continue
+
+		s.cachedSpans = s.cachedSpans[:0]
+		cachedSpans := s.db.GetHotSpansByGroup(group, s.cachedSpans)
+		batch -= len(cachedSpans)
+
+		checkedIndex, start := 0, time.Now()
+		for ; checkedIndex < len(cachedSpans); checkedIndex++ {
+			if time.Since(start) > s.maxCheckTime {
+				needBreak = true
+				break
+			}
+			span := cachedSpans[checkedIndex]
+			if s.db.GetTaskByID(span.ID) == nil {
+				continue
+			}
+			spans := s.splitter.SplitSpans(context.Background(), span.Span, len(s.nodeManager.GetAliveNodes()), int(span.HintMaxSpanNum))
+			if len(spans) > 1 {
+				log.Info("split span",
+					zap.String("changefeed", s.changefeedID.Name()),
+					zap.String("span", span.ID.String()),
+					zap.Int("span szie", len(spans)))
+				s.opController.AddOperator(operator.NewSplitDispatcherOperator(s.db, span.SpanReplication, span.GetNodeID(), spans))
+			}
 		}
-		spans := s.splitter.SplitSpans(context.Background(), span.Span, len(s.nodeManager.GetAliveNodes()))
-		if len(spans) > 1 {
-			log.Info("split span",
-				zap.String("changefeed", s.changefeedID.Name()),
-				zap.String("span", span.ID.String()),
-				zap.Int("span szie", len(spans)))
-			s.opController.AddOperator(operator.NewSplitDispatcherOperator(s.db, span, span.GetNodeID(), spans))
-		}
+		s.lastCheckTime = time.Now()
+		s.db.ClearHotSpansByGroup(group, cachedSpans[:checkedIndex]...)
 	}
-	s.lastCheckTime = time.Now()
-	s.hotSpans.ClearHotSpans(cachedSpans[:checkedIndex]...)
 	return s.lastCheckTime.Add(s.checkInterval)
 }
 
 func (s *splitScheduler) Name() string {
 	return SplitScheduler
-}
-
-func (s *splitScheduler) updateSpanStatus(span *replica.SpanReplication, status *heartbeatpb.TableSpanStatus) {
-	s.hotSpans.UpdateHotSpan(span, status)
 }

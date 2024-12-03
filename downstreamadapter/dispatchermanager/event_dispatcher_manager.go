@@ -187,7 +187,11 @@ func NewEventDispatcherManager(
 			return nil, 0, errors.Trace(err)
 		}
 	}
-
+	log.Info("event dispatcher manager created",
+		zap.Stringer("changefeedID", changefeedID),
+		zap.Stringer("maintainerID", maintainerID),
+		zap.Uint64("startTs", startTs),
+		zap.Uint64("tableTriggerStartTs", tableTriggerStartTs))
 	return manager, tableTriggerStartTs, nil
 }
 
@@ -315,6 +319,8 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	log.Info("calculate real startTs for dispatchers", zap.Any("receive startTs", startTsList), zap.Any("real startTs", newStartTsList))
 
 	for idx, id := range dispatcherIds {
 		if newStartTsList[idx] == -1 {

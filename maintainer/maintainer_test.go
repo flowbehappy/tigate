@@ -305,7 +305,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	time.Sleep(time.Second * time.Duration(sleepTime))
 
 	cancel()
-	stream.Close()
+	// stream.Close()
 	require.Equal(t, tableSize,
 		maintainer.controller.replicationDB.GetReplicatingSize())
 	require.Equal(t, tableSize,
