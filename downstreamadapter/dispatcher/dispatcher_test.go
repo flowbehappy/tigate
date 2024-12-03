@@ -54,8 +54,8 @@ func (s *mockSink) Close(bool) error {
 	return nil
 }
 
-func (s *mockSink) SinkType() sink.SinkType {
-	return sink.MysqlSinkType
+func (s *mockSink) SinkType() common.SinkType {
+	return common.MysqlSinkType
 }
 
 func (s *mockSink) IsNormal() bool {

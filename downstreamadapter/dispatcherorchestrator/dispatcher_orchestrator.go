@@ -77,7 +77,18 @@ func (m *DispatcherOrchestrator) handlePostBootstrap(from node.ID, req *heartbea
 			zap.Any("ChangefeedID", cfId.Name()),
 			zap.String("expected table trigger event dispatcher id", manager.GetTableTriggerEventDispatcher().GetId().String()),
 			zap.String("actual table trigger event dispatcher id", common.NewDispatcherIDFromPB(req.TableTriggerEventDispatcherId).String()))
-		return nil
+
+		error := apperror.ErrChangefeedInitTableTriggerEventDispatcherFailed.GenWithStackByArgs("Receive post bootstrap request but the table trigger event dispatcher id is not match")
+		response := &heartbeatpb.MaintainerPostBootstrapResponse{
+			ChangefeedID: req.ChangefeedID,
+			Err: &heartbeatpb.RunningError{
+				Time:    time.Now().String(),
+				Node:    from.String(),
+				Code:    string(apperror.ErrorCode(error)),
+				Message: error.Error(),
+			},
+		}
+		return m.sendResponse(from, messaging.MaintainerManagerTopic, response)
 	}
 
 	// init table schema store
