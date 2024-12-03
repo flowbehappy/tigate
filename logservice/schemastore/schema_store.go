@@ -144,6 +144,9 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 			currentPhyTs := oracle.GetPhysical(time.Now())
 			resolvedPhyTs := oracle.ExtractPhysical(pendingTs)
 			resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+			log.Info("schema store resolve ts lag",
+				zap.Int64("now", currentPhyTs),
+				zap.Float64("lag(s)", resolvedLag))
 			metrics.SchemaStoreResolvedTsLagGauge.Set(float64(resolvedLag))
 		}()
 
