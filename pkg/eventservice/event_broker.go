@@ -746,6 +746,7 @@ func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommi
 }
 
 func (c *eventBroker) onDDLResolveTsUpdate(d *dispatcherStat) {
+	log.Info("resolve ts update")
 	needScan, _ := c.checkNeedScan(d, false)
 	if needScan {
 		d.scanning.Store(true)
