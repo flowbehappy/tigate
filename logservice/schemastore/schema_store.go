@@ -41,6 +41,8 @@ type SchemaStore interface {
 	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, error)
 
 	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, uint64, error)
+
+	GetResolvedTs() uint64
 }
 
 type DDLEventState struct {
@@ -132,6 +134,10 @@ func (s *schemaStore) Run(ctx context.Context) error {
 func (s *schemaStore) Close(ctx context.Context) error {
 	log.Info("schema store closed")
 	return s.ddlJobFetcher.close(ctx)
+}
+
+func (s *schemaStore) GetResolvedTs() uint64 {
+	return s.resolvedTs.Load()
 }
 
 func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {

@@ -63,8 +63,9 @@ type dispatcherStat struct {
 	// scanning is used to indicate whether the scan task is running.
 	// If so, we should wait until it is done before we send next resolvedTs event of
 	// this dispatcher.
-	scanning      atomic.Bool
-	lastCheckTime time.Time
+	scanning atomic.Bool
+	// lastSentTime is the time when the last resolvedTs event is sent to the dispatcher.
+	lastSentTime atomic.Time
 
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
@@ -85,7 +86,6 @@ func newDispatcherStat(
 		info:                                  info,
 		filter:                                filter,
 		startTs:                               startTs,
-		lastCheckTime:                         time.Now(),
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
 		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "ddl"),
@@ -100,6 +100,7 @@ func newDispatcherStat(
 	dispStat.checkpointTs.Store(startTs)
 	dispStat.watermark.Store(startTs)
 	dispStat.isRunning.Store(true)
+	dispStat.lastSentTime.Store(time.Now())
 	return dispStat
 }
 

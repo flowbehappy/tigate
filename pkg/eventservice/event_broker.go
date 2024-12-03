@@ -28,10 +28,10 @@ import (
 const (
 	defaultChannelSize = 2048
 	// TODO: need to adjust the worker count
-	defaultScanWorkerCount = 64
+	defaultScanWorkerCount = 32
 	resolvedTsCacheSize    = 8192
 	streamCount            = 4
-	checkNeedScanInterval  = time.Millisecond * 500
+	checkNeedScanInterval  = time.Millisecond * 2000
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -148,7 +148,7 @@ func newEventBroker(
 	}
 
 	c.runScanWorker(ctx)
-	c.runCheckNeedScanWorker(ctx)
+	c.runCheckDDLStateWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.logUnresetDispatchers(ctx)
 	for i := 0; i < messageWorkerCount; i++ {
@@ -159,8 +159,9 @@ func newEventBroker(
 	return c
 }
 
-func (c *eventBroker) runCheckNeedScanWorker(ctx context.Context) {
+func (c *eventBroker) runCheckDDLStateWorker(ctx context.Context) {
 	ticker := time.NewTicker(time.Millisecond * 50)
+	lastDDLResolvedTs := c.schemaStore.GetResolvedTs()
 	go func() {
 		defer ticker.Stop()
 		for {
@@ -168,15 +169,21 @@ func (c *eventBroker) runCheckNeedScanWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				c.dispatchers.Range(func(key, value interface{}) bool {
-					dispatcher := value.(*dispatcherStat)
-					needScan, _ := c.checkNeedScan(dispatcher, false)
-					if needScan {
-						dispatcher.scanning.Store(true)
-						c.taskQueue <- dispatcher
-					}
-					return true
-				})
+				currentDDLResolvedTs := c.schemaStore.GetResolvedTs()
+				if currentDDLResolvedTs > lastDDLResolvedTs {
+					lastDDLResolvedTs = currentDDLResolvedTs
+					c.dispatchers.Range(func(key, value interface{}) bool {
+						d := value.(*dispatcherStat)
+						if time.Since(d.lastSentTime.Load()) < checkNeedScanInterval {
+							return true
+						}
+						needScan, _ := c.checkNeedScan(d, false)
+						if needScan {
+							c.taskQueue <- d
+						}
+						return true
+					})
+				}
 			}
 		}
 	}()
@@ -195,6 +202,7 @@ func (c *eventBroker) sendWatermark(
 		re,
 		d.getEventSenderState())
 	c.getMessageCh(d.workerIndex) <- resolvedEvent
+	d.lastSentTime.Store(time.Now())
 	// We comment out the following code is because we found when some resolvedTs are dropped,
 	// the lag of the resolvedTs will increase.
 	// select {
@@ -351,14 +359,10 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 // If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
 func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common.DataRange) {
 	if !mustCheck {
-		if task.scanning.Load() || time.Since(task.lastCheckTime) < checkNeedScanInterval {
+		if task.scanning.Load() {
 			return false, common.DataRange{}
 		}
 	}
-
-	defer func() {
-		task.lastCheckTime = time.Now()
-	}()
 
 	if task.resetTs.Load() == 0 {
 		remoteID := node.ID(task.info.GetServerID())
@@ -741,6 +745,11 @@ func (c *eventBroker) close() {
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommitTs uint64) {
 	if d.onResolvedTs(resolvedTs) {
 		d.onLatestCommitTs(latestCommitTs)
+		needScan, _ := c.checkNeedScan(d, false)
+		if needScan {
+			d.scanning.Store(true)
+			c.taskQueue <- d
+		}
 	}
 }
 
