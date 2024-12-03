@@ -116,7 +116,7 @@ func Balance[T Replication](
 	movedSize = 0
 	for {
 		target, _ := minPriorityQueue.PeekTop()
-		if len(target.tasks) >= lowerLimitPerCapture {
+		if target.load >= lowerLimitPerCapture {
 			// the minimum workload has reached the lower limit
 			break
 		}
@@ -128,7 +128,7 @@ func Balance[T Replication](
 			victim.load--
 			victim.tasks = victim.tasks[1:]
 			movedSize++
-			if movedSize >= batchSize {
+			if movedSize >= batchSize || movedSize >= totalMoveSize {
 				break
 			}
 		}
