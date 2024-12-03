@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pingcap/ticdc/downstreamadapter/worker/producer"
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
@@ -102,7 +103,7 @@ func TestWriteCheckpointTs(t *testing.T) {
 	ddlWorker := kafkaDDLWorkerForTest(t)
 	ddlWorker.Run()
 
-	tableSchemaStore := util.NewTableSchemaStore()
+	tableSchemaStore := util.NewTableSchemaStore([]*heartbeatpb.SchemaInfo{}, common.KafkaSinkType)
 	ddlWorker.SetTableSchemaStore(tableSchemaStore)
 
 	ddlWorker.GetCheckpointTsChan() <- 1

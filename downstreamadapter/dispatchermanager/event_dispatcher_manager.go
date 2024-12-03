@@ -218,6 +218,12 @@ func (e *EventDispatcherManager) close(remove bool) {
 	toCloseDispatchers := make([]*dispatcher.Dispatcher, 0)
 	e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) {
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
+		if dispatcher.IsTableTriggerEventDispatcher() && e.sink.SinkType() != common.MysqlSinkType {
+			err := appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RemoveCheckpointTsMessage(e.changefeedID)
+			if err != nil {
+				log.Error("remove checkpointTs message failed", zap.Error(err), zap.Any("changefeedID", e.changefeedID))
+			}
+		}
 		dispatcher.Remove()
 		_, ok := dispatcher.TryClose()
 		if !ok {
@@ -288,6 +294,25 @@ func (e *EventDispatcherManager) NewTableTriggerEventDispatcher(id *heartbeatpb.
 	return e.tableTriggerEventDispatcher.GetStartTs(), nil
 }
 
+func (e *EventDispatcherManager) InitalizeTableTriggerEventDispatcher(schemaInfo []*heartbeatpb.SchemaInfo) error {
+	if e.tableTriggerEventDispatcher == nil {
+		return nil
+	}
+	err := e.tableTriggerEventDispatcher.InitalizeTableSchemaStore(schemaInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// table trigger event dispatcher can register to event collector to receive events after finish the initial table schema store from the maintainer.
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).AddDispatcher(e.tableTriggerEventDispatcher, int(e.config.MemoryQuota))
+
+	// when sink is not mysql-class, table trigger event dispatcher need to receive the checkpointTs message from maintainer.
+	if e.sink.SinkType() != common.MysqlSinkType {
+		appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterCheckpointTsMessageDs(e)
+	}
+
+	return nil
+}
+
 func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) error {
 	start := time.Now()
 
@@ -340,13 +365,15 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 			e.heartBeatTask = newHeartBeatTask(e)
 		}
 
-		if tableSpans[idx].Equal(heartbeatpb.DDLSpan) {
+		if d.IsTableTriggerEventDispatcher() {
 			e.tableTriggerEventDispatcher = d
 		} else {
 			e.schemaIDToDispatchers.Set(schemaIds[idx], id)
+			// we don't register table trigger event dispatcher in event collector, when created.
+			// Table trigger event dispatcher is a special dispatcher,
+			// it need to wait get the initial table schema store from the maintainer, then will register to event collector to receive events.
+			appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).AddDispatcher(d, int(e.config.MemoryQuota))
 		}
-
-		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).AddDispatcher(d, int(e.config.MemoryQuota))
 
 		seq := e.dispatcherMap.Set(id, d)
 		e.statusesChan <- TableSpanStatusWithSeq{
@@ -563,7 +590,7 @@ func (e *EventDispatcherManager) aggregateDispatcherHeartbeats(needCompleteStatu
 	e.latestWatermark.Set(message.Watermark)
 
 	for idx, id := range toRemoveDispatcherIDs {
-		e.cleanTableEventDispatcher(id, removedDispatcherSchemaIDs[idx])
+		e.cleanDispatcher(id, removedDispatcherSchemaIDs[idx])
 	}
 
 	e.metricCheckpointTs.Set(float64(message.Watermark.CheckpointTs))
@@ -584,6 +611,13 @@ func (e *EventDispatcherManager) removeDispatcher(id common.DispatcherID) {
 			return
 		}
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
+
+		// for non-mysql class sink, only the event dispatcher manager with table trigger event dispatcher need to receive the checkpointTs message.
+		if dispatcher.IsTableTriggerEventDispatcher() && e.sink.SinkType() != common.MysqlSinkType {
+			err := appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RemoveCheckpointTsMessage(e.changefeedID)
+			log.Error("remove checkpointTs message ds failed", zap.Error(err))
+		}
+
 		dispatcher.Remove()
 	} else {
 		e.statusesChan <- TableSpanStatusWithSeq{
@@ -596,8 +630,8 @@ func (e *EventDispatcherManager) removeDispatcher(id common.DispatcherID) {
 	}
 }
 
-// cleanTableEventDispatcher is called when the dispatcher is removed successfully.
-func (e *EventDispatcherManager) cleanTableEventDispatcher(id common.DispatcherID, schemaID int64) {
+// cleanDispatcher is called when the dispatcher is removed successfully.
+func (e *EventDispatcherManager) cleanDispatcher(id common.DispatcherID, schemaID int64) {
 	e.dispatcherMap.Delete(id)
 	e.schemaIDToDispatchers.Delete(schemaID, id)
 	if e.tableTriggerEventDispatcher != nil && e.tableTriggerEventDispatcher.GetId() == id {

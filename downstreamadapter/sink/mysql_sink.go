@@ -133,8 +133,8 @@ func (s *MysqlSink) IsNormal() bool {
 	return value
 }
 
-func (s *MysqlSink) SinkType() SinkType {
-	return MysqlSinkType
+func (s *MysqlSink) SinkType() common.SinkType {
+	return common.MysqlSinkType
 }
 
 func (s *MysqlSink) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore) {
