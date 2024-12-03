@@ -322,7 +322,7 @@ func TestFinishBootstrap(t *testing.T) {
 			},
 			CheckpointTs: 10,
 		},
-	})
+	}, false)
 	_ = msg
 	require.Nil(t, err)
 	require.NotNil(t, barrier)
@@ -344,7 +344,7 @@ func TestFinishBootstrap(t *testing.T) {
 	require.Equal(t, 0, s.replicationDB.GetSchedulingSize())
 	require.NotNil(t, s.replicationDB.GetTaskByID(dispatcherID2))
 	require.Panics(t, func() {
-		_, _, _ = s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{})
+		_, _, _ = s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{}, false)
 	})
 }
 
@@ -476,8 +476,8 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 			ChangefeedID: cfID.ToPB(),
 			Spans:        reportedSpans,
 			CheckpointTs: 10,
-		}},
-	)
+		},
+	}, false)
 	require.Nil(t, err)
 	require.NotNil(t, barrier)
 	//total 8 regions,
