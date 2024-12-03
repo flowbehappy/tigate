@@ -175,11 +175,7 @@ func (w *MysqlDDLWorker) CheckStartTsList(tableIds []int64, startTsList []int64)
 	}
 	resTs := make([]int64, len(ddlTsList))
 	for idx, ddlTs := range ddlTsList {
-		if ddlTs == -1 {
-			resTs[idx] = -1
-		} else {
-			resTs[idx] = max(ddlTs, startTsList[idx])
-		}
+		resTs[idx] = max(ddlTs, startTsList[idx])
 	}
 
 	return resTs, nil

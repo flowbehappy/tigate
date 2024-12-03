@@ -114,9 +114,10 @@ func (s *Scheduler) balance() {
 		return
 	}
 	// balance changefeeds among the active nodes
-	s.forceBalance = scheduler.Balance(s.batchSize, s.random, s.nodeManager.GetAliveNodes(), s.changefeedDB.GetReplicating(),
+	movedSize := scheduler.Balance(s.batchSize, s.random, s.nodeManager.GetAliveNodes(), s.changefeedDB.GetReplicating(),
 		func(cf *changefeed.Changefeed, nodeID node.ID) bool {
 			return s.operatorController.AddOperator(operator.NewMoveMaintainerOperator(s.changefeedDB, cf, cf.GetNodeID(), nodeID))
 		})
+	s.forceBalance = movedSize >= s.batchSize
 	s.lastRebalanceTime = time.Now()
 }

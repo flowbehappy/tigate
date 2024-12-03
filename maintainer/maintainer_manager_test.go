@@ -189,7 +189,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	require.Equal(t, heartbeatpb.ComponentState_Stopped, maintainer.state)
 	_, ok := manager.maintainers.Load(cfID)
 	require.False(t, ok)
-	manager.stream.Close()
+	// manager.stream.Close()
 	cancel()
 }
 
@@ -290,7 +290,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	}
 	require.Equal(t, 2, foundSize)
 	require.False(t, hasDDLDispatcher)
-	manager.stream.Close()
+	// manager.stream.Close()
 	cancel()
 }
 

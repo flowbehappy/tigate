@@ -3,7 +3,6 @@ package dynstream
 import (
 	"sync/atomic"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/utils/deque"
 )
 
@@ -99,7 +98,8 @@ func (q *eventQueueFast[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P,
 	}
 
 	for {
-		signal, ok := q.signalQueue.FrontRef() // We are going to update the signal directly, so we need the reference.
+		// We are going to update the signal directly, so we need the reference.
+		signal, ok := q.signalQueue.FrontRef()
 		if !ok {
 			return buf, nil
 		}
@@ -121,7 +121,12 @@ func (q *eventQueueFast[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P,
 
 		firstEvent, ok := pendingQueue.FrontRef()
 		if !ok {
-			log.Panic("firstEvent is nil, it should not happen")
+			// The signal could contain more events than the pendingQueue,
+			// which is possible when the path is removed or recovered from blocked.
+			// We should ignore the signal completely.
+			q.signalQueue.PopFront()
+			q.totalPendingLength.Add(-int64(signal.eventCount))
+			continue
 		}
 		firstGroup := firstEvent.eventType.DataGroup
 		appendToBuf(firstEvent, path)
