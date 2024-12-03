@@ -356,6 +356,10 @@ func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common
 		}
 	}
 
+	defer func() {
+		task.lastCheckTime = time.Now()
+	}()
+
 	if task.resetTs.Load() == 0 {
 		remoteID := node.ID(task.info.GetServerID())
 		c.sendReadyEvent(remoteID, task)
@@ -400,8 +404,6 @@ func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common
 		c.sendWatermark(remoteID, task, resolvedTs, task.metricEventServiceSendResolvedTsCount)
 		return false, dataRange
 	}
-
-	task.lastCheckTime = time.Now()
 
 	return true, dataRange
 }
