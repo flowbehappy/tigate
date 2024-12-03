@@ -745,6 +745,14 @@ func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommi
 	}
 }
 
+func (c *eventBroker) onDDLResolveTsUpdate(d *dispatcherStat) {
+	needScan, _ := c.checkNeedScan(d, false)
+	if needScan {
+		d.scanning.Store(true)
+		c.taskQueue <- d
+	}
+}
+
 func (c *eventBroker) getDispatcher(id common.DispatcherID) (*dispatcherStat, bool) {
 	stat, ok := c.dispatchers.Load(id)
 	if !ok {
@@ -797,7 +805,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		return
 	}
 
-	err = c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
+	err = c.schemaStore.RegisterTable(id, span.GetTableID(), info.GetStartTs(), func() { c.onDDLResolveTsUpdate(dispatcher) })
 	if err != nil {
 		log.Panic("register table to schemaStore failed", zap.Error(err), zap.Int64("tableID", span.TableID), zap.Uint64("startTs", info.GetStartTs()))
 	}
@@ -824,7 +832,7 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 		return
 	}
 	c.eventStore.UnregisterDispatcher(id)
-	c.schemaStore.UnregisterTable(dispatcherInfo.GetTableSpan().TableID)
+	c.schemaStore.UnregisterTable(id, dispatcherInfo.GetTableSpan().TableID)
 	c.dispatchers.Delete(id)
 	log.Info("deregister acceptor", zap.Uint64("clusterID", c.tidbClusterID), zap.Any("acceptorID", id))
 }
