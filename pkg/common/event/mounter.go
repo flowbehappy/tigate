@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tiflow/pkg/spanz"
+	"go.uber.org/zap"
 )
 
 // DDLTableInfo contains the tableInfo about tidb_ddl_job and tidb_ddl_history
@@ -180,9 +182,10 @@ func parseJob(v []byte, startTs, CRTs uint64, fromHistoryTable bool) (*model.Job
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	log.Info("fizz parse job", zap.String("job", job.String()), zap.Bool("fromHistoryTable", fromHistoryTable))
 
 	if fromHistoryTable {
-		// we only want to get `create table` and `create tables` ddl from tidb_ddl_history, so we just throw out others ddls.
+		// We only handle `create table` and `create tables` ddl from tidb_ddl_history, so we just throw out others ddls.
 		// We only want the job with `JobStateSynced`, which is means the ddl job is done successfully.
 		// Besides, to satisfy the subsequent processing,
 		// We need to set the job to be Done to make it will replay in schemaStorage

@@ -166,10 +166,12 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 					continue
 				}
 				log.Info("handle ddl job",
+					zap.Int64("jobID", event.Job.ID),
 					zap.Int64("schemaID", event.Job.SchemaID),
 					zap.Int64("tableID", event.Job.TableID),
 					zap.Any("type", event.Job.Type),
-					zap.String("job", event.Job.Query),
+					zap.String("query", event.Job.Query),
+					zap.Stringer("state", event.Job.State),
 					zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
 					zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
 					zap.Uint64("jobCommitTs", event.CommitTs),
