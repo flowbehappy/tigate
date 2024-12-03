@@ -26,8 +26,11 @@ import (
 )
 
 const (
-	resolvedTsCacheSize = 8192
-	streamCount         = 4
+	defaultChannelSize = 2048
+	// TODO: need to adjust the worker count
+	defaultScanWorkerCount = 64
+	resolvedTsCacheSize    = 8192
+	streamCount            = 4
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -144,6 +147,7 @@ func newEventBroker(
 	}
 
 	c.runScanWorker(ctx)
+	c.runCheckNeedScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.logUnresetDispatchers(ctx)
 	for i := 0; i < messageWorkerCount; i++ {
@@ -152,6 +156,31 @@ func newEventBroker(
 	c.updateMetrics(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
+}
+
+func (c *eventBroker) runCheckNeedScanWorker(ctx context.Context) {
+	ticker := time.NewTicker(time.Millisecond * 10)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
+
+					needScan, _ := c.checkNeedScan(dispatcher, false)
+					if needScan {
+						dispatcher.scanning.Store(true)
+						c.taskQueue <- dispatcher
+					}
+
+					return true
+				})
+			}
+		}
+	}()
 }
 
 func (c *eventBroker) sendWatermark(
@@ -342,9 +371,9 @@ func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common
 
 	// 2. Constrain the data range by the ddl state of the table.
 	ddlState := c.schemaStore.GetTableDDLEventState(task.info.GetTableSpan().TableID)
-	// if ddlState.ResolvedTs < dataRange.EndTs {
-	// 	dataRange.EndTs = ddlState.ResolvedTs
-	// }
+	if ddlState.ResolvedTs < dataRange.EndTs {
+		dataRange.EndTs = ddlState.ResolvedTs
+	}
 
 	if dataRange.EndTs <= dataRange.StartTs {
 		return false, dataRange
@@ -707,11 +736,6 @@ func (c *eventBroker) close() {
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommitTs uint64) {
 	if d.onResolvedTs(resolvedTs) {
 		d.onLatestCommitTs(latestCommitTs)
-		needScan, _ := c.checkNeedScan(d, false)
-		if needScan {
-			d.scanning.Store(true)
-			c.taskQueue <- d
-		}
 	}
 }
 

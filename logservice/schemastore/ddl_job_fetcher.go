@@ -77,7 +77,7 @@ func newDDLJobFetcher(
 		kvStorage:         kvStorage,
 	}
 	ddlSpans := getAllDDLSpan()
-	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, pdClock, ddlSpans, startTs, ddlJobFetcher.input)
+	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, pdClock, ddlSpans, startTs, ddlJobFetcher.handler)
 
 	return ddlJobFetcher
 }
@@ -90,7 +90,7 @@ func (p *ddlJobFetcher) close(ctx context.Context) error {
 	return p.puller.Close(ctx)
 }
 
-func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) error {
+func (p *ddlJobFetcher) handler(ctx context.Context, rawEvent *common.RawKVEntry) error {
 	if rawEvent.IsResolved() {
 		p.advanceResolvedTs(uint64(rawEvent.CRTs))
 		return nil
