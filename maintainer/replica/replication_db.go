@@ -395,9 +395,8 @@ func (db *ReplicationDB) removeSpanUnLock(spans ...*SpanReplication) {
 	for _, span := range spans {
 		g := db.mustGetGroup(span.groupID)
 		g.RemoveSpan(span)
-		if g.groupID != defaultGroupID && g.IsEmpty() {
-			delete(db.taskGroups, span.groupID)
-		}
+		db.maybeRemoveGroup(g)
+
 		tableID := span.Span.TableID
 		schemaID := span.GetSchemaID()
 		delete(db.schemaTasks[schemaID], span.ID)
@@ -443,6 +442,13 @@ func (db *ReplicationDB) getOrCreateGroup(task *SpanReplication) *replicationTas
 			zap.Int64("tableID", task.Span.TableID))
 	}
 	return g
+}
+
+func (db *ReplicationDB) maybeRemoveGroup(g *replicationTaskGroup) {
+	if g.groupID == defaultGroupID || !g.IsEmpty() {
+		return
+	}
+	delete(db.taskGroups, g.groupID)
 }
 
 func (db *ReplicationDB) mustGetGroup(groupID GroupID) *replicationTaskGroup {
