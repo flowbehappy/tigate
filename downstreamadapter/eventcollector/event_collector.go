@@ -331,11 +331,11 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 			case commonEvent.TypeBatchResolvedEvent:
 				for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 					c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-					c.ds.In(e.DispatcherID) <- dispatcher.NewDispatcherEvent(targetMessage.From, e)
+					c.ds.In(e.DispatcherID) <- dispatcher.NewDispatcherEvent(&targetMessage.From, e)
 				}
 			default:
 				c.metricDispatcherReceivedKVEventCount.Inc()
-				c.ds.In(event.GetDispatcherID()) <- dispatcher.NewDispatcherEvent(targetMessage.From, event)
+				c.ds.In(event.GetDispatcherID()) <- dispatcher.NewDispatcherEvent(&targetMessage.From, event)
 			}
 		default:
 			log.Panic("invalid message type", zap.Any("msg", msg))
@@ -445,7 +445,7 @@ func (d *DispatcherStat) checkEventSeq(event dispatcher.DispatcherEvent, eventCo
 }
 
 func (d *DispatcherStat) shouldIgnoreDataEvent(event dispatcher.DispatcherEvent, eventCollector *EventCollector) bool {
-	if d.eventServiceInfo.serverID != event.From {
+	if d.eventServiceInfo.serverID != *event.From {
 		// TODO: unregister from this invalid event service if it send events for a long time
 		return true
 	}
@@ -481,7 +481,7 @@ func (d *DispatcherStat) handleHandshakeEvent(event dispatcher.DispatcherEvent, 
 	if d.eventServiceInfo.serverID == "" {
 		log.Panic("should not happen: not server ID set")
 	}
-	if d.eventServiceInfo.serverID != event.From {
+	if d.eventServiceInfo.serverID != *event.From {
 		// check invariant: if the handshake event is not from the current event service, we must be reading from local event service.
 		if d.eventServiceInfo.serverID != eventCollector.serverId {
 			log.Panic("receive handshake event from remote event service, but current event service is not local event service",
@@ -504,7 +504,7 @@ func (d *DispatcherStat) handleReadyEvent(event dispatcher.DispatcherEvent, even
 	if event.GetType() != commonEvent.TypeReadyEvent {
 		log.Panic("should not happen")
 	}
-	server := event.From
+	server := *event.From
 	if d.eventServiceInfo.serverID == server {
 		// case 1: already received ready signal from the same server
 		if d.eventServiceInfo.readyEventReceived {
@@ -562,7 +562,7 @@ func (d *DispatcherStat) handleNotReusableEvent(event dispatcher.DispatcherEvent
 	if event.GetType() != commonEvent.TypeNotReusableEvent {
 		log.Panic("should not happen")
 	}
-	if event.From == d.eventServiceInfo.serverID {
+	if *event.From == d.eventServiceInfo.serverID {
 		if len(d.eventServiceInfo.remoteCandiates) > 0 {
 			eventCollector.addDispatcherRequestToSendingQueue(
 				d.eventServiceInfo.remoteCandiates[0],
