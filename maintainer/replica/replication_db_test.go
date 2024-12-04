@@ -20,18 +20,29 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	replica_mock "github.com/pingcap/ticdc/maintainer/replica/mock"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
 )
 
+// TODO: refactor all test in maintainer with getTableSpanByID
+func getTableSpanByID(id common.TableID) *heartbeatpb.TableSpan {
+	totalSpan := spanz.TableIDToComparableSpan(id)
+	return &heartbeatpb.TableSpan{
+		TableID:  totalSpan.TableID,
+		StartKey: totalSpan.StartKey,
+		EndKey:   totalSpan.EndKey,
+	}
+}
+
 func TestBasicFunction(t *testing.T) {
 	db := newDBForTest(t)
-	absent := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, &heartbeatpb.TableSpan{TableID: 4}, 1)
+	absent := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, getTableSpanByID(4), 1)
 	db.AddAbsentReplicaSet(absent)
 	// replicating and scheduling will be returned
 	replicaSpanID := common.NewDispatcherID()
 	replicaSpan := NewWorkingReplicaSet(db.changefeedID, replicaSpanID,
 		db.ddlSpan.tsoClient, 1,
-		&heartbeatpb.TableSpan{TableID: 3}, &heartbeatpb.TableSpanStatus{
+		getTableSpanByID(3), &heartbeatpb.TableSpanStatus{
 			ID:              replicaSpanID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
@@ -85,13 +96,13 @@ func TestBasicFunction(t *testing.T) {
 
 	require.Len(t, db.GetReplicating(), 0)
 	require.Equal(t, 1, db.TaskSize())
-	require.Len(t, db.absent, 0)
-	require.Len(t, db.scheduling, 0)
-	require.Len(t, db.replicating, 0)
+	require.Equal(t, db.GetAbsentSize(), 0)
+	require.Equal(t, db.GetSchedulingSize(), 0)
+	require.Equal(t, db.GetReplicatingSize(), 0)
 	// ddl table id
 	require.Len(t, db.tableTasks[0], 1)
 	require.Len(t, db.schemaTasks[heartbeatpb.DDLSpanSchemaID], 1)
-	require.Len(t, db.nodeTasks, 0)
+	require.Len(t, db.GetTaskSizePerNode(), 0)
 }
 
 func TestReplaceReplicaSet(t *testing.T) {
@@ -100,7 +111,7 @@ func TestReplaceReplicaSet(t *testing.T) {
 	replicaSpanID := common.NewDispatcherID()
 	replicaSpan := NewWorkingReplicaSet(db.changefeedID, replicaSpanID,
 		db.ddlSpan.tsoClient, 1,
-		&heartbeatpb.TableSpan{TableID: 3}, &heartbeatpb.TableSpanStatus{
+		getTableSpanByID(3), &heartbeatpb.TableSpanStatus{
 			ID:              replicaSpanID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
@@ -108,10 +119,11 @@ func TestReplaceReplicaSet(t *testing.T) {
 	db.AddReplicatingSpan(replicaSpan)
 
 	notExists := &SpanReplication{ID: common.NewDispatcherID()}
-	db.ReplaceReplicaSet(notExists, []*heartbeatpb.TableSpan{{}, {}}, 1)
+	ok := db.ReplaceReplicaSet(notExists, []*heartbeatpb.TableSpan{{}, {}}, 1)
+	require.False(t, ok)
 	require.Len(t, db.GetAllTasks(), 2)
 
-	db.ReplaceReplicaSet(replicaSpan, []*heartbeatpb.TableSpan{{TableID: 3}, {TableID: 4}}, 5)
+	db.ReplaceReplicaSet(replicaSpan, []*heartbeatpb.TableSpan{getTableSpanByID(3), getTableSpanByID(4)}, 5)
 	require.Len(t, db.GetAllTasks(), 3)
 	require.Equal(t, 2, db.GetAbsentSize())
 	require.Equal(t, 2, db.GetTaskSizeBySchemaID(1))
@@ -123,7 +135,7 @@ func TestMarkSpanAbsent(t *testing.T) {
 	replicaSpanID := common.NewDispatcherID()
 	replicaSpan := NewWorkingReplicaSet(db.changefeedID, replicaSpanID,
 		db.ddlSpan.tsoClient, 1,
-		&heartbeatpb.TableSpan{TableID: 3}, &heartbeatpb.TableSpanStatus{
+		getTableSpanByID(3), &heartbeatpb.TableSpanStatus{
 			ID:              replicaSpanID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
@@ -140,7 +152,7 @@ func TestForceRemove(t *testing.T) {
 	replicaSpanID := common.NewDispatcherID()
 	replicaSpan := NewWorkingReplicaSet(db.changefeedID, replicaSpanID,
 		db.ddlSpan.tsoClient, 1,
-		&heartbeatpb.TableSpan{TableID: 3}, &heartbeatpb.TableSpanStatus{
+		getTableSpanByID(3), &heartbeatpb.TableSpanStatus{
 			ID:              replicaSpanID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
@@ -155,7 +167,7 @@ func TestForceRemove(t *testing.T) {
 func TestGetAbsents(t *testing.T) {
 	db := newDBForTest(t)
 	for i := 0; i < 10; i++ {
-		absent := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, &heartbeatpb.TableSpan{TableID: int64(i + 1)}, 1)
+		absent := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, getTableSpanByID(int64(i+1)), 1)
 		db.AddAbsentReplicaSet(absent)
 	}
 	require.Len(t, db.GetAbsent(nil, 5), 5)
@@ -172,17 +184,17 @@ func TestRemoveAllTables(t *testing.T) {
 	replicaSpanID := common.NewDispatcherID()
 	replicaSpan := NewWorkingReplicaSet(db.changefeedID, replicaSpanID,
 		db.ddlSpan.tsoClient, 1,
-		&heartbeatpb.TableSpan{TableID: 3}, &heartbeatpb.TableSpanStatus{
+		getTableSpanByID(3), &heartbeatpb.TableSpanStatus{
 			ID:              replicaSpanID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
 	db.AddReplicatingSpan(replicaSpan)
 
-	absent := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, &heartbeatpb.TableSpan{TableID: 4}, 1)
+	absent := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, getTableSpanByID(4), 1)
 	db.AddAbsentReplicaSet(absent)
 
-	scheduling := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, &heartbeatpb.TableSpan{TableID: 4}, 1)
+	scheduling := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, getTableSpanByID(4), 1)
 	db.AddAbsentReplicaSet(scheduling)
 	db.MarkSpanScheduling(scheduling)
 

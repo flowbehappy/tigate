@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
+	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +30,9 @@ func TestBasicScheduler(t *testing.T) {
 	cfID := common.NewChangeFeedIDWithName("test")
 	db := replica.NewReplicaSetDB(cfID, replica.NewReplicaSet(cfID, common.NewDispatcherID(), nil, heartbeatpb.DDLSpanSchemaID, heartbeatpb.DDLSpan, 1))
 	for i := 0; i < 9; i++ {
-		absent := replica.NewReplicaSet(cfID, common.NewDispatcherID(), nil, 1, &heartbeatpb.TableSpan{TableID: int64(i + 1)}, 1)
+		id := int64(i + 1)
+		totalSpan := spanz.TableIDToComparableSpan(id)
+		absent := replica.NewReplicaSet(cfID, common.NewDispatcherID(), nil, 1, &heartbeatpb.TableSpan{id, totalSpan.StartKey, totalSpan.EndKey}, 1)
 		db.AddAbsentReplicaSet(absent)
 	}
 	self := node.NewInfo("node1", "")

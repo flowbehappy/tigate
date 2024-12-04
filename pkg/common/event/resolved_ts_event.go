@@ -85,22 +85,20 @@ const (
 
 // ResolvedEvent represents a resolvedTs event of a dispatcher.
 type ResolvedEvent struct {
-	// Version is the version of the ResolvedEvent struct.
-	Version    byte
-	ResolvedTs common.Ts
-	// State is the state of sender when sending this event.
-	State        EventSenderState
 	DispatcherID common.DispatcherID
+	ResolvedTs   common.Ts
+	State        EventSenderState
+	Version      byte
 }
 
 func NewResolvedEvent(
 	resolvedTs common.Ts,
 	dispatcherID common.DispatcherID) ResolvedEvent {
 	return ResolvedEvent{
-		Version:      ResolvedEventVersion,
+		DispatcherID: dispatcherID,
 		ResolvedTs:   resolvedTs,
 		State:        EventSenderStateNormal,
-		DispatcherID: dispatcherID,
+		Version:      ResolvedEventVersion,
 	}
 }
 

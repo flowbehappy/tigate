@@ -45,6 +45,7 @@ func (p *pathStat[A, P, T, D, H]) LessThan(o *pathStat[A, P, T, D, H]) bool {
 // different fields are either immutable or accessed by different goroutines.
 // We use one struct to store them together to avoid mapping by path in different places in many times,
 // and to avoid the overhead of creating a new struct.
+
 type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	area A
 	path P
@@ -95,7 +96,7 @@ func newPathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](area A,
 		area:         area,
 		path:         path,
 		dest:         dest,
-		pendingQueue: deque.NewDeque[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 0 /*unlimited*/),
+		pendingQueue: deque.NewDeque[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue),
 		pathStat:     &pathStat[A, P, T, D, H]{},
 	}
 	return pi
@@ -154,8 +155,9 @@ func tryAddPathToBusyHeap[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 // eventWrap contains the event and the path info.
 // It can be a event or a wake signal.
 type eventWrap[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
-	event T
-	wake  bool
+	event   T
+	wake    bool
+	newPath bool
 
 	pathInfo *pathInfo[A, P, T, D, H]
 
@@ -179,8 +181,6 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	handler Handler[A, P, T, D]
 
-	eventBlockAllocator *deque.BlockAllocator[eventWrap[A, P, T, D, H]] // The allocator for blocks to store eventWraps in the pendingQueue.
-
 	// The fields when UseBuffer is true.
 	bufferCount atomic.Int64
 	inChan      chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
@@ -189,8 +189,8 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	// The channel used by the handleLoop to receive the events.
 	eventChan chan eventWrap[A, P, T, D, H]
 
-	eventQueue eventQueue[A, P, T, D, H]    // The queue to store the pending events.
-	doneChan   chan doneInfo[A, P, T, D, H] // The channel to receive the done events.
+	eventQueue eventQueueFast[A, P, T, D, H] // The queue to store the pending events.
+	doneChan   chan doneInfo[A, P, T, D, H]  // The channel to receive the done events.
 
 	reportNow chan struct{} // For test, make the reportStatLoop to report immediately.
 
@@ -216,7 +216,7 @@ func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 	s := &stream[A, P, T, D, H]{
 		id:                  id,
 		handler:             handler,
-		eventQueue:          newEventQueue(option, handler),
+		eventQueue:          newEventQueueFast(option, handler),
 		doneChan:            make(chan doneInfo[A, P, T, D, H], 64),
 		reportNow:           make(chan struct{}, 1),
 		reportChan:          reportChan,
@@ -232,8 +232,6 @@ func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 	} else {
 		s.eventChan = make(chan eventWrap[A, P, T, D, H], 64)
 	}
-	a := deque.NewBlockAllocator[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 64)
-	s.eventBlockAllocator = &a
 	return s
 }
 
@@ -290,7 +288,7 @@ func (s *stream[A, P, T, D, H]) close(wait ...bool) {
 }
 
 func (s *stream[A, P, T, D, H]) reciever() {
-	buffer := deque.NewDeque[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue, 0 /*unlimited*/)
+	buffer := deque.NewDeque[eventWrap[A, P, T, D, H]](BlockLenInPendingQueue)
 	defer func() {
 		// Move all remaining events in the buffer to the outChan.
 		for {
@@ -333,8 +331,9 @@ func (s *stream[A, P, T, D, H]) reciever() {
 func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D, H], formerStreams []*stream[A, P, T, D, H]) {
 	pushToPendingQueue := func(e eventWrap[A, P, T, D, H]) {
 		if e.wake {
-			e.pathInfo.blocking = false
 			s.eventQueue.wakePath(e.pathInfo)
+		} else if e.newPath {
+			s.eventQueue.initPath(e.pathInfo)
 		} else if e.pathInfo.removed {
 			s.eventQueue.removePath(e.pathInfo)
 		} else {
@@ -369,8 +368,7 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 	// We initialize the pathMap here to avoid blocking the main goroutine.
 	// As there could be many paths, and the initialization could be time-consuming.
 	for _, p := range acceptedPaths {
-		p.setEventBlockAllocator(s.eventBlockAllocator)
-		s.eventQueue.addPath(p)
+		s.eventQueue.initPath(p)
 	}
 
 	// Variables below will be used in the Loop below.

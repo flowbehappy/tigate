@@ -131,7 +131,9 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 			continue
 		}
 		stm.UpdateStatus(status)
-		c.schedulerController.UpdateStatus(stm, status)
+		if c.spanReplicationEnabled {
+			c.replicationDB.UpdateHotSpan(stm, status)
+		}
 	}
 }
 
@@ -169,14 +171,17 @@ func (c *Controller) AddNewTable(table commonEvent.Table, startTs uint64) {
 	tableSpans := []*heartbeatpb.TableSpan{tableSpan}
 	if c.spanReplicationEnabled {
 		//split the whole table span base on the configuration, todo: background split table
-		tableSpans = c.splitter.SplitSpans(context.Background(), tableSpan, len(c.nodeManager.GetAliveNodes()))
+		tableSpans = c.splitter.SplitSpans(context.Background(), tableSpan, len(c.nodeManager.GetAliveNodes()), 0)
 	}
 	c.addNewSpans(table.SchemaID, tableSpans, startTs)
 }
 
 // FinishBootstrap adds working state tasks to this controller directly,
 // it reported by the bootstrap response
-func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.MaintainerBootstrapResponse) (*Barrier, error) {
+func (c *Controller) FinishBootstrap(
+	cachedResp map[node.ID]*heartbeatpb.MaintainerBootstrapResponse,
+	isMysqlCompatibleBackend bool,
+) (*Barrier, *heartbeatpb.MaintainerPostBootstrapRequest, error) {
 	if c.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", c.changefeedID.Name()),
@@ -189,7 +194,11 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 
 	// 1. get the real start ts from the table trigger event dispatcher
 	startTs := uint64(0)
-	for _, resp := range cachedResp {
+	for node, resp := range cachedResp {
+		log.Info("received bootstrap response",
+			zap.Any("changefeed", resp.ChangefeedID),
+			zap.Any("node", node),
+			zap.Any("startTs", resp.CheckpointTs))
 		if resp.CheckpointTs > startTs {
 			startTs = resp.CheckpointTs
 		}
@@ -204,7 +213,7 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 		log.Error("load table from scheme store failed",
 			zap.String("changefeed", c.changefeedID.Name()),
 			zap.Error(err))
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication])
@@ -241,7 +250,24 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 		}
 	}
 
+	schemaInfos := map[int64]*heartbeatpb.SchemaInfo{}
 	for _, table := range tables {
+		if _, ok := schemaInfos[table.SchemaID]; !ok {
+			schemaInfos[table.SchemaID] = &heartbeatpb.SchemaInfo{}
+			if isMysqlCompatibleBackend {
+				schemaInfos[table.SchemaID].SchemaID = table.SchemaID
+			} else {
+				schemaInfos[table.SchemaID].SchemaName = table.SchemaName
+			}
+		}
+		tableInfo := &heartbeatpb.TableInfo{}
+		if isMysqlCompatibleBackend {
+			tableInfo.TableID = table.TableID
+		} else {
+			tableInfo.TableName = table.TableName
+		}
+		schemaInfos[table.SchemaID].Tables = append(schemaInfos[table.SchemaID].Tables, tableInfo)
+
 		tableMap, ok := workingMap[table.TableID]
 		if !ok {
 			c.AddNewTable(table, c.startCheckpointTs)
@@ -288,7 +314,16 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 	c.taskHandlers = append(c.taskHandlers, c.taskScheduler.Submit(c.operatorController, time.Now()))
 
 	c.bootstrapped = true
-	return barrier, nil
+
+	initSchemaInfos := make([]*heartbeatpb.SchemaInfo, 0, len(schemaInfos))
+	for _, info := range schemaInfos {
+		initSchemaInfos = append(initSchemaInfos, info)
+	}
+	return barrier, &heartbeatpb.MaintainerPostBootstrapRequest{
+		ChangefeedID:                  c.changefeedID.ToPB(),
+		TableTriggerEventDispatcherId: c.ddlDispatcherID.ToPB(),
+		Schemas:                       initSchemaInfos,
+	}, nil
 }
 
 func (c *Controller) Stop() {
@@ -358,19 +393,13 @@ func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, 
 	})
 }
 
-func (c *Controller) addNewSpans(schemaID int64,
-	tableSpans []*heartbeatpb.TableSpan, startTs uint64) {
-	for _, newSpan := range tableSpans {
+func (c *Controller) addNewSpans(schemaID int64, tableSpans []*heartbeatpb.TableSpan, startTs uint64) {
+	for _, span := range tableSpans {
 		dispatcherID := common.NewDispatcherID()
-		c.addNewSpan(dispatcherID, schemaID, newSpan, startTs)
+		replicaSet := replica.NewReplicaSet(c.changefeedID,
+			dispatcherID, c.tsoClient, schemaID, span, startTs)
+		c.replicationDB.AddAbsentReplicaSet(replicaSet)
 	}
-}
-
-func (c *Controller) addNewSpan(dispatcherID common.DispatcherID, schemaID int64,
-	span *heartbeatpb.TableSpan, startTs uint64) {
-	replicaSet := replica.NewReplicaSet(c.changefeedID,
-		dispatcherID, c.tsoClient, schemaID, span, startTs)
-	c.replicationDB.AddAbsentReplicaSet(replicaSet)
 }
 
 func (c *Controller) loadTables(startTs uint64) ([]commonEvent.Table, error) {

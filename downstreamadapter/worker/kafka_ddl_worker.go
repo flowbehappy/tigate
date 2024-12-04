@@ -188,9 +188,6 @@ func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if w.tableSchemaStore == nil {
-				log.Panic("tableSchemaStore is nil", zap.Any("changefeed", w.changeFeedID))
-			}
 			tableNames := w.tableSchemaStore.GetAllTableNames(ts)
 			// NOTICE: When there are no tables to replicate,
 			// we need to send checkpoint ts to the default topic.

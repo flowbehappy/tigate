@@ -12,6 +12,7 @@ import (
 	ticonfig "github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/sink/codec/common"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/sink"
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 )
@@ -55,33 +56,65 @@ func GetEncoderConfig(
 //
 // TableSchemaStore only exists in the table trigger event dispatcher, and the same instance's sink of this changefeed,
 // which means each changefeed only has one TableSchemaStore.
-// TODO:In fact, it is a choice between two options. Later, the logic will be updated according to the sink type.
+// for mysql sink, tableSchemaStore only need the id-class infos; otherwise, it only need name-class infos.
 type TableSchemaStore struct {
+	sinkType       commonType.SinkType
 	tableNameStore *TableNameStore
 	tableIDStore   *TableIDStore
 }
 
-func NewTableSchemaStore() *TableSchemaStore {
-	return &TableSchemaStore{
-		tableNameStore: &TableNameStore{
-			existingTables:         make(map[string]map[string]*commonEvent.SchemaTableName),
-			latestTableNameChanges: &LatestTableNameChanges{m: make(map[uint64]*commonEvent.TableNameChange)},
-		},
-		tableIDStore: &TableIDStore{
-			schemaIDToTableIDs: make(map[int64]map[int64]interface{}),
-			tableIDToSchemaID:  make(map[int64]int64),
-		},
+func NewTableSchemaStore(schemaInfo []*heartbeatpb.SchemaInfo, sinkType commonType.SinkType) *TableSchemaStore {
+	var tableSchemaStore *TableSchemaStore
+	if sinkType == commonType.MysqlSinkType {
+		tableSchemaStore = &TableSchemaStore{
+			sinkType: sinkType,
+			tableIDStore: &TableIDStore{
+				schemaIDToTableIDs: make(map[int64]map[int64]interface{}),
+				tableIDToSchemaID:  make(map[int64]int64),
+			},
+		}
+		for _, schema := range schemaInfo {
+			schemaID := schema.SchemaID
+			for _, table := range schema.Tables {
+				tableID := table.TableID
+				tableSchemaStore.tableIDStore.Add(schemaID, tableID)
+			}
+		}
+	} else {
+		tableSchemaStore = &TableSchemaStore{
+			sinkType: sinkType,
+			tableNameStore: &TableNameStore{
+				existingTables:         make(map[string]map[string]*commonEvent.SchemaTableName),
+				latestTableNameChanges: &LatestTableNameChanges{m: make(map[uint64]*commonEvent.TableNameChange)},
+			},
+		}
+		for _, schema := range schemaInfo {
+			schemaName := schema.SchemaName
+			for _, table := range schema.Tables {
+				tableName := table.TableName
+				tableSchemaStore.tableNameStore.Add(schemaName, tableName)
+			}
+		}
+
 	}
+	return tableSchemaStore
+}
+
+func (s *TableSchemaStore) Clear() {
+	s = nil
 }
 
 func (s *TableSchemaStore) AddEvent(event *commonEvent.DDLEvent) {
-	s.tableNameStore.AddEvent(event)
-	s.tableIDStore.AddEvent(event)
+	if s.sinkType == commonType.MysqlSinkType {
+		s.tableIDStore.AddEvent(event)
+	} else {
+		s.tableNameStore.AddEvent(event)
+	}
 }
 
 func (s *TableSchemaStore) initialized() bool {
 	if s == nil || (s.tableIDStore == nil && s.tableNameStore == nil) {
-		log.Warn("TableSchemaStore is not initialized", zap.Any("tableSchemaStore", s))
+		log.Panic("TableSchemaStore is not initialized", zap.Any("tableSchemaStore", s))
 		return false
 	}
 	return true
@@ -126,6 +159,16 @@ type TableNameStore struct {
 	existingTables map[string]map[string]*commonEvent.SchemaTableName // databaseName -> {tableName -> SchemaTableName}
 	// store the change of table name from the latest query ts to now(latest event)
 	latestTableNameChanges *LatestTableNameChanges
+}
+
+func (s *TableNameStore) Add(databaseName string, tableName string) {
+	if s.existingTables[databaseName] == nil {
+		s.existingTables[databaseName] = make(map[string]*commonEvent.SchemaTableName, 0)
+	}
+	s.existingTables[databaseName][tableName] = &commonEvent.SchemaTableName{
+		SchemaName: databaseName,
+		TableName:  tableName,
+	}
 }
 
 func (s *TableNameStore) AddEvent(event *commonEvent.DDLEvent) {
@@ -179,6 +222,17 @@ type TableIDStore struct {
 	mutex              sync.Mutex
 	schemaIDToTableIDs map[int64]map[int64]interface{} // schemaID -> tableIDs
 	tableIDToSchemaID  map[int64]int64                 // tableID -> schemaID
+}
+
+func (s *TableIDStore) Add(schemaID int64, tableID int64) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if s.schemaIDToTableIDs[schemaID] == nil {
+		s.schemaIDToTableIDs[schemaID] = make(map[int64]interface{})
+	}
+	s.schemaIDToTableIDs[schemaID][tableID] = nil
+	s.tableIDToSchemaID[tableID] = schemaID
 }
 
 func (s *TableIDStore) AddEvent(event *commonEvent.DDLEvent) {
@@ -262,4 +316,14 @@ func (s *TableIDStore) GetAllTableIds() []int64 {
 	// Each influence-DB ddl must have table trigger event dispatcher's participation
 	tableIds = append(tableIds, heartbeatpb.DDLSpan.TableID)
 	return tableIds
+}
+
+// IsMysqlCompatibleBackend returns true if the sinkURIStr is mysql compatible.
+func IsMysqlCompatibleBackend(sinkURIStr string) (bool, error) {
+	sinkURI, err := url.Parse(sinkURIStr)
+	if err != nil {
+		return false, cerror.WrapError(cerror.ErrSinkURIInvalid, err)
+	}
+	scheme := sink.GetScheme(sinkURI)
+	return sink.IsMySQLCompatibleScheme(scheme), nil
 }

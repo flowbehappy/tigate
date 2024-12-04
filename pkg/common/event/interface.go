@@ -113,6 +113,7 @@ func ToTablesPB(tables []Table) []*heartbeatpb.Table {
 type Table struct {
 	SchemaID int64
 	TableID  int64
+	*SchemaTableName
 }
 
 type SchemaIDChange struct {

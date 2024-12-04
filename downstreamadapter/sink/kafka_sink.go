@@ -57,8 +57,8 @@ type KafkaSink struct {
 	isNormal uint32 // if sink is normal, isNormal is 1, otherwise is 0
 }
 
-func (s *KafkaSink) SinkType() SinkType {
-	return KafkaSinkType
+func (s *KafkaSink) SinkType() common.SinkType {
+	return common.KafkaSinkType
 }
 
 func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig, errCh chan error) (*KafkaSink, error) {

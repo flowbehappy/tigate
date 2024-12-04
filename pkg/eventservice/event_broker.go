@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/log"
@@ -14,12 +13,11 @@ import (
 	"github.com/pingcap/ticdc/logservice/schemastore"
 	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/common"
-	"github.com/pingcap/ticdc/pkg/filter"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/utils/dynstream"
-	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 
@@ -29,7 +27,7 @@ import (
 
 const (
 	resolvedTsCacheSize = 8192
-	streamCount         = 16
+	streamCount         = 4
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -38,8 +36,6 @@ var metricEventBrokerScanTaskCount = metrics.EventServiceScanTaskCount
 var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
 var metricEventBrokerTaskHandleDuration = metrics.EventServiceTaskHandleDuration
 var metricEventBrokerPendingScanTaskCount = metrics.EventServicePendingScanTaskCount
-var metricEventBrokerDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-broker")
-var metricEventBrokerDSChannelSize = metrics.DynamicStreamEventChanSize.WithLabelValues("event-broker")
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -63,15 +59,12 @@ type eventBroker struct {
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskQueue chan scanTask
 
-	// GID here is the internal changefeedID, use to identify the area of the dispatcher.
-	ds dynstream.DynamicStream[common.GID, common.DispatcherID, scanTask, *eventBroker, *dispatcherEventsHandler]
-
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
 
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
-	messageCh []chan wrapEvent
+	messageCh []chan *wrapEvent
 
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
@@ -92,13 +85,6 @@ type eventBroker struct {
 	}
 }
 
-type pathHasher struct {
-}
-
-func (h pathHasher) HashPath(path common.DispatcherID) uint64 {
-	return (common.GID)(path).FastHash()
-}
-
 func newEventBroker(
 	ctx context.Context,
 	id uint64,
@@ -111,15 +97,14 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
-	ds.Start()
+	option.UseBuffer = true
 
 	messageWorkerCount := runtime.NumCPU()
 	if messageWorkerCount < streamCount {
 		messageWorkerCount = streamCount
 	}
 
-	//conf := config.GetGlobalServerConfig().Debug.EventService
+	conf := config.GetGlobalServerConfig().Debug.EventService
 
 	c := &eventBroker{
 		tidbClusterID:           id,
@@ -129,10 +114,9 @@ func newEventBroker(
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
-		taskQueue:               make(chan scanTask, 8192),
+		taskQueue:               make(chan scanTask, conf.ScanTaskQueueSize),
 		scanWorkerCount:         defaultScanWorkerCount,
-		ds:                      ds,
-		messageCh:               make([]chan wrapEvent, messageWorkerCount),
+		messageCh:               make([]chan *wrapEvent, messageWorkerCount),
 		cancel:                  cancel,
 		wg:                      wg,
 
@@ -156,7 +140,7 @@ func newEventBroker(
 	}
 
 	for i := 0; i < messageWorkerCount; i++ {
-		c.messageCh[i] = make(chan wrapEvent, defaultChannelSize)
+		c.messageCh[i] = make(chan *wrapEvent, defaultChannelSize*4)
 	}
 
 	c.runScanWorker(ctx)
@@ -183,6 +167,8 @@ func (c *eventBroker) sendWatermark(
 		re,
 		d.getEventSenderState())
 	c.getMessageCh(d.workerIndex) <- resolvedEvent
+	// We comment out the following code is because we found when some resolvedTs are dropped,
+	// the lag of the resolvedTs will increase.
 	// select {
 	// case c.getMessageCh(d.workerIndex) <- resolvedEvent:
 	// 	if counter != nil {
@@ -200,10 +186,7 @@ func (c *eventBroker) sendReadyEvent(
 	event := pevent.NewReadyEvent(d.info.GetID())
 	wrapEvent := newWrapReadyEvent(server, event)
 
-	select {
-	case c.getMessageCh(d.workerIndex) <- wrapEvent:
-	default:
-	}
+	c.getMessageCh(d.workerIndex) <- wrapEvent
 }
 
 func (c *eventBroker) sendNotReusableEvent(
@@ -217,7 +200,7 @@ func (c *eventBroker) sendNotReusableEvent(
 	c.getMessageCh(d.workerIndex) <- wrapEvent
 }
 
-func (c *eventBroker) getMessageCh(workerIndex int) chan wrapEvent {
+func (c *eventBroker) getMessageCh(workerIndex int) chan *wrapEvent {
 	return c.messageCh[workerIndex]
 }
 
@@ -264,7 +247,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 							dispatcherStat.startTs,
 							dispatcherStat.seq.Add(1),
 							nil)
-						wrapE := wrapEvent{
+						wrapE := &wrapEvent{
 							serverID: node.ID(dispatcherStat.info.GetServerID()),
 							e:        e,
 							msgType:  pevent.TypeHandshakeEvent,
@@ -335,14 +318,14 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 	}
 }
 
-func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
-	c.ds.Wake(dispatcherID) <- dispatcherID
-}
-
 // checkNeedScan checks if the dispatcher needs to scan the event store.
 // If the dispatcher needs to scan the event store, it returns true.
 // If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
-func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
+func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common.DataRange) {
+	if !mustCheck && task.scanning.Load() {
+		return false, common.DataRange{}
+	}
+
 	if task.resetTs.Load() == 0 {
 		remoteID := node.ID(task.info.GetServerID())
 		c.sendReadyEvent(remoteID, task)
@@ -351,7 +334,6 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	}
 
 	c.checkAndInitDispatcher(task)
-
 	// 1. Get the data range of the dispatcher.
 	dataRange, needScan := task.getDataRange()
 	if !needScan {
@@ -369,7 +351,8 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	}
 
 	// target ts range: (dataRange.StartTs, dataRange.EndTs]
-	if dataRange.StartTs >= task.latestCommitTs.Load() && dataRange.StartTs >= ddlState.MaxEventCommitTs {
+	if dataRange.StartTs >= task.latestCommitTs.Load() &&
+		dataRange.StartTs >= ddlState.MaxEventCommitTs {
 		// The dispatcher has no new events. In such case, we don't need to scan the event store.
 		// We just send the watermark to the dispatcher.
 		remoteID := node.ID(task.info.GetServerID())
@@ -397,7 +380,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 	}
 	// Always reset the seq of the dispatcher to 0 before sending a handshake event.
 	task.seq.Store(0)
-	wrapE := wrapEvent{
+	wrapE := &wrapEvent{
 		serverID: node.ID(task.info.GetServerID()),
 		e: pevent.NewHandshakeEvent(
 			task.id,
@@ -437,7 +420,10 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	remoteID := node.ID(task.info.GetServerID())
 	dispatcherID := task.id
 
-	defer c.wakeDispatcher(dispatcherID)
+	defer func() {
+		task.scanning.Store(false)
+	}()
+
 	// If the target is not ready to send, we don't need to scan the event store.
 	// To avoid the useless scan task.
 	if !c.msgSender.IsReadyToSend(remoteID) {
@@ -445,7 +431,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		return
 	}
 
-	needScan, dataRange := c.checkNeedScan(task)
+	needScan, dataRange := c.checkNeedScan(task, true)
 	if !needScan {
 		return
 	}
@@ -538,7 +524,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 
 func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int) {
 	c.wg.Add(1)
-	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 300)
+	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 50)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	messageCh := c.messageCh[workerIndex]
 	tickCh := flushResolvedTsTicker.C
@@ -551,8 +537,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 				return
 			case m := <-messageCh:
 				if m.msgType == pevent.TypeResolvedEvent {
-					// The message is a watermark, we need to cache it, and send it to the dispatcher
-					// when cache is full to reduce the number of messages.
 					c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
 					continue
 				}
@@ -576,6 +560,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 				// to keep the order of the resolvedTs and the message.
 				c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
 				c.sendMsg(ctx, tMsg, m.postSendFunc)
+				m.reset()
 			case <-tickCh:
 				for serverID, cache := range resolvedTsCacheMap {
 					c.flushResolvedTs(ctx, cache, serverID)
@@ -585,7 +570,8 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 	}()
 }
 
-func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID]*resolvedTsCache, m wrapEvent) {
+func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID]*resolvedTsCache, m *wrapEvent) {
+	defer m.reset()
 	cache, ok := cacheMap[m.serverID]
 	if !ok {
 		cache = newResolvedTsCache(resolvedTsCacheSize)
@@ -680,17 +666,8 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(sentMinWaterMark)) / 1e3
 				c.metricEventServiceSentResolvedTs.Set(lag)
 
-				dsMetrics := c.ds.GetMetrics()
-
-				metricEventBrokerDSChannelSize.Set(float64(dsMetrics.EventChanSize))
-				metricEventBrokerDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 				metricEventBrokerPendingScanTaskCount.Set(float64(len(c.taskQueue)))
 
-				c.metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))
-				c.metricEventStoreDSRemovePathNum.Set(float64(dsMetrics.RemovePath))
-				c.metricEventStoreDSArrangeStreamNum.createSolo.Set(float64(dsMetrics.ArrangeStream.CreateSolo))
-				c.metricEventStoreDSArrangeStreamNum.removeSolo.Set(float64(dsMetrics.ArrangeStream.RemoveSolo))
-				c.metricEventStoreDSArrangeStreamNum.shuffle.Set(float64(dsMetrics.ArrangeStream.Shuffle))
 			}
 		}
 	}()
@@ -725,19 +702,16 @@ func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
 func (c *eventBroker) close() {
 	c.cancel()
 	c.wg.Wait()
-	c.ds.Close()
 }
 
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommitTs uint64) {
 	if d.onResolvedTs(resolvedTs) {
 		d.onLatestCommitTs(latestCommitTs)
-		// Note: don't block the caller of this function.
-		// select {
-		// case c.ds.In(d.id) <- newScanTask(d):
-		// default:
-		// 	metricEventBrokerDropNotificationCount.Inc()
-		// }
-		c.ds.In(d.id) <- d
+		needScan, _ := c.checkNeedScan(d, false)
+		if needScan {
+			d.scanning.Store(true)
+			c.taskQueue <- d
+		}
 	}
 }
 
@@ -806,8 +780,6 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 
 	c.dispatchers.Store(id, dispatcher)
 
-	c.ds.AddPath(id, c, dynstream.AreaSettings{})
-
 	log.Info("register dispatcher", zap.Uint64("clusterID", c.tidbClusterID),
 		zap.Any("dispatcherID", id), zap.Int64("tableID", span.TableID),
 		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
@@ -821,7 +793,6 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 		c.tableTriggerDispatchers.Delete(id)
 		return
 	}
-	c.ds.RemovePath(id)
 	c.eventStore.UnregisterDispatcher(id)
 	c.schemaStore.UnregisterTable(dispatcherInfo.GetTableSpan().TableID)
 	c.dispatchers.Delete(id)
@@ -855,243 +826,5 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 	log.Info("reset dispatcher", zap.Any("dispatcher", stat.id), zap.Uint64("startTs", stat.info.GetStartTs()))
 	stat.resetTs.Store(dispatcherInfo.GetStartTs())
 	stat.isInitialized.Store(false)
-}
-
-// Store the progress of the dispatcher, and the incremental events stats.
-// Those information will be used to decide when will the worker start to handle the push task of this dispatcher.
-type dispatcherStat struct {
-	id common.DispatcherID
-	// workerIndex is the index of the worker that this dispatcher belongs to.
-	workerIndex int
-	info        DispatcherInfo
-	// startTableInfo is the table info of the dispatcher when it is registered or reset.
-	startTableInfo atomic.Pointer[common.TableInfo]
-	filter         filter.Filter
-	// The start ts of the dispatcher
-	startTs uint64
-	// The max resolved ts received from event store.
-	resolvedTs atomic.Uint64
-	// The max latest commit ts received from event store.
-	latestCommitTs atomic.Uint64
-	// events <= checkpointTs will not needed by the dispatcher anymore
-	// TODO: maintain it
-	checkpointTs atomic.Uint64
-	// The watermark of the events that have been sent to the dispatcher.
-	watermark atomic.Uint64
-	// The reset ts send by the dispatcher.
-	resetTs atomic.Uint64
-	// The seq of the events that have been sent to the dispatcher.
-	// It start from 1, and increase by 1 for each event.
-	// If the dispatcher is reset, the seq will be set to 1.
-	seq atomic.Uint64
-
-	// isRunning is used to indicate whether the dispatcher is running.
-	// It will be set to false, after it receives the pause event from the dispatcher.
-	// It will be set to true, after it receives the register/resume/reset event from the dispatcher.
-	isRunning atomic.Bool
-	// isInitialized is used to indicate whether the dispatcher is initialized.
-	// It will be set to true, after it sends the handshake event to the dispatcher.
-	// It will be set to false, after it receives the reset event from the dispatcher.
-	isInitialized atomic.Bool
-
-	// syncpoint related
-	enableSyncPoint   bool
-	nextSyncPoint     uint64
-	syncPointInterval time.Duration
-
-	metricSorterOutputEventCountKV        prometheus.Counter
-	metricEventServiceSendKvCount         prometheus.Counter
-	metricEventServiceSendDDLCount        prometheus.Counter
-	metricEventServiceSendResolvedTsCount prometheus.Counter
-}
-
-func newDispatcherStat(
-	startTs uint64,
-	info DispatcherInfo,
-	filter filter.Filter,
-	workerIndex int,
-) *dispatcherStat {
-	changefeedID := info.GetChangefeedID()
-	dispStat := &dispatcherStat{
-		id:                                    info.GetID(),
-		workerIndex:                           workerIndex,
-		info:                                  info,
-		filter:                                filter,
-		startTs:                               startTs,
-		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
-		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
-		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "ddl"),
-		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "resolved_ts"),
-	}
-	if info.SyncPointEnabled() {
-		dispStat.enableSyncPoint = true
-		dispStat.nextSyncPoint = info.GetSyncPointTs()
-		dispStat.syncPointInterval = info.GetSyncPointInterval()
-	}
-	dispStat.resolvedTs.Store(startTs)
-	dispStat.checkpointTs.Store(startTs)
-	dispStat.watermark.Store(startTs)
-	dispStat.isRunning.Store(true)
-	return dispStat
-}
-
-func (a *dispatcherStat) getEventSenderState() pevent.EventSenderState {
-	if a.isRunning.Load() {
-		return pevent.EventSenderStateNormal
-	}
-	return pevent.EventSenderStatePaused
-}
-
-func (a *dispatcherStat) updateTableInfo(tableInfo *common.TableInfo) {
-	a.startTableInfo.Store(tableInfo)
-}
-
-// onResolvedTs try to update the resolved ts of the dispatcher.
-func (a *dispatcherStat) onResolvedTs(resolvedTs uint64) bool {
-	if resolvedTs < a.resolvedTs.Load() {
-		log.Panic("resolved ts should not fallback")
-	}
-	return util.CompareAndMonotonicIncrease(&a.resolvedTs, resolvedTs)
-}
-
-func (a *dispatcherStat) onLatestCommitTs(latestCommitTs uint64) bool {
-	if latestCommitTs < a.latestCommitTs.Load() {
-		log.Panic("latest commit ts should not fallback")
-	}
-	return util.CompareAndMonotonicIncrease(&a.latestCommitTs, latestCommitTs)
-}
-
-// getDataRange returns the the data range that the dispatcher needs to scan.
-func (a *dispatcherStat) getDataRange() (common.DataRange, bool) {
-	startTs := a.watermark.Load()
-	if startTs < a.resetTs.Load() {
-		startTs = a.resetTs.Load()
-	}
-	if startTs >= a.resolvedTs.Load() {
-		return common.DataRange{}, false
-	}
-	// ts range: (startTs, EndTs]
-	r := common.DataRange{
-		Span:    a.info.GetTableSpan(),
-		StartTs: startTs,
-		EndTs:   a.resolvedTs.Load(),
-	}
-	return r, true
-}
-
-type scanTask = *dispatcherStat
-
-func (t scanTask) handle() {
-	//metricScanTaskQueueDuration.Observe(float64(time.Since(t.createTime).Milliseconds()))
-}
-
-func (t scanTask) GetKey() common.DispatcherID {
-	return t.id
-}
-
-type wrapEvent struct {
-	serverID        node.ID
-	resolvedTsEvent pevent.ResolvedEvent
-
-	e       messaging.IOTypeT
-	msgType int
-	// postSendFunc should be called after the message is sent to message center
-	postSendFunc func()
-}
-
-func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent, state pevent.EventSenderState) wrapEvent {
-	e.State = state
-	return wrapEvent{
-		serverID: serverID,
-		e:        e,
-		msgType:  pevent.TypeDMLEvent,
-	}
-}
-
-func (w wrapEvent) getDispatcherID() common.DispatcherID {
-	e, ok := w.e.(pevent.Event)
-	if !ok {
-		log.Panic("cast event failed", zap.Any("event", w.e))
-	}
-	return e.GetDispatcherID()
-}
-
-func newWrapReadyEvent(serverID node.ID, e pevent.ReadyEvent) wrapEvent {
-	return wrapEvent{
-		serverID: serverID,
-		e:        &e,
-		msgType:  pevent.TypeReadyEvent,
-	}
-}
-
-func newWrapNotReusableEvent(serverID node.ID, e pevent.NotReusableEvent) wrapEvent {
-	return wrapEvent{
-		serverID: serverID,
-		e:        &e,
-		msgType:  pevent.TypeNotReusableEvent,
-	}
-}
-
-func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent, state pevent.EventSenderState) wrapEvent {
-	e.State = state
-	return wrapEvent{
-		serverID:        serverID,
-		resolvedTsEvent: e,
-		msgType:         pevent.TypeResolvedEvent,
-	}
-}
-
-func newWrapDDLEvent(serverID node.ID, e *pevent.DDLEvent, state pevent.EventSenderState) wrapEvent {
-	e.State = state
-	return wrapEvent{
-		serverID: serverID,
-		e:        e,
-		msgType:  pevent.TypeDDLEvent,
-	}
-}
-
-func newWrapSyncPointEvent(serverID node.ID, e *pevent.SyncPointEvent, state pevent.EventSenderState) wrapEvent {
-	e.State = state
-	return wrapEvent{
-		serverID: serverID,
-		e:        e,
-		msgType:  pevent.TypeSyncPointEvent,
-	}
-}
-
-// resolvedTsCache is used to cache the resolvedTs events.
-// We use it instead of a primitive slice to reduce the allocation
-// of the memory and reduce the GC pressure.
-type resolvedTsCache struct {
-	cache []pevent.ResolvedEvent
-	// len is the number of the events in the cache.
-	len int
-	// limit is the max number of the events that the cache can store.
-	limit int
-}
-
-func newResolvedTsCache(limit int) *resolvedTsCache {
-	return &resolvedTsCache{
-		cache: make([]pevent.ResolvedEvent, limit),
-		limit: limit,
-	}
-}
-
-func (c *resolvedTsCache) add(e pevent.ResolvedEvent) {
-	c.cache[c.len] = e
-	c.len++
-}
-
-func (c *resolvedTsCache) isFull() bool {
-	return c.len >= c.limit
-}
-
-func (c *resolvedTsCache) getAll() []pevent.ResolvedEvent {
-	res := c.cache[:c.len]
-	c.reset()
-	return res
-}
-
-func (c *resolvedTsCache) reset() {
-	c.len = 0
+	stat.scanning.Store(false)
 }

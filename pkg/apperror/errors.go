@@ -13,6 +13,10 @@ var (
 		"changefeed is in retryable state",
 		errors.RFCCodeText("CDC:ErrChangefeedRetryable"),
 	)
+	ErrChangefeedInitTableTriggerEventDispatcherFailed = errors.Normalize(
+		"failed to init table trigger event dispatcher",
+		errors.RFCCodeText("CDC:ErrChangefeedInitTableTriggerEventDispatcherFailed"),
+	)
 )
 
 type ErrorType int

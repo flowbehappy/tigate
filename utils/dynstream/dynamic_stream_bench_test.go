@@ -3,7 +3,9 @@ package dynstream
 import (
 	"fmt"
 	"math"
+	"os"
 	"runtime"
+	"runtime/pprof"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -123,8 +125,25 @@ func runGoroutine(chans []chan intEvent, pathCount int, eventCount int) {
 	// }
 }
 
+func startHeapProfile(filename string) func() {
+	f, err := os.Create(filename)
+	if err != nil {
+		panic(err)
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		panic(err)
+	}
+	return func() {
+		pprof.StopCPUProfile()
+		f.Close()
+	}
+}
+
 func BenchmarkDSDynamicSt1000x1000x100(b *testing.B) {
 	for k := 0; k < b.N; k++ {
+		// stopHeapProfile := startHeapProfile("heap_profile_1000x1000x100.prof")
+		// defer stopHeapProfile()
+
 		ds, inc, wg := prepareDynamicStream(1000, 1000, 100)
 
 		b.ResetTimer()
@@ -141,8 +160,10 @@ func BenchmarkDSDynamicSt1000x1000x100(b *testing.B) {
 }
 
 func BenchmarkDSDynamicSt1000000x20x50(b *testing.B) {
-
 	for k := 0; k < b.N; k++ {
+		// stopHeapProfile := startHeapProfile("heap_profile_1000000x20x50.prof")
+		// defer stopHeapProfile()
+
 		ds, inc, wg := prepareDynamicStream(1000000, 20, 50)
 		b.ResetTimer()
 		inc.Store(0)

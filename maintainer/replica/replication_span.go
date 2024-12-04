@@ -14,6 +14,7 @@
 package replica
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"time"
@@ -24,7 +25,9 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/retry"
+	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -38,9 +41,11 @@ type SpanReplication struct {
 	Span         *heartbeatpb.TableSpan
 	ChangefeedID common.ChangeFeedID
 
-	schemaID int64
-	nodeID   node.ID
-	status   *atomic.Pointer[heartbeatpb.TableSpanStatus]
+	schemaID   int64
+	nodeID     node.ID
+	groupID    GroupID
+	status     *atomic.Pointer[heartbeatpb.TableSpanStatus]
+	blockState *atomic.Pointer[heartbeatpb.State]
 
 	tsoClient TSOClient
 }
@@ -53,6 +58,7 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 	checkpointTs uint64) *SpanReplication {
 	r := &SpanReplication{
 		ID:           id,
+		groupID:      defaultGroupID,
 		tsoClient:    tsoClient,
 		schemaID:     SchemaID,
 		Span:         span,
@@ -61,12 +67,15 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 			ID:           id.ToPB(),
 			CheckpointTs: checkpointTs,
 		}),
+		blockState: atomic.NewPointer[heartbeatpb.State](nil),
 	}
+	r.initGroupID()
 	log.Info("new replica set created",
 		zap.String("changefeed id", cfID.Name()),
 		zap.String("id", id.String()),
 		zap.Int64("schema id", SchemaID),
 		zap.Int64("table id", span.TableID),
+		zap.String("group id", printGroupID(r.groupID)),
 		zap.String("start", hex.EncodeToString(span.StartKey)),
 		zap.String("end", hex.EncodeToString(span.EndKey)))
 	return r
@@ -88,8 +97,10 @@ func NewWorkingReplicaSet(
 		ChangefeedID: cfID,
 		nodeID:       nodeID,
 		status:       atomic.NewPointer(status),
+		blockState:   atomic.NewPointer[heartbeatpb.State](nil),
 		tsoClient:    tsoClient,
 	}
+	r.initGroupID()
 	log.Info("new working replica set created",
 		zap.String("changefeed id", cfID.Name()),
 		zap.String("id", id.String()),
@@ -98,9 +109,27 @@ func NewWorkingReplicaSet(
 		zap.String("component status", status.ComponentStatus.String()),
 		zap.Int64("schema id", SchemaID),
 		zap.Int64("table id", span.TableID),
+		zap.String("group id", printGroupID(r.groupID)),
 		zap.String("start", hex.EncodeToString(span.StartKey)),
 		zap.String("end", hex.EncodeToString(span.EndKey)))
 	return r
+}
+
+func (r *SpanReplication) initGroupID() {
+	r.groupID = defaultGroupID
+	span := tablepb.Span{TableID: r.Span.TableID, StartKey: r.Span.StartKey, EndKey: r.Span.EndKey}
+	// check if the table is split
+	totalSpan := spanz.TableIDToComparableSpan(span.TableID)
+	if !spanz.IsSubSpan(span, totalSpan) {
+		log.Warn("invalid span range", zap.String("changefeed id", r.ChangefeedID.Name()),
+			zap.String("id", r.ID.String()), zap.Int64("table id", span.TableID),
+			zap.String("totalSpan", totalSpan.String()),
+			zap.String("start", hex.EncodeToString(span.StartKey)),
+			zap.String("end", hex.EncodeToString(span.EndKey)))
+	}
+	if !bytes.Equal(span.StartKey, totalSpan.StartKey) || !bytes.Equal(span.EndKey, totalSpan.EndKey) {
+		r.groupID = getGroupID(groupTable, span.TableID)
+	}
 }
 
 func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {
@@ -110,6 +139,27 @@ func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {
 			r.status.Store(newStatus)
 		}
 	}
+}
+
+func (r *SpanReplication) IsDropped() bool {
+	return false
+	// state := r.blockState.Load()
+	// if state != nil && state.NeedDroppedTables != nil {
+	// 	status := r.status.Load()
+	// 	if status == nil || state.BlockTs != status.CheckpointTs+1 {
+	// 		return false
+	// 	}
+	// 	for _, tableID := range state.NeedDroppedTables.TableIDs {
+	// 		if tableID == r.Span.TableID {
+	// 			return true
+	// 		}
+	// 	}
+	// }
+	// return false
+}
+
+func (r *SpanReplication) UpdateBlockState(newState heartbeatpb.State) {
+	r.blockState.Store(&newState)
 }
 
 func (r *SpanReplication) GetSchemaID() int64 {

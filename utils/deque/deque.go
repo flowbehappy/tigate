@@ -10,8 +10,8 @@ type BlockAllocator[T any] struct {
 	cache    ringbuffer.RingBuffer[[]T]
 }
 
-func NewBlockAllocator[T any](blockLen int, maxBlocks int) BlockAllocator[T] {
-	return BlockAllocator[T]{
+func NewBlockAllocator[T any](blockLen int, maxBlocks int) *BlockAllocator[T] {
+	return &BlockAllocator[T]{
 		blockLen: blockLen,
 		cache:    ringbuffer.NewRingBuffer[[]T](maxBlocks),
 	}
@@ -36,7 +36,6 @@ func (a BlockAllocator[T]) FreeBlock(block []T) {
 // A deque implemented by a doubly linked list of fixed-size blocks.
 type Deque[T any] struct {
 	blockWidth int
-	maxLen     int
 
 	allocator *BlockAllocator[T]
 	blocks    *list.List[[]T]
@@ -48,19 +47,17 @@ type Deque[T any] struct {
 }
 
 func NewDequeDefault[T any]() *Deque[T] {
-	a := NewBlockAllocator[T](32, 1)
-	return NewDeque[T](32, 0, &a)
+	return NewDeque[T](32, NewBlockAllocator[T](32, 1))
 }
 
 // blockWidth is the size of each block.
 // maxLen is the maximum length of the deque. If the length exceeds maxLen, the oldest values will be removed. Zero means no limit.
-func NewDeque[T any](blockWidth int, maxLen int, allocator ...*BlockAllocator[T]) *Deque[T] {
+func NewDeque[T any](blockWidth int, allocator ...*BlockAllocator[T]) *Deque[T] {
 	if blockWidth < 2 {
 		panic("blockWidth must be at least 2")
 	}
 	d := &Deque[T]{
 		blockWidth: blockWidth,
-		maxLen:     maxLen,
 		blocks:     list.NewList[[]T](),
 		length:     0,
 		front:      0,
@@ -142,10 +139,6 @@ func (d *Deque[T]) PushBack(item T) {
 	d.back++
 	block[d.back] = item
 	d.length++
-
-	if d.maxLen > 0 && d.length > d.maxLen {
-		d.PopFront()
-	}
 }
 
 func (d *Deque[T]) PopBack() (T, bool) {
@@ -193,10 +186,6 @@ func (d *Deque[T]) PushFront(item T) {
 	d.front--
 	block[d.front] = item
 	d.length++
-
-	if d.maxLen > 0 && d.length > d.maxLen {
-		d.PopBack()
-	}
 }
 
 func (d *Deque[T]) PopFront() (T, bool) {

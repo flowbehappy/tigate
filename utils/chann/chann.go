@@ -85,7 +85,7 @@ func New[T any](opts ...Opt) *Chann[T] {
 	case unbounded:
 		ch.in = make(chan T, 1)
 		ch.out = make(chan T, 1)
-		ch.queue = deque.NewDeque[T](32, 0)
+		ch.queue = deque.NewDeque[T](32)
 		go ch.unboundedProcessing()
 	}
 	return ch

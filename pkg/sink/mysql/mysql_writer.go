@@ -369,10 +369,8 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 
 // CheckStartTsList return the startTs list for each table in the tableIDs list.
 // For each table,
-// If no ddl-ts-v1 table, startTs = 0; -- means the downstream is new
-// If have ddl-ts-v1 table, but no row for the changefeed with tableID = 0, startTs = 0; -- means the changefeed is new.
-// if have row for the changefeed with tableID = 0, but no this row, startTs =  -1; -- means the table is dropped.(we won't check startTs for a table before it created)
-// otherwise, startTs = ddl-ts value
+// If no ddl-ts-v1 table or no the row for the table , startTs = 0; -- means the table is new.
+// Otherwise, startTs = ddl-ts value.
 func (w *MysqlWriter) CheckStartTsList(tableIDs []int64) ([]int64, error) {
 	retStartTsList := make([]int64, len(tableIDs))
 	tableIdIdxMap := make(map[int64]int, 0)
@@ -429,43 +427,6 @@ func (w *MysqlWriter) CheckStartTsList(tableIDs []int64) ([]int64, error) {
 		}
 		count += 1
 		retStartTsList[tableIdIdxMap[tableId]] = ddlTs
-	}
-
-	// if all table does't have this field,
-	// we need to check have row for tableID = 0(table trigger event dispatcher)
-	// If changefeed has tables, it must have row for tableID = 0;
-	if count == 0 {
-		builder.Reset()
-		builder.WriteString("SELECT ddl_ts FROM ")
-		builder.WriteString(filter.TiCDCSystemSchema)
-		builder.WriteString(".")
-		builder.WriteString(filter.DDLTsTable)
-		builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN (")
-
-		builder.WriteString("('")
-		builder.WriteString(ticdcClusterID)
-		builder.WriteString("', '")
-		builder.WriteString(changefeedID)
-		builder.WriteString("', ")
-		builder.WriteString(strconv.FormatInt(0, 10))
-		builder.WriteString(")")
-		builder.WriteString(")")
-		query = builder.String()
-
-		rows, err = w.db.Query(query)
-		if err != nil {
-			return retStartTsList, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to check ddl ts table; Query is %s", query)))
-		}
-
-		defer rows.Close()
-		if rows.Next() {
-			// means has record for tableID = 0, but not for this table
-			for idx, startTs := range retStartTsList {
-				if startTs == 0 {
-					retStartTsList[idx] = -1
-				}
-			}
-		}
 	}
 
 	return retStartTsList, nil
