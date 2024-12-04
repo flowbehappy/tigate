@@ -31,7 +31,7 @@ const (
 	defaultScanWorkerCount = 32
 	resolvedTsCacheSize    = 8192
 	streamCount            = 4
-	checkNeedScanInterval  = time.Millisecond * 1000
+	checkNeedScanInterval  = time.Millisecond * 500
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -186,6 +186,16 @@ func (c *eventBroker) runCheckDDLStateWorker(ctx context.Context) {
 					if currentDDLResolvedTs <= d.resolvedTs.Load() {
 						return true
 					}
+
+					if time.Since(d.createTime.Load()) < checkNeedScanInterval {
+						return true
+					}
+
+					// To reduce the message count when initializing a cdc cluster.
+					if time.Since(d.lastSentTime.Load()) < time.Minute*1 {
+						return true
+					}
+
 					needScan, _ := c.checkNeedScan(d, false)
 					if needScan {
 						c.taskQueue <- d

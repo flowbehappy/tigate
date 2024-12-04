@@ -67,6 +67,8 @@ type dispatcherStat struct {
 	// lastSentTime is the time when the last resolvedTs event is sent to the dispatcher.
 	lastSentTime atomic.Time
 
+	createTime atomic.Time
+
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
 	metricEventServiceSendDDLCount        prometheus.Counter
@@ -101,6 +103,7 @@ func newDispatcherStat(
 	dispStat.watermark.Store(startTs)
 	dispStat.isRunning.Store(true)
 	dispStat.lastSentTime.Store(time.Now())
+	dispStat.createTime.Store(time.Now())
 	return dispStat
 }
 
