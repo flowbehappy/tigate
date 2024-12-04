@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,7 +86,7 @@ func (m *mockDispatcherManager) handleMessage(msg *messaging.TargetMessage) {
 	case messaging.TypeMaintainerBootstrapRequest:
 		m.onBootstrapRequest(msg)
 	case messaging.TypeMaintainerPostBootstrapRequest:
-
+		m.onPostBootstrapRequest(msg)
 	case messaging.TypeScheduleDispatcherRequest:
 		m.onDispatchRequest(msg)
 	case messaging.TypeMaintainerCloseRequest:
@@ -133,6 +134,14 @@ func (m *mockDispatcherManager) onBootstrapRequest(msg *messaging.TargetMessage)
 	}
 	m.changefeedID = req.ChangefeedID
 	m.checkpointTs = req.StartTs
+	if req.TableTriggerEventDispatcherId != nil {
+		m.dispatchersMap[*req.TableTriggerEventDispatcherId] = &heartbeatpb.TableSpanStatus{
+			ID:              req.TableTriggerEventDispatcherId,
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    req.StartTs,
+		}
+		m.dispatchers = append(m.dispatchers, m.dispatchersMap[*req.TableTriggerEventDispatcherId])
+	}
 	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
 		m.maintainerID,
 		messaging.MaintainerManagerTopic,
@@ -237,8 +246,7 @@ func (m *mockDispatcherManager) sendHeartbeat() {
 }
 
 func TestMaintainerSchedule(t *testing.T) {
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
 	mux := http.NewServeMux()
 	registry := prometheus.NewRegistry()
 	metrics.InitMetrics(registry)
@@ -302,7 +310,13 @@ func TestMaintainerSchedule(t *testing.T) {
 			return nil
 		})
 	dispatcherManager := MockDispatcherManager(mc, n.ID)
-	go dispatcherManager.Run(ctx)
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		require.ErrorIs(t, dispatcherManager.Run(ctx), context.Canceled)
+	}()
 
 	taskScheduler := threadpool.NewThreadPoolDefault()
 	tsoClient := &mockTsoClient{}
@@ -327,10 +341,23 @@ func TestMaintainerSchedule(t *testing.T) {
 	}, time.Now().Add(time.Millisecond*500))
 	time.Sleep(time.Second * time.Duration(sleepTime))
 
+	require.Eventually(t, func() bool {
+		return maintainer.ddlSpan.IsWorking() && maintainer.postBootstrapMsg == nil
+	}, time.Second*2, time.Millisecond*100)
+
+	require.Eventually(t, func() bool {
+		return maintainer.controller.replicationDB.GetReplicatingSize() == tableSize
+	}, time.Second*2, time.Millisecond*100)
+
+	require.Eventually(t, func() bool {
+		return maintainer.controller.GetTaskSizeByNodeID(n.ID) == tableSize
+	}, time.Second*2, time.Millisecond*100)
+
+	maintainer.onRemoveMaintainer(false, false)
+	require.Eventually(t, func() bool {
+		return maintainer.tryCloseChangefeed()
+	}, time.Second*200, time.Millisecond*100)
+
 	cancel()
-	// stream.Close()
-	require.Equal(t, tableSize,
-		maintainer.controller.replicationDB.GetReplicatingSize())
-	require.Equal(t, tableSize,
-		maintainer.controller.GetTaskSizeByNodeID(n.ID))
+	wg.Done()
 }
