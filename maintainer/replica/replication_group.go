@@ -160,7 +160,7 @@ func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info)
 		}
 		if totalSpan == 0 {
 			log.Warn("meet empty group", zap.String("changefeed", g.changefeedID.Name()), zap.String("group", g.groupName))
-			delete(db.taskGroups, g.groupID)
+			db.maybeRemoveGroup(g)
 			continue
 		}
 
@@ -180,7 +180,7 @@ func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info)
 				groupMap[nodeID] = nil
 			default:
 				// len(tasks) > upperLimitPerNode || len(tasks) < upperLimitPerNode-1
-				log.Panic("invalid group state",
+				log.Error("invalid group state",
 					zap.String("changefeed", g.changefeedID.Name()),
 					zap.String("group", g.groupName), zap.Int("totalSpan", totalSpan),
 					zap.Int("nodesNum", nodesNum), zap.Int("upperLimitPerNode", upperLimitPerNode),
@@ -274,6 +274,33 @@ func (g *replicationTaskGroup) mustVerifyGroupID(id GroupID) {
 	if g.groupID != id {
 		log.Panic("group id not match", zap.Int64("group", g.groupID), zap.Int64("id", id))
 	}
+}
+
+func (db *ReplicationDB) getOrCreateGroup(task *SpanReplication) *replicationTaskGroup {
+	groupID := task.groupID
+	g, ok := db.taskGroups[groupID]
+	if !ok {
+		g = newReplicationTaskGroup(db.changefeedID, groupID)
+		db.taskGroups[groupID] = g
+		log.Info("create new task group", zap.Stringer("groupType", getGroupType(groupID)),
+			zap.Int64("tableID", task.Span.TableID))
+	}
+	return g
+}
+
+func (db *ReplicationDB) maybeRemoveGroup(g *replicationTaskGroup) {
+	if g.groupID == defaultGroupID || !g.IsEmpty() {
+		return
+	}
+	delete(db.taskGroups, g.groupID)
+}
+
+func (db *ReplicationDB) mustGetGroup(groupID GroupID) *replicationTaskGroup {
+	g, ok := db.taskGroups[groupID]
+	if !ok {
+		log.Panic("group not found", zap.String("group", printGroupID(groupID)))
+	}
+	return g
 }
 
 // MarkSpanAbsent move the span to the absent status

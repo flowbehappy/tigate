@@ -395,9 +395,8 @@ func (db *ReplicationDB) removeSpanUnLock(spans ...*SpanReplication) {
 	for _, span := range spans {
 		g := db.mustGetGroup(span.groupID)
 		g.RemoveSpan(span)
-		if g.groupID != defaultGroupID && g.IsEmpty() {
-			delete(db.taskGroups, span.groupID)
-		}
+		db.maybeRemoveGroup(g)
+
 		tableID := span.Span.TableID
 		schemaID := span.GetSchemaID()
 		delete(db.schemaTasks[schemaID], span.ID)
@@ -431,26 +430,6 @@ func (db *ReplicationDB) addToSchemaAndTableMap(task *SpanReplication) {
 		db.tableTasks[tableID] = tableMap
 	}
 	tableMap[task.ID] = task
-}
-
-func (db *ReplicationDB) getOrCreateGroup(task *SpanReplication) *replicationTaskGroup {
-	groupID := task.groupID
-	g, ok := db.taskGroups[groupID]
-	if !ok {
-		g = newReplicationTaskGroup(db.changefeedID, groupID)
-		db.taskGroups[groupID] = g
-		log.Info("create new task group", zap.Stringer("groupType", getGroupType(groupID)),
-			zap.Int64("tableID", task.Span.TableID))
-	}
-	return g
-}
-
-func (db *ReplicationDB) mustGetGroup(groupID GroupID) *replicationTaskGroup {
-	g, ok := db.taskGroups[groupID]
-	if !ok {
-		log.Panic("group not found", zap.String("group", printGroupID(groupID)))
-	}
-	return g
 }
 
 // reset resets the maps of ReplicationDB
