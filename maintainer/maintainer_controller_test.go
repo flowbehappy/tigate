@@ -99,6 +99,7 @@ func TestRemoveAbsentTask(t *testing.T) {
 func TestBalanceGlobal(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
+	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
 	tsoClient := &mockTsoClient{}
@@ -117,20 +118,25 @@ func TestBalanceGlobal(t *testing.T) {
 		span := &heartbeatpb.TableSpan{TableID: int64(i), StartKey: appendNew(totalSpan.StartKey, 'a'), EndKey: appendNew(totalSpan.StartKey, 'b')}
 		dispatcherID := common.NewDispatcherID()
 		spanReplica := replica.NewReplicaSet(cfID, dispatcherID, tsoClient, 1, span, 1)
-		spanReplica.SetNodeID("node1")
+		if i < 50 {
+			spanReplica.SetNodeID("node1")
+		} else {
+			spanReplica.SetNodeID("node2")
+		}
 		s.replicationDB.AddReplicatingSpan(spanReplica)
 	}
 	s.schedulerController.GetScheduler(scheduler.BalanceScheduler).Execute()
 	require.Equal(t, 0, s.operatorController.OperatorSize())
 	require.Equal(t, 100, s.replicationDB.GetReplicatingSize())
-	require.Equal(t, 100, s.replicationDB.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 50, s.replicationDB.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 50, s.replicationDB.GetTaskSizeByNodeID("node2"))
 
 	// add new node
-	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
+	nodeManager.GetAliveNodes()["node3"] = &node.Info{ID: "node3"}
 	s.schedulerController.GetScheduler(scheduler.BalanceScheduler).Execute()
-	require.Equal(t, 50, s.operatorController.OperatorSize())
-	require.Equal(t, 50, s.replicationDB.GetSchedulingSize())
-	require.Equal(t, 50, s.replicationDB.GetReplicatingSize())
+	require.Equal(t, 32, s.operatorController.OperatorSize())
+	require.Equal(t, 32, s.replicationDB.GetSchedulingSize())
+	require.Equal(t, 68, s.replicationDB.GetReplicatingSize())
 	for _, span := range s.replicationDB.GetTasksBySchemaID(1) {
 		if op := s.operatorController.GetOperator(span.ID); op != nil {
 			_, ok := op.(*operator.MoveDispatcherOperator)
@@ -138,20 +144,20 @@ func TestBalanceGlobal(t *testing.T) {
 		}
 	}
 	//still on the primary node
-	require.Equal(t, 100, s.replicationDB.GetTaskSizeByNodeID("node1"))
-	require.Equal(t, 0, s.replicationDB.GetTaskSizeByNodeID("node2"))
+	require.Equal(t, 50, s.replicationDB.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 50, s.replicationDB.GetTaskSizeByNodeID("node2"))
 
-	// remove the node2
-	delete(nodeManager.GetAliveNodes(), "node2")
-	s.RemoveNode("node2")
+	// remove the node3
+	delete(nodeManager.GetAliveNodes(), "node3")
+	s.RemoveNode("node3")
 	for _, span := range s.replicationDB.GetTasksBySchemaID(1) {
 		if op := s.operatorController.GetOperator(span.ID); op != nil {
 			msg := op.Schedule()
 			require.NotNil(t, msg)
-			require.Equal(t, "node1", msg.To.String())
+			require.NotEqual(t, "node3", msg.To.String())
 			require.True(t, msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest).ScheduleAction ==
 				heartbeatpb.ScheduleAction_Create)
-			op.Check("node1", &heartbeatpb.TableSpanStatus{
+			op.Check(msg.To, &heartbeatpb.TableSpanStatus{
 				ID:              span.ID.ToPB(),
 				ComponentStatus: heartbeatpb.ComponentState_Working,
 			})
@@ -163,7 +169,8 @@ func TestBalanceGlobal(t *testing.T) {
 	require.Equal(t, 0, s.replicationDB.GetSchedulingSize())
 	// changed to working status
 	require.Equal(t, 100, s.replicationDB.GetReplicatingSize())
-	require.Equal(t, 100, s.replicationDB.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 50, s.replicationDB.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 50, s.replicationDB.GetTaskSizeByNodeID("node2"))
 }
 
 func TestBalance(t *testing.T) {
