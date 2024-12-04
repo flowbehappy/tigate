@@ -134,9 +134,9 @@ func TestBalanceGlobal(t *testing.T) {
 	// add new node
 	nodeManager.GetAliveNodes()["node3"] = &node.Info{ID: "node3"}
 	s.schedulerController.GetScheduler(scheduler.BalanceScheduler).Execute()
-	require.Equal(t, 32, s.operatorController.OperatorSize())
-	require.Equal(t, 32, s.replicationDB.GetSchedulingSize())
-	require.Equal(t, 68, s.replicationDB.GetReplicatingSize())
+	require.Equal(t, 33, s.operatorController.OperatorSize())
+	require.Equal(t, 33, s.replicationDB.GetSchedulingSize())
+	require.Equal(t, 67, s.replicationDB.GetReplicatingSize())
 	for _, span := range s.replicationDB.GetTasksBySchemaID(1) {
 		if op := s.operatorController.GetOperator(span.ID); op != nil {
 			_, ok := op.(*operator.MoveDispatcherOperator)
