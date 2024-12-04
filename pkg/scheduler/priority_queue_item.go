@@ -17,26 +17,56 @@ import (
 	"math/rand"
 
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/utils/heap"
 )
 
-// Item is an item in the priority queue, use the Load field as the priority
-type Item struct {
-	Node  node.ID
-	Load  int
-	index int
+type priorityQueue[T Replication] struct {
+	h    *heap.Heap[*Item[T]]
+	less func(a, b int) bool
+
+	rand *rand.Rand
 }
 
-func (i *Item) SetHeapIndex(idx int) {
+func (q *priorityQueue[T]) InitItem(node node.ID, load int, tasks []T) {
+	q.AddOrUpdate(&Item[T]{
+		Node:  node,
+		tasks: tasks,
+		load:  load,
+		less:  q.less,
+	})
+}
+
+func (q *priorityQueue[T]) AddOrUpdate(item *Item[T]) {
+	item.randomizeWorkload = randomizeWorkload(q.rand, item.load)
+	q.h.AddOrUpdate(item)
+}
+
+func (q *priorityQueue[T]) PeekTop() (*Item[T], bool) {
+	return q.h.PeekTop()
+}
+
+// Item is an item in the priority queue, use the Load field as the priority
+type Item[T Replication] struct {
+	Node  node.ID
+	tasks []T
+	load  int
+
+	// for heap adjustment
+	index             int
+	less              func(a, b int) bool
+	randomizeWorkload int
+}
+
+func (i *Item[T]) SetHeapIndex(idx int) {
 	i.index = idx
 }
 
-func (i *Item) GetHeapIndex() int {
+func (i *Item[T]) GetHeapIndex() int {
 	return i.index
 }
 
-// Add randomize to load
-func (i *Item) LessThan(t *Item) bool {
-	return i.Load < t.Load
+func (i *Item[T]) LessThan(t *Item[T]) bool {
+	return i.less(i.randomizeWorkload, t.randomizeWorkload)
 }
 
 const (
@@ -51,10 +81,10 @@ const (
 // 63                8                0
 // |----- input -----|-- random val --|
 func randomizeWorkload(random *rand.Rand, input int) int {
-	var randomPart int
-	if random != nil {
-		randomPart = int(random.Uint32() & randomPartMask)
+	if random == nil {
+		return input
 	}
+	randomPart := int(random.Uint32() & randomPartMask)
 	// randomPart is a small random value that only affects the
 	// result of comparison of workloads when two workloads are equal.
 	return (input << randomPartBitSize) | randomPart

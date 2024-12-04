@@ -132,10 +132,10 @@ func (s *balanceScheduler) schedulerGlobal(nodes map[node.ID]*node.Info) int {
 			}
 		}
 	}
-	upperLimitPerNode := int(math.Ceil(float64(totalTasks) / float64(len(nodes))))
+	lowerLimitPerNode := int(math.Floor(float64(totalTasks) / float64(len(nodes))))
 	limitCnt := 0
 	for _, size := range sizePerNode {
-		if size == upperLimitPerNode {
+		if size == lowerLimitPerNode {
 			limitCnt++
 		}
 	}
@@ -146,21 +146,21 @@ func (s *balanceScheduler) schedulerGlobal(nodes map[node.ID]*node.Info) int {
 
 	moved := 0
 	for _, nodeTasks := range groupNodetasks {
-		victims, availableNodes, next := map[node.ID]*replica.SpanReplication{}, []node.ID{}, 0
+		availableNodes, victims, next := []node.ID{}, []node.ID{}, 0
 		for id, task := range nodeTasks {
-			if task != nil && sizePerNode[id] > upperLimitPerNode {
-				victims[id] = task
-			} else if task == nil && sizePerNode[id] < upperLimitPerNode {
+			if task != nil && sizePerNode[id] > lowerLimitPerNode {
+				victims = append(victims, id)
+			} else if task == nil && sizePerNode[id] < lowerLimitPerNode {
 				availableNodes = append(availableNodes, id)
 			}
 		}
 
-		for old, victim := range victims {
-			if next >= len(availableNodes) {
+		for _, new := range availableNodes {
+			if next >= len(victims) {
 				break
 			}
-			new := availableNodes[next]
-			if s.doMove(victim, new) {
+			old := victims[next]
+			if s.doMove(nodeTasks[old], new) {
 				sizePerNode[old]--
 				sizePerNode[new]++
 				next++
