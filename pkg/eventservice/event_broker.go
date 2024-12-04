@@ -187,10 +187,6 @@ func (c *eventBroker) runCheckDDLStateWorker(ctx context.Context) {
 						return true
 					}
 
-					if time.Since(d.lastSentTime.Load()) < checkNeedScanInterval {
-						return true
-					}
-
 					// To reduce the message count when initializing a cdc cluster.
 					if time.Since(d.createTime.Load()) < time.Minute*2 {
 						return true
