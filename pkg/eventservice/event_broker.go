@@ -160,8 +160,10 @@ func newEventBroker(
 }
 
 func (c *eventBroker) runCheckDDLStateWorker(ctx context.Context) {
-	ticker := time.NewTicker(time.Millisecond * 50)
-	lastDDLResolvedTs := c.schemaStore.GetResolvedTs()
+	ticker := time.NewTicker(time.Millisecond * 100)
+	logInterval := time.Millisecond * 1000
+	lastLogTime := time.Now()
+
 	go func() {
 		defer ticker.Stop()
 		for {
@@ -170,22 +172,26 @@ func (c *eventBroker) runCheckDDLStateWorker(ctx context.Context) {
 				return
 			case <-ticker.C:
 				currentDDLResolvedTs := c.schemaStore.GetResolvedTs()
-				if currentDDLResolvedTs > lastDDLResolvedTs {
-					lastDDLResolvedTs = currentDDLResolvedTs
 
-					c.dispatchers.Range(func(key, value interface{}) bool {
-						d := value.(*dispatcherStat)
-						if time.Since(d.lastSentTime.Load()) < checkNeedScanInterval {
-							return true
-						}
-
-						needScan, _ := c.checkNeedScan(d, false)
-						if needScan {
-							c.taskQueue <- d
-						}
-						return true
-					})
+				if time.Since(lastLogTime) > logInterval {
+					physical := oracle.ExtractPhysical(currentDDLResolvedTs)
+					lag := float64(oracle.GetPhysical(time.Now())-physical) / 1e3
+					log.Info("check ddl state worker ticked, report schemaStore lag", zap.Uint64("resolvedTs", currentDDLResolvedTs), zap.Float64("lag", lag))
+					lastLogTime = time.Now()
 				}
+
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					d := value.(*dispatcherStat)
+					// only check the dispatcher that is behind the schemaStore
+					if currentDDLResolvedTs <= d.resolvedTs.Load() {
+						return true
+					}
+					needScan, _ := c.checkNeedScan(d, false)
+					if needScan {
+						c.taskQueue <- d
+					}
+					return true
+				})
 			}
 		}
 	}()
