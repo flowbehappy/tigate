@@ -72,6 +72,8 @@ type schemaStore struct {
 
 	resolveTsUpdateNotifiers sync.Map
 
+	notifyDispatcherCh chan interface{}
+
 	// the following two fields are used to filter out duplicate ddl events
 	// they will just be updated and read by a single goroutine, so no lock is needed
 
@@ -93,12 +95,13 @@ func New(
 	upperBound := dataStorage.getUpperBound()
 
 	s := &schemaStore{
-		pdClock:       pdClock,
-		unsortedCache: newDDLCache(),
-		dataStorage:   dataStorage,
-		notifyCh:      make(chan interface{}, 4),
-		finishedDDLTs: upperBound.FinishedDDLTs,
-		schemaVersion: upperBound.SchemaVersion,
+		pdClock:            pdClock,
+		unsortedCache:      newDDLCache(),
+		dataStorage:        dataStorage,
+		notifyCh:           make(chan interface{}, 4),
+		finishedDDLTs:      upperBound.FinishedDDLTs,
+		schemaVersion:      upperBound.SchemaVersion,
+		notifyDispatcherCh: make(chan interface{}, 4),
 	}
 	s.pendingResolvedTs.Store(upperBound.ResolvedTs)
 	s.resolvedTs.Store(upperBound.ResolvedTs)
@@ -127,6 +130,9 @@ func (s *schemaStore) Run(ctx context.Context) error {
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		return s.updateResolvedTsPeriodically(ctx)
+	})
+	eg.Go(func() error {
+		return s.notifyDispatcherPeriodically(ctx)
 	})
 	eg.Go(func() error {
 		return s.ddlJobFetcher.run(ctx)
@@ -192,10 +198,10 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 		// so we can only update resolved ts after all ddl jobs are written to disk
 		// Can we optimize it to update resolved ts more eagerly?
 		s.resolvedTs.Store(pendingTs)
-		s.resolveTsUpdateNotifiers.Range(func(_, value interface{}) bool {
-			value.(ResolveTsUpdateNotifier)()
-			return true
-		})
+		select {
+		case s.notifyDispatcherCh <- struct{}{}:
+		default:
+		}
 		s.dataStorage.updateUpperBound(UpperBoundMeta{
 			FinishedDDLTs: s.finishedDDLTs,
 			SchemaVersion: s.schemaVersion,
@@ -211,6 +217,21 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 			tryUpdateResolvedTs()
 		case <-s.notifyCh:
 			tryUpdateResolvedTs()
+		}
+	}
+}
+
+func (s *schemaStore) notifyDispatcherPeriodically(ctx context.Context) error {
+	// ticker := time.NewTicker(50 * time.Millisecond)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-s.notifyDispatcherCh:
+			s.resolveTsUpdateNotifiers.Range(func(_, value interface{}) bool {
+				value.(ResolveTsUpdateNotifier)()
+				return true
+			})
 		}
 	}
 }
