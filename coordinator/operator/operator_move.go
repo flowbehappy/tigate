@@ -106,7 +106,7 @@ func (m *MoveMaintainerOperator) OnNodeRemove(n node.ID) {
 			return
 		}
 
-		log.Info("changefeed changefeedIsRemoved from dest node",
+		log.Info("changefeed changefeed is removed from dest node",
 			zap.String("dest", m.dest.String()),
 			zap.String("origin", m.origin.String()),
 			zap.String("changefeed", m.changefeed.ID.String()))
