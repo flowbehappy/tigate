@@ -237,23 +237,24 @@ func (s *SubscriptionClient) initMetrics() {
 }
 
 func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
+	ticker1 := time.NewTicker(10 * time.Second)
+	ticker2 := time.NewTicker(5 * time.Millisecond)
+	defer ticker1.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case <-ticker1.C:
 			resolvedTsLag := s.GetResolvedTsLag()
 			if resolvedTsLag > 0 {
 				metrics.LogPullerResolvedTsLag.Set(resolvedTsLag)
 			}
+		case <-ticker2.C:
 			dsMetrics := s.ds.GetMetrics()
 			metricSubscriptionClientDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 			metricSubscriptionClientDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 			metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))
 			metricEventStoreDSRemovePathNum.Set(float64(dsMetrics.RemovePath))
-			// metricEventStoreDSArrageStreamNum.Set(float64(dsMetrics.ArrangeStream))
 		}
 	}
 }
