@@ -165,12 +165,12 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 			}
 			span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, entry))
 		case cdcpb.Event_PREWRITE:
-			log.Info("handle prewrite",
-				zap.String("key", hex.EncodeToString(entry.GetKey())),
-				zap.Uint64("startTs", entry.StartTs),
-				zap.Uint64("commitTs", entry.CommitTs),
-				zap.Any("type", entry.Type),
-				zap.Any("opType", entry.OpType))
+			// log.Info("handle prewrite",
+			// 	zap.String("key", hex.EncodeToString(entry.GetKey())),
+			// 	zap.Uint64("startTs", entry.StartTs),
+			// 	zap.Uint64("commitTs", entry.CommitTs),
+			// 	zap.Any("type", entry.Type),
+			// 	zap.Any("opType", entry.OpType))
 			state.matcher.putPrewriteRow(entry)
 		case cdcpb.Event_COMMIT:
 			// NOTE: matchRow should always be called even if the event is stale.
@@ -179,7 +179,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 					state.matcher.cacheCommitRow(entry)
 					continue
 				}
-				log.Warn("prewrite not match",
+				log.Fatal("prewrite not match",
 					zap.String("key", hex.EncodeToString(entry.GetKey())),
 					zap.Uint64("startTs", entry.GetStartTs()),
 					zap.Uint64("commitTs", entry.GetCommitTs()),
