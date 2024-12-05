@@ -78,7 +78,6 @@ func NewLogPullerMultiSpan(
 		pullerWrapper.resolvedTsMap[subID] = item
 		pullerWrapper.resolvedTsHeap.AddOrUpdate(item)
 		advanceSubSpanResolvedTs := func(ts uint64) {
-			log.Info("advanceSubSpanResolvedTs", zap.Uint64("subID", uint64(subID)), zap.Uint64("ts", ts))
 			pullerWrapper.tryUpdatePendingResolvedTs(subID, ts)
 		}
 		subClient.Subscribe(subID, span, startTs, consume, advanceSubSpanResolvedTs, 100)
