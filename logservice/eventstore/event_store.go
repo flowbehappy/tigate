@@ -183,9 +183,15 @@ type eventStore struct {
 
 const (
 	dataDir             = "event_store"
-	dbCount             = 32
+	dbCount             = 8
 	writeWorkerNumPerDB = 2
 	streamCount         = 8
+
+	// Pebble options
+	targetMemoryLimit = 2 << 30   // 2GB
+	memTableSize      = 256 << 20 // 256MB
+	memTableCount     = 4
+	blockCacheSize    = targetMemoryLimit - (memTableSize * memTableCount) // 1GB
 )
 
 type pathHasher struct {
@@ -305,13 +311,6 @@ func New(
 }
 
 func newPebbleOptions() *pebble.Options {
-	// 设置内存限制
-	const (
-		targetMemoryLimit = 4 << 30                                            // 目标保持在内存中的数据量: 4GB
-		memTableSize      = 256 << 20                                          // 单个 memtable 大小: 256MB
-		memTableCount     = 8                                                  // memtable 数量: 8个
-		blockCacheSize    = targetMemoryLimit - (memTableSize * memTableCount) // 剩余给 block cache
-	)
 
 	opts := &pebble.Options{
 		// 禁用 WAL 提升性能
