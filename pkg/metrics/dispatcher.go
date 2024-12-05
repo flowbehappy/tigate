@@ -16,19 +16,25 @@ package metrics
 import "github.com/prometheus/client_golang/prometheus"
 
 var (
-	// EventDispatcherManagerGauge is the metrics collector related to dispatcher manager.
 	EventDispatcherManagerGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "tigate",
+			Namespace: "ticdc",
 			Subsystem: "dispatchermanagermanager",
 			Name:      "event_dispatcher_manager_count",
 			Help:      "The number of event dispatcher managers",
 		}, []string{"namespace", "changefeed"})
 
-	// TableEventDispatcherGauge is the metrics collector related to dispatcher manager.
-	TableEventDispatcherGauge = prometheus.NewGaugeVec(
+	TableTriggerEventDispatcherGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "tigate",
+			Namespace: "ticdc",
+			Subsystem: "dispatchermanager",
+			Name:      "table_event_dispatcher_count",
+			Help:      "The number of table event dispatchers",
+		}, []string{"namespace", "changefeed"})
+
+	EventDispatcherGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
 			Subsystem: "dispatchermanager",
 			Name:      "table_event_dispatcher_count",
 			Help:      "The number of table event dispatchers",
@@ -124,7 +130,8 @@ var (
 
 func InitDispatcherMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventDispatcherManagerGauge)
-	registry.MustRegister(TableEventDispatcherGauge)
+	registry.MustRegister(TableTriggerEventDispatcherGauge)
+	registry.MustRegister(EventDispatcherGauge)
 	registry.MustRegister(CreateDispatcherDuration)
 	registry.MustRegister(EventDispatcherManagerResolvedTsGauge)
 	registry.MustRegister(EventDispatcherManagerResolvedTsLagGauge)
