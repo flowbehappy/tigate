@@ -59,18 +59,18 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 		}
 		if event.entries != nil {
 			handleEventEntries(span, event.state, event.entries)
-			if len(span.kvEventsCache) > 0 {
-				return span.consumeKVEvents(span.kvEventsCache, func() {
-					h.subClient.wakeSubscription(span.subID)
-					// TODO: check the cap and release it if it is too large
-					// span.kvEventsCache = span.kvEventsCache[:0]
-				})
-			}
 		} else if event.resolvedTs != 0 {
 			handleResolvedTs(span, event.state, event.resolvedTs)
 		} else {
 			log.Panic("should not reach", zap.Any("event", event), zap.Any("events", events))
 		}
+	}
+	if len(span.kvEventsCache) > 0 {
+		return span.consumeKVEvents(span.kvEventsCache, func() {
+			// TODO: check the cap and release it if it is too large
+			span.kvEventsCache = span.kvEventsCache[:0]
+			h.subClient.wakeSubscription(span.subID)
+		})
 	}
 	return false
 }
@@ -135,7 +135,6 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 		}
 	}
 
-	span.kvEventsCache = span.kvEventsCache[:0]
 	for _, entry := range entries.Entries.GetEntries() {
 		// log.Info("handleEventEntries",
 		// 	zap.Uint64("startTs", entry.StartTs),
