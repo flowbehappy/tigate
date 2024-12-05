@@ -81,7 +81,7 @@ func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, finishCallback func()) bo
 		}
 
 		if job == nil {
-			return false
+			continue
 		}
 
 		p.writeDDLEvent(DDLJobWithCommitTs{

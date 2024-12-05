@@ -82,28 +82,6 @@ type SubscriptionID uint64
 
 const InvalidSubscriptionID SubscriptionID = 0
 
-// regionFeedEvent from the kv layer.
-type regionFeedEvent struct {
-	// TODO: every resolve ts event may allocate a common.RawKVEntry, is it memory consuming?
-	Val *common.RawKVEntry
-
-	// Additional debug info, not used
-	RegionID uint64
-}
-
-// LogEvent wrap a region event with subscriptionID to indicate which subscription it belongs to.
-type LogEvent struct {
-	Val *common.RawKVEntry
-	SubscriptionID
-}
-
-func newLogEvent(val *common.RawKVEntry, span *subscribedSpan) LogEvent {
-	return LogEvent{
-		Val:            val,
-		SubscriptionID: span.subID,
-	}
-}
-
 type resolveLockTask struct {
 	regionID uint64
 	targetTs uint64
@@ -204,8 +182,6 @@ type SubscriptionClient struct {
 	// errCh is used to receive region errors.
 	// The errors will be handled in `handleErrors` goroutine.
 	errCache *errCache
-
-	consume func(e LogEvent) error
 }
 
 // NewSubscriptionClient creates a client.
