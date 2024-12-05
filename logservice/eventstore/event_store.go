@@ -615,7 +615,6 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 }
 
 func (e *eventStore) updateMetricsOnce() {
-	log.Info("try update metrics")
 	currentTime := e.pdClock.CurrentTime()
 	currentPhyTs := oracle.GetPhysical(currentTime)
 	minResolvedTs := uint64(0)
