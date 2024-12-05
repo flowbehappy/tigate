@@ -140,7 +140,25 @@ func (l *LargeRowWorkload) BuildInsertSql(tableN int, rowCount int) string {
 }
 
 func (l *LargeRowWorkload) BuildUpdateSql(opts UpdateOption) string {
-	panic("unimplemented")
+	tableName := getTableName(opts.Table)
+	upsertSQL := strings.Builder{}
+	upsertSQL.WriteString(fmt.Sprintf("INSERT INTO %s VALUES (%d,%s)", tableName, rand.Int63(), l.getSmallRow()))
+
+	var largeRowCount int
+	for i := 1; i < opts.RowCount; i++ {
+		if l.r.Float64() < l.largeRatio {
+			upsertSQL.WriteString(fmt.Sprintf(",(%d,%s)", rand.Int63(), l.getLargeRow()))
+			largeRowCount++
+		} else {
+			upsertSQL.WriteString(fmt.Sprintf(",(%d,%s)", rand.Int63(), l.getSmallRow()))
+		}
+	}
+	upsertSQL.WriteString(" ON DUPLICATE KEY UPDATE col_0=VALUES(col_0)")
+
+	log.Info("large row workload, upsert the table",
+		zap.Int("table", opts.Table), zap.Int("rowCount", opts.RowCount),
+		zap.Int("largeRowCount", largeRowCount))
+	return upsertSQL.String()
 }
 
 var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
