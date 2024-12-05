@@ -158,6 +158,11 @@ func (r *SpanReplication) IsDropped() bool {
 	// return false
 }
 
+func (r *SpanReplication) IsWorking() bool {
+	status := r.status.Load()
+	return status.ComponentStatus == heartbeatpb.ComponentState_Working
+}
+
 func (r *SpanReplication) UpdateBlockState(newState heartbeatpb.State) {
 	r.blockState.Store(&newState)
 }
