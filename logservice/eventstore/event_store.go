@@ -343,8 +343,8 @@ func newPebbleOptions() *pebble.Options {
 	}
 
 	// 调整 L0 阈值，延迟压缩时机
-	opts.L0CompactionThreshold = 10 // 允许更多文件在 L0
-	opts.L0StopWritesThreshold = 30 // 提高停写阈值
+	opts.L0CompactionThreshold = 20 // 允许更多文件在 L0
+	opts.L0StopWritesThreshold = 40 // 提高停写阈值
 
 	// 预读配置
 	opts.ReadOnly = false
