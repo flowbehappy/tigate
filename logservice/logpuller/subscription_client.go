@@ -244,6 +244,10 @@ func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			resolvedTsLag := s.GetResolvedTsLag()
+			if resolvedTsLag > 0 {
+				metrics.LogPullerResolvedTsLag.Set(resolvedTsLag)
+			}
 			dsMetrics := s.ds.GetMetrics()
 			metricSubscriptionClientDSChannelSize.Set(float64(dsMetrics.EventChanSize))
 			metricSubscriptionClientDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
