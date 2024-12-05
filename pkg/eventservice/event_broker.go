@@ -146,6 +146,8 @@ func newEventBroker(
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.logUnresetDispatchers(ctx)
+	c.reportDispatcherStatToStore(ctx)
+
 	for i := 0; i < messageWorkerCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
@@ -673,7 +675,9 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 	}()
 }
 
-func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
+// updateDispatcherSendTs updates the sendTs of the dispatcher periodically.
+// The eventStore need to know this to GC the stale data.
+func (c *eventBroker) reportDispatcherStatToStore(ctx context.Context) {
 	c.wg.Add(1)
 	ticker := time.NewTicker(time.Second * 120)
 	go func() {
