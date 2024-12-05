@@ -28,7 +28,7 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "dispatchermanager",
-			Name:      "table_event_dispatcher_count",
+			Name:      "table_trigger_event_dispatcher_count",
 			Help:      "The number of table event dispatchers",
 		}, []string{"namespace", "changefeed"})
 
