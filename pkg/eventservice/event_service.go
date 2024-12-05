@@ -16,12 +16,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	defaultChannelSize = 2048
-	// TODO: need to adjust the worker count
-	defaultScanWorkerCount = 512
-)
-
 type DispatcherInfo interface {
 	// GetID returns the ID of the dispatcher.
 	GetID() common.DispatcherID
@@ -64,7 +58,7 @@ func New(eventStore eventstore.EventStore, schemaStore schemastore.SchemaStore) 
 		eventStore:     eventStore,
 		schemaStore:    schemaStore,
 		brokers:        make(map[uint64]*eventBroker),
-		dispatcherInfo: make(chan DispatcherInfo, defaultChannelSize*16),
+		dispatcherInfo: make(chan DispatcherInfo, basicChannelSize*16),
 		tz:             time.Local, // FIXME use the timezone from the config
 	}
 	es.mc.RegisterHandler(messaging.EventServiceTopic, es.handleMessage)

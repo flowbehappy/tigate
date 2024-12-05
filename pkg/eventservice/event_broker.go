@@ -28,6 +28,9 @@ import (
 const (
 	resolvedTsCacheSize = 8192
 	streamCount         = 4
+	basicChannelSize    = 2048
+	// TODO: need to adjust the worker count
+	defaultScanWorkerCount = 512
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -155,7 +158,7 @@ func newEventBroker(
 	}
 
 	for i := 0; i < messageWorkerCount; i++ {
-		c.messageCh[i] = make(chan *wrapEvent, defaultChannelSize*4)
+		c.messageCh[i] = make(chan *wrapEvent, basicChannelSize*4)
 	}
 
 	c.runScanWorker(ctx)
