@@ -50,6 +50,12 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) boo
 	}
 	subStat.maxEventCommitTs.Store(events[len(events)-1].raw.CRTs)
 
+	// notify all dispatchers
+	ts := events[len(events)-1].raw.CRTs
+	for _, notifier := range subStat.dispatchers.notifiers {
+		notifier(ts, subStat.maxEventCommitTs.Load())
+	}
+
 	batchSeq := h.batchSeq.Add(1)
 	for i := range events {
 		events[i].tableID = subStat.tableID

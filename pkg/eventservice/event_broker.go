@@ -26,8 +26,12 @@ import (
 )
 
 const (
-	resolvedTsCacheSize = 8192
-	streamCount         = 4
+	defaultChannelSize = 2048
+	// TODO: need to adjust the worker count
+	defaultScanWorkerCount = 32
+	resolvedTsCacheSize    = 8192
+	streamCount            = 4
+	checkNeedScanInterval  = time.Millisecond * 500
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -144,6 +148,7 @@ func newEventBroker(
 	}
 
 	c.runScanWorker(ctx)
+	c.runCheckDDLStateWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.logUnresetDispatchers(ctx)
 	for i := 0; i < messageWorkerCount; i++ {
@@ -152,6 +157,50 @@ func newEventBroker(
 	c.updateMetrics(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
+}
+
+func (c *eventBroker) runCheckDDLStateWorker(ctx context.Context) {
+	ticker := time.NewTicker(time.Millisecond * 100)
+	logInterval := time.Millisecond * 1000
+	lastLogTime := time.Now()
+
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				currentDDLResolvedTs := c.schemaStore.GetResolvedTs()
+
+				if time.Since(lastLogTime) > logInterval {
+					physical := oracle.ExtractPhysical(currentDDLResolvedTs)
+					lag := float64(oracle.GetPhysical(time.Now())-physical) / 1e3
+					log.Info("check ddl state worker ticked, report schemaStore lag", zap.Uint64("resolvedTs", currentDDLResolvedTs), zap.Float64("lag", lag))
+					lastLogTime = time.Now()
+				}
+
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					d := value.(*dispatcherStat)
+					// only check the dispatcher that is behind the schemaStore
+					if currentDDLResolvedTs <= d.resolvedTs.Load() {
+						return true
+					}
+
+					// To reduce the message count when initializing a cdc cluster.
+					if time.Since(d.createTime.Load()) < time.Minute*2 {
+						return true
+					}
+
+					needScan, _ := c.checkNeedScan(d, false)
+					if needScan {
+						c.taskQueue <- d
+					}
+					return true
+				})
+			}
+		}
+	}()
 }
 
 func (c *eventBroker) sendWatermark(
@@ -166,6 +215,7 @@ func (c *eventBroker) sendWatermark(
 		server,
 		re,
 		d.getEventSenderState())
+	d.lastSentTime.Store(time.Now())
 	c.getMessageCh(d.workerIndex) <- resolvedEvent
 	// We comment out the following code is because we found when some resolvedTs are dropped,
 	// the lag of the resolvedTs will increase.
@@ -322,8 +372,10 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 // If the dispatcher needs to scan the event store, it returns true.
 // If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
 func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common.DataRange) {
-	if !mustCheck && task.scanning.Load() {
-		return false, common.DataRange{}
+	if !mustCheck {
+		if task.scanning.Load() {
+			return false, common.DataRange{}
+		}
 	}
 
 	if task.resetTs.Load() == 0 {

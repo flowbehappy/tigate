@@ -16,12 +16,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	defaultChannelSize = 2048
-	// TODO: need to adjust the worker count
-	defaultScanWorkerCount = 512
-)
-
 type DispatcherInfo interface {
 	// GetID returns the ID of the dispatcher.
 	GetID() common.DispatcherID
@@ -46,11 +40,14 @@ type DispatcherInfo interface {
 // EventService accepts the requests of pulling events.
 // The EventService is a singleton in the system.
 type eventService struct {
-	mc          messaging.MessageCenter
+	mc messaging.MessageCenter
+
 	eventStore  eventstore.EventStore
 	schemaStore schemastore.SchemaStore
-	// clusterID -> eventBroker
-	brokers map[uint64]*eventBroker
+
+	// clusterID -> eventBrokers
+	brokerNum int
+	brokers   map[uint64][]*eventBroker
 
 	// TODO: use a better way to cache the acceptorInfos
 	dispatcherInfo chan DispatcherInfo
@@ -61,12 +58,13 @@ func New(eventStore eventstore.EventStore, schemaStore schemastore.SchemaStore) 
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	es := &eventService{
 		mc:             mc,
-		eventStore:     eventStore,
 		schemaStore:    schemaStore,
-		brokers:        make(map[uint64]*eventBroker),
+		eventStore:     eventStore,
+		brokerNum:      16,
 		dispatcherInfo: make(chan DispatcherInfo, defaultChannelSize*16),
 		tz:             time.Local, // FIXME use the timezone from the config
 	}
+	es.brokers = make(map[uint64][]*eventBroker)
 	es.mc.RegisterHandler(messaging.EventServiceTopic, es.handleMessage)
 	return es
 }
@@ -103,8 +101,10 @@ func (s *eventService) Run(ctx context.Context) error {
 
 func (s *eventService) Close(_ context.Context) error {
 	log.Info("event service is closing")
-	for _, c := range s.brokers {
-		c.close()
+	for _, brokers := range s.brokers {
+		for _, broker := range brokers {
+			broker.close()
+		}
 	}
 	log.Info("event service is closed")
 	return nil
@@ -122,50 +122,65 @@ func (s *eventService) handleMessage(ctx context.Context, msg *messaging.TargetM
 	return nil
 }
 
+func (s *eventService) getBroker(clusterID uint64, tableID int64) *eventBroker {
+	brokerIndex := tableID % int64(s.brokerNum)
+
+	brokers, ok := s.brokers[clusterID]
+	if !ok {
+		return nil
+	}
+	return brokers[brokerIndex]
+}
+
 func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherInfo) {
 	clusterID := info.GetClusterID()
-	c, ok := s.brokers[clusterID]
+	brokers, ok := s.brokers[clusterID]
 	if !ok {
-		c = newEventBroker(ctx, clusterID, s.eventStore, s.schemaStore, s.mc, s.tz)
-		s.brokers[clusterID] = c
+		for i := 0; i < s.brokerNum; i++ {
+			broker := newEventBroker(ctx, clusterID, s.eventStore, s.schemaStore, s.mc, s.tz)
+			brokers = append(brokers, broker)
+		}
+		s.brokers[clusterID] = brokers
 	}
-	c.addDispatcher(info)
+
+	broker := s.getBroker(clusterID, info.GetTableSpan().TableID)
+	broker.addDispatcher(info)
 }
 
 func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
 	clusterID := dispatcherInfo.GetClusterID()
-	c, ok := s.brokers[clusterID]
-	if !ok {
+	broker := s.getBroker(clusterID, dispatcherInfo.GetTableSpan().TableID)
+	if broker == nil {
 		return
 	}
-	c.removeDispatcher(dispatcherInfo)
+	broker.removeDispatcher(dispatcherInfo)
 }
 
 func (s *eventService) pauseDispatcher(dispatcherInfo DispatcherInfo) {
 	clusterID := dispatcherInfo.GetClusterID()
-	c, ok := s.brokers[clusterID]
-	if !ok {
+	broker := s.getBroker(clusterID, dispatcherInfo.GetTableSpan().TableID)
+	if broker == nil {
 		return
 	}
-	c.pauseDispatcher(dispatcherInfo)
+	broker.pauseDispatcher(dispatcherInfo)
 }
 
 func (s *eventService) resumeDispatcher(dispatcherInfo DispatcherInfo) {
 	clusterID := dispatcherInfo.GetClusterID()
-	c, ok := s.brokers[clusterID]
-	if !ok {
+	broker := s.getBroker(clusterID, dispatcherInfo.GetTableSpan().TableID)
+	if broker == nil {
 		return
 	}
-	c.resumeDispatcher(dispatcherInfo)
+	broker.resumeDispatcher(dispatcherInfo)
 }
 
 func (s *eventService) resetDispatcher(dispatcherInfo DispatcherInfo) {
 	clusterID := dispatcherInfo.GetClusterID()
-	c, ok := s.brokers[clusterID]
-	if !ok {
+	broker := s.getBroker(clusterID, dispatcherInfo.GetTableSpan().TableID)
+	if broker == nil {
 		return
 	}
-	c.resetDispatcher(dispatcherInfo)
+	broker.resetDispatcher(dispatcherInfo)
 }
 
 func msgToDispatcherInfo(msg *messaging.TargetMessage) []DispatcherInfo {

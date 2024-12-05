@@ -41,6 +41,8 @@ type SchemaStore interface {
 	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, error)
 
 	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, uint64, error)
+
+	GetResolvedTs() uint64
 }
 
 type DDLEventState struct {
@@ -134,6 +136,10 @@ func (s *schemaStore) Close(ctx context.Context) error {
 	return s.ddlJobFetcher.close(ctx)
 }
 
+func (s *schemaStore) GetResolvedTs() uint64 {
+	return s.resolvedTs.Load()
+}
+
 func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 	tryUpdateResolvedTs := func() {
 		pendingTs := s.pendingResolvedTs.Load()
@@ -193,6 +199,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 			ResolvedTs:    pendingTs,
 		})
 	}
+
 	ticker := time.NewTicker(50 * time.Millisecond)
 	for {
 		select {
