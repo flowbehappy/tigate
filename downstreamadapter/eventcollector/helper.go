@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	streamCount = 4
+	streamCount = 8
 )
 
 type pathHasher struct {
