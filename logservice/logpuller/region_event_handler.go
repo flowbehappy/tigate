@@ -185,6 +185,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 					zap.Uint64("startTs", entry.GetStartTs()),
 					zap.Uint64("commitTs", entry.GetCommitTs()),
 					zap.Any("type", entry.GetType()),
+					zap.Uint64("regionID", state.getRegionID()),
 					zap.Any("opType", entry.GetOpType()))
 				return
 			}
