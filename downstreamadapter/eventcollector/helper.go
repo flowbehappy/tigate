@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	streamCount = 4
+	streamCount = 8
 )
 
 type pathHasher struct {
@@ -36,6 +36,7 @@ func (h pathHasher) HashPath(path common.DispatcherID) uint64 {
 func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
+	option.UseBuffer = true
 	// Enable memory control for dispatcher events dynamic stream.
 	log.Info("New EventDynamicStream, memory control is enabled")
 	option.EnableMemoryControl = true

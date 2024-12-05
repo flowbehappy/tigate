@@ -241,7 +241,7 @@ func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 }
 
 type DispatcherEvent struct {
-	From node.ID
+	From *node.ID
 	commonEvent.Event
 }
 
@@ -249,7 +249,7 @@ func (d DispatcherEvent) GetSize() int64 {
 	return d.From.GetSize() + d.Event.GetSize()
 }
 
-func NewDispatcherEvent(from node.ID, event commonEvent.Event) DispatcherEvent {
+func NewDispatcherEvent(from *node.ID, event commonEvent.Event) DispatcherEvent {
 	return DispatcherEvent{
 		From:  from,
 		Event: event,

@@ -165,9 +165,15 @@ type eventStore struct {
 
 const (
 	dataDir             = "event_store"
-	dbCount             = 32
+	dbCount             = 8
 	writeWorkerNumPerDB = 2
 	streamCount         = 8
+
+	// Pebble options
+	targetMemoryLimit = 2 << 30   // 2GB
+	memTableSize      = 256 << 20 // 256MB
+	memTableCount     = 4
+	blockCacheSize    = targetMemoryLimit - (memTableSize * memTableCount) // 1GB
 )
 
 type pathHasher struct {
@@ -212,23 +218,10 @@ func New(
 		encoder:   encoder,
 		decoder:   decoder,
 	}
+
 	// TODO: update pebble options
 	for i := 0; i < dbCount; i++ {
-		opts := &pebble.Options{
-			DisableWAL:   true,
-			MemTableSize: 8 << 20,
-		}
-		// opts.Levels = make([]pebble.LevelOptions, 7)
-		// for i := 0; i < len(opts.Levels); i++ {
-		// 	l := &opts.Levels[i]
-		// 	l.BlockSize = 64 << 10       // 64 KB
-		// 	l.IndexBlockSize = 256 << 10 // 256 KB
-		// 	l.FilterPolicy = bloom.FilterPolicy(10)
-		// 	l.FilterType = pebble.TableFilter
-		// 	l.TargetFileSize = 8 << 20 // 8 MB
-		// 	// 	l.Compression = pebble.ZstdCompression // TODO: choose the right compression
-		// 	l.EnsureDefaults()
-		// }
+		opts := newPebbleOptions()
 		db, err := pebble.Open(fmt.Sprintf("%s/%d", dbPath, i), opts)
 		if err != nil {
 			log.Fatal("open db failed", zap.Error(err))
@@ -247,6 +240,47 @@ func New(
 	messageCenter.RegisterHandler(messaging.EventStoreTopic, store.handleMessage)
 
 	return store
+}
+
+func newPebbleOptions() *pebble.Options {
+	opts := &pebble.Options{
+		// Disable WAL to improve performance
+		DisableWAL: true,
+
+		// Configure large memtable to keep recent data in memory
+		MemTableSize:                memTableSize,
+		MemTableStopWritesThreshold: memTableCount,
+
+		// Configure large block cache to keep frequently accessed data in memory
+		Cache: pebble.NewCache(blockCacheSize),
+
+		// Configure options to optimize read/write performance
+		Levels: make([]pebble.LevelOptions, 2),
+	}
+
+	// Configure level strategy
+	opts.Levels[0] = pebble.LevelOptions{ // L0 - Latest data fully in memory
+		BlockSize:      32 << 10,             // 32KB block size
+		IndexBlockSize: 128 << 10,            // 128KB index block
+		Compression:    pebble.NoCompression, // No compression in L0 for better performance
+	}
+
+	opts.Levels[1] = pebble.LevelOptions{ // L1 - Data that may be in memory or on disk
+		BlockSize:      64 << 10,
+		IndexBlockSize: 256 << 10,
+		Compression:    pebble.SnappyCompression,
+		TargetFileSize: 256 << 20, // 256MB
+	}
+
+	// Adjust L0 thresholds to delay compaction timing
+	opts.L0CompactionThreshold = 20 // Allow more files in L0
+	opts.L0StopWritesThreshold = 40 // Increase stop-writes threshold
+
+	// Prefetch configuration
+	opts.ReadOnly = false
+	opts.MaxOpenFiles = 10000
+
+	return opts
 }
 
 type writeTaskPool struct {

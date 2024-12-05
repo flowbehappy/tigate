@@ -28,6 +28,9 @@ import (
 const (
 	resolvedTsCacheSize = 8192
 	streamCount         = 4
+	basicChannelSize    = 2048
+	// TODO: need to adjust the worker count
+	defaultScanWorkerCount = 512
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -140,12 +143,14 @@ func newEventBroker(
 	}
 
 	for i := 0; i < messageWorkerCount; i++ {
-		c.messageCh[i] = make(chan *wrapEvent, defaultChannelSize*4)
+		c.messageCh[i] = make(chan *wrapEvent, basicChannelSize*4)
 	}
 
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.logUnresetDispatchers(ctx)
+	c.reportDispatcherStatToStore(ctx)
+
 	for i := 0; i < messageWorkerCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
@@ -528,6 +533,10 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	messageCh := c.messageCh[workerIndex]
 	tickCh := flushResolvedTsTicker.C
+
+	maxBatchSize := 1024
+	batchM := make([]*wrapEvent, 0, maxBatchSize)
+
 	go func() {
 		defer c.wg.Done()
 		defer flushResolvedTsTicker.Stop()
@@ -536,31 +545,50 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 			case <-ctx.Done():
 				return
 			case m := <-messageCh:
-				if m.msgType == pevent.TypeResolvedEvent {
-					c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
-					continue
-				}
-				// Check if the dispatcher is initialized, if so, ignore the handshake event.
-				if m.msgType == pevent.TypeHandshakeEvent {
-					// If the message is a handshake event, we need to reset the dispatcher.
-					d, ok := c.getDispatcher(m.getDispatcherID())
-					if !ok {
-						log.Warn("Get dispatcher failed", zap.Any("dispatcherID", m.getDispatcherID()))
-						continue
-					} else if d.isInitialized.Load() {
-						log.Info("Ignore handshake event since the dispatcher is initialized", zap.Any("dispatcherID", m.getDispatcherID()))
-						continue
+				batchM = append(batchM, m)
+
+			LOOP:
+				for {
+					select {
+					case moreM := <-messageCh:
+						batchM = append(batchM, moreM)
+						if len(batchM) > maxBatchSize {
+							break LOOP
+						}
+					default:
+						break LOOP
 					}
 				}
-				tMsg := messaging.NewSingleTargetMessage(
-					m.serverID,
-					messaging.EventCollectorTopic,
-					m.e)
-				// Note: we need to flush the resolvedTs cache before sending the message
-				// to keep the order of the resolvedTs and the message.
-				c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
-				c.sendMsg(ctx, tMsg, m.postSendFunc)
-				m.reset()
+
+				for _, m := range batchM {
+					if m.msgType == pevent.TypeResolvedEvent {
+						c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
+						continue
+					}
+					// Check if the dispatcher is initialized, if so, ignore the handshake event.
+					if m.msgType == pevent.TypeHandshakeEvent {
+						// If the message is a handshake event, we need to reset the dispatcher.
+						d, ok := c.getDispatcher(m.getDispatcherID())
+						if !ok {
+							log.Warn("Get dispatcher failed", zap.Any("dispatcherID", m.getDispatcherID()))
+							continue
+						} else if d.isInitialized.Load() {
+							log.Info("Ignore handshake event since the dispatcher is initialized", zap.Any("dispatcherID", m.getDispatcherID()))
+							continue
+						}
+					}
+					tMsg := messaging.NewSingleTargetMessage(
+						m.serverID,
+						messaging.EventCollectorTopic,
+						m.e)
+					// Note: we need to flush the resolvedTs cache before sending the message
+					// to keep the order of the resolvedTs and the message.
+					c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
+					c.sendMsg(ctx, tMsg, m.postSendFunc)
+					m.reset()
+				}
+				batchM = batchM[:0]
+
 			case <-tickCh:
 				for serverID, cache := range resolvedTsCacheMap {
 					c.flushResolvedTs(ctx, cache, serverID)
@@ -673,7 +701,9 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 	}()
 }
 
-func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
+// updateDispatcherSendTs updates the sendTs of the dispatcher periodically.
+// The eventStore need to know this to GC the stale data.
+func (c *eventBroker) reportDispatcherStatToStore(ctx context.Context) {
 	c.wg.Add(1)
 	ticker := time.NewTicker(time.Second * 120)
 	go func() {
