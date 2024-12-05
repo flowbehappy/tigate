@@ -275,6 +275,14 @@ func (s *SubscriptionClient) Subscribe(
 		log.Panic("subscription client subscribe with zero TableID")
 		return
 	}
+	log.Info("subscribes span",
+		zap.Uint64("subscriptionID", uint64(subID)),
+		zap.String("span", span.String()))
+	defer func() {
+		log.Info("subscribes span done",
+			zap.Uint64("subscriptionID", uint64(subID)),
+			zap.String("span", span.String()))
+	}()
 
 	rt := s.newSubscribedSpan(subID, span, startTs, consumeKVEvents, advanceResolvedTs, advanceInterval)
 	s.totalSpans.Lock()
@@ -284,9 +292,6 @@ func (s *SubscriptionClient) Subscribe(
 	s.ds.AddPath(rt.subID, rt, dynstream.AreaSettings{})
 
 	s.rangeTaskCh <- rangeTask{span: span, subscribedSpan: rt}
-	log.Info("subscribes span success",
-		zap.Uint64("subscriptionID", uint64(rt.subID)),
-		zap.String("span", rt.span.String()))
 }
 
 // Unsubscribe the given table span. All covered regions will be deregistered asynchronously.
