@@ -101,6 +101,9 @@ func init() {
 }
 
 func main() {
+	if flags := flag.Args(); len(flags) > 0 {
+		panic(fmt.Sprintf("unparsed flags: %v", flags))
+	}
 	err := logutil.InitLogger(&logutil.Config{
 		Level: logLevel,
 		File:  logFile,
