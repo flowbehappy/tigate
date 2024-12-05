@@ -533,6 +533,10 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	messageCh := c.messageCh[workerIndex]
 	tickCh := flushResolvedTsTicker.C
+
+	maxBatchSize := 1024
+	batchM := make([]*wrapEvent, 0, maxBatchSize)
+
 	go func() {
 		defer c.wg.Done()
 		defer flushResolvedTsTicker.Stop()
@@ -541,31 +545,50 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 			case <-ctx.Done():
 				return
 			case m := <-messageCh:
-				if m.msgType == pevent.TypeResolvedEvent {
-					c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
-					continue
-				}
-				// Check if the dispatcher is initialized, if so, ignore the handshake event.
-				if m.msgType == pevent.TypeHandshakeEvent {
-					// If the message is a handshake event, we need to reset the dispatcher.
-					d, ok := c.getDispatcher(m.getDispatcherID())
-					if !ok {
-						log.Warn("Get dispatcher failed", zap.Any("dispatcherID", m.getDispatcherID()))
-						continue
-					} else if d.isInitialized.Load() {
-						log.Info("Ignore handshake event since the dispatcher is initialized", zap.Any("dispatcherID", m.getDispatcherID()))
-						continue
+				batchM = append(batchM, m)
+
+			LOOP:
+				for {
+					select {
+					case moreM := <-messageCh:
+						batchM = append(batchM, moreM)
+						if len(batchM) > maxBatchSize {
+							break LOOP
+						}
+					default:
+						break LOOP
 					}
 				}
-				tMsg := messaging.NewSingleTargetMessage(
-					m.serverID,
-					messaging.EventCollectorTopic,
-					m.e)
-				// Note: we need to flush the resolvedTs cache before sending the message
-				// to keep the order of the resolvedTs and the message.
-				c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
-				c.sendMsg(ctx, tMsg, m.postSendFunc)
-				m.reset()
+
+				for _, m := range batchM {
+					if m.msgType == pevent.TypeResolvedEvent {
+						c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
+						continue
+					}
+					// Check if the dispatcher is initialized, if so, ignore the handshake event.
+					if m.msgType == pevent.TypeHandshakeEvent {
+						// If the message is a handshake event, we need to reset the dispatcher.
+						d, ok := c.getDispatcher(m.getDispatcherID())
+						if !ok {
+							log.Warn("Get dispatcher failed", zap.Any("dispatcherID", m.getDispatcherID()))
+							continue
+						} else if d.isInitialized.Load() {
+							log.Info("Ignore handshake event since the dispatcher is initialized", zap.Any("dispatcherID", m.getDispatcherID()))
+							continue
+						}
+					}
+					tMsg := messaging.NewSingleTargetMessage(
+						m.serverID,
+						messaging.EventCollectorTopic,
+						m.e)
+					// Note: we need to flush the resolvedTs cache before sending the message
+					// to keep the order of the resolvedTs and the message.
+					c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
+					c.sendMsg(ctx, tMsg, m.postSendFunc)
+					m.reset()
+				}
+				batchM = batchM[:0]
+
 			case <-tickCh:
 				for serverID, cache := range resolvedTsCacheMap {
 					c.flushResolvedTs(ctx, cache, serverID)
