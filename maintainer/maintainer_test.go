@@ -359,5 +359,5 @@ func TestMaintainerSchedule(t *testing.T) {
 	}, time.Second*200, time.Millisecond*100)
 
 	cancel()
-	wg.Done()
+	wg.Wait()
 }
