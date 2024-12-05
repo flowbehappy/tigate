@@ -311,41 +311,40 @@ func New(
 }
 
 func newPebbleOptions() *pebble.Options {
-
 	opts := &pebble.Options{
-		// 禁用 WAL 提升性能
+		// Disable WAL to improve performance
 		DisableWAL: true,
 
-		// 配置大的 memtable 来保持最近写入的数据在内存
+		// Configure large memtable to keep recent data in memory
 		MemTableSize:                memTableSize,
 		MemTableStopWritesThreshold: memTableCount,
 
-		// 配置大的 block cache 来保持频繁访问的数据在内存
+		// Configure large block cache to keep frequently accessed data in memory
 		Cache: pebble.NewCache(blockCacheSize),
 
-		// 优化读写性能的配置
+		// Configure options to optimize read/write performance
 		Levels: make([]pebble.LevelOptions, 2),
 	}
 
-	// 配置分层策略
-	opts.Levels[0] = pebble.LevelOptions{ // L0 - 完全在内存中的最新数据
+	// Configure level strategy
+	opts.Levels[0] = pebble.LevelOptions{ // L0 - Latest data fully in memory
 		BlockSize:      32 << 10,             // 32KB block size
 		IndexBlockSize: 128 << 10,            // 128KB index block
-		Compression:    pebble.NoCompression, // L0 不压缩以提高性能
+		Compression:    pebble.NoCompression, // No compression in L0 for better performance
 	}
 
-	opts.Levels[1] = pebble.LevelOptions{ // L1 - 可能在内存也可能在磁盘的数据
+	opts.Levels[1] = pebble.LevelOptions{ // L1 - Data that may be in memory or on disk
 		BlockSize:      64 << 10,
 		IndexBlockSize: 256 << 10,
 		Compression:    pebble.SnappyCompression,
 		TargetFileSize: 256 << 20, // 256MB
 	}
 
-	// 调整 L0 阈值，延迟压缩时机
-	opts.L0CompactionThreshold = 20 // 允许更多文件在 L0
-	opts.L0StopWritesThreshold = 40 // 提高停写阈值
+	// Adjust L0 thresholds to delay compaction timing
+	opts.L0CompactionThreshold = 20 // Allow more files in L0
+	opts.L0StopWritesThreshold = 40 // Increase stop-writes threshold
 
-	// 预读配置
+	// Prefetch configuration
 	opts.ReadOnly = false
 	opts.MaxOpenFiles = 10000
 
