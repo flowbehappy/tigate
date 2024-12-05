@@ -267,23 +267,10 @@ func New(
 			shuffle:    metrics.DynamicStreamArrangeStreamNum.WithLabelValues("event-store", "shuffle"),
 		},
 	}
+
 	// TODO: update pebble options
 	for i := 0; i < dbCount; i++ {
-		opts := &pebble.Options{
-			DisableWAL:   true,
-			MemTableSize: 8 << 20,
-		}
-		// opts.Levels = make([]pebble.LevelOptions, 7)
-		// for i := 0; i < len(opts.Levels); i++ {
-		// 	l := &opts.Levels[i]
-		// 	l.BlockSize = 64 << 10       // 64 KB
-		// 	l.IndexBlockSize = 256 << 10 // 256 KB
-		// 	l.FilterPolicy = bloom.FilterPolicy(10)
-		// 	l.FilterType = pebble.TableFilter
-		// 	l.TargetFileSize = 8 << 20 // 8 MB
-		// 	// 	l.Compression = pebble.ZstdCompression // TODO: choose the right compression
-		// 	l.EnsureDefaults()
-		// }
+		opts := newPebbleOptions()
 		db, err := pebble.Open(fmt.Sprintf("%s/%d", dbPath, i), opts)
 		if err != nil {
 			log.Fatal("open db failed", zap.Error(err))
@@ -315,6 +302,55 @@ func New(
 	messageCenter.RegisterHandler(messaging.EventStoreTopic, store.handleMessage)
 
 	return store
+}
+
+func newPebbleOptions() *pebble.Options {
+	// 设置内存限制
+	const (
+		targetMemoryLimit = 4 << 30                                            // 目标保持在内存中的数据量: 4GB
+		memTableSize      = 256 << 20                                          // 单个 memtable 大小: 256MB
+		memTableCount     = 8                                                  // memtable 数量: 8个
+		blockCacheSize    = targetMemoryLimit - (memTableSize * memTableCount) // 剩余给 block cache
+	)
+
+	opts := &pebble.Options{
+		// 禁用 WAL 提升性能
+		DisableWAL: true,
+
+		// 配置大的 memtable 来保持最近写入的数据在内存
+		MemTableSize:                memTableSize,
+		MemTableStopWritesThreshold: memTableCount,
+
+		// 配置大的 block cache 来保持频繁访问的数据在内存
+		Cache: pebble.NewCache(blockCacheSize),
+
+		// 优化读写性能的配置
+		Levels: make([]pebble.LevelOptions, 2),
+	}
+
+	// 配置分层策略
+	opts.Levels[0] = pebble.LevelOptions{ // L0 - 完全在内存中的最新数据
+		BlockSize:      32 << 10,             // 32KB block size
+		IndexBlockSize: 128 << 10,            // 128KB index block
+		Compression:    pebble.NoCompression, // L0 不压缩以提高性能
+	}
+
+	opts.Levels[1] = pebble.LevelOptions{ // L1 - 可能在内存也可能在磁盘的数据
+		BlockSize:      64 << 10,
+		IndexBlockSize: 256 << 10,
+		Compression:    pebble.SnappyCompression,
+		TargetFileSize: 256 << 20, // 256MB
+	}
+
+	// 调整 L0 阈值，延迟压缩时机
+	opts.L0CompactionThreshold = 10 // 允许更多文件在 L0
+	opts.L0StopWritesThreshold = 30 // 提高停写阈值
+
+	// 预读配置
+	opts.ReadOnly = false
+	opts.MaxOpenFiles = 10000
+
+	return opts
 }
 
 type writeTaskPool struct {
