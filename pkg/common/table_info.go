@@ -199,6 +199,7 @@ type TableName struct {
 	Table       string `toml:"tbl-name" msg:"tbl-name"`
 	TableID     int64  `toml:"tbl-id" msg:"tbl-id"`
 	IsPartition bool   `toml:"is-partition" msg:"is-partition"`
+	quotedName  string `json:"-"`
 }
 
 // String implements fmt.Stringer interface.
@@ -229,7 +230,11 @@ func EscapeName(name string) string {
 
 // QuoteString returns quoted full table name
 func (t TableName) QuoteString() string {
-	return QuoteSchema(t.Schema, t.Table)
+	if t.quotedName != "" {
+		return t.quotedName
+	}
+	t.quotedName = QuoteSchema(t.Schema, t.Table)
+	return t.quotedName
 }
 
 // GetSchema returns schema name.
@@ -279,6 +284,8 @@ type TableInfo struct {
 	// Version means the version of the table info.
 	Version      uint16        `json:"version"`
 	columnSchema *columnSchema `json:"-"`
+
+	preSQLs [4]string `json:"-"`
 }
 
 func (ti *TableInfo) MarshalJSON() ([]byte, error) {
@@ -356,15 +363,36 @@ func (ti *TableInfo) GetColumnsFlag() map[int64]*ColumnFlagType {
 }
 
 func (ti *TableInfo) GetPreInsertSQL() string {
-	return fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
+	if ti.preSQLs[preSQLInsert] != "" {
+		return ti.preSQLs[preSQLInsert]
+	}
+	var builder strings.Builder
+	builder.Grow(len(ti.columnSchema.PreSQLs[preSQLInsert]) + len(ti.TableName.QuoteString()))
+	builder.WriteString(ti.columnSchema.PreSQLs[preSQLInsert])
+	builder.WriteString(ti.TableName.QuoteString())
+	ti.preSQLs[preSQLInsert] = builder.String()
+	return ti.preSQLs[preSQLInsert]
 }
 
 func (ti *TableInfo) GetPreReplaceSQL() string {
-	return fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
+	if ti.preSQLs[preSQLReplace] != "" {
+		return ti.preSQLs[preSQLReplace]
+	}
+	var builder strings.Builder
+	builder.Grow(len(ti.columnSchema.PreSQLs[preSQLReplace]) + len(ti.TableName.QuoteString()))
+	builder.WriteString(ti.columnSchema.PreSQLs[preSQLReplace])
+	builder.WriteString(ti.TableName.QuoteString())
+	ti.preSQLs[preSQLReplace] = builder.String()
+	return ti.preSQLs[preSQLReplace]
 }
 
 func (ti *TableInfo) GetPreUpdateSQL() string {
-	return fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
+	var builder strings.Builder
+	builder.Grow(len(ti.columnSchema.PreSQLs[preSQLUpdate]) + len(ti.TableName.QuoteString()))
+	builder.WriteString(ti.columnSchema.PreSQLs[preSQLUpdate])
+	builder.WriteString(ti.TableName.QuoteString())
+	ti.preSQLs[preSQLUpdate] = builder.String()
+	return ti.preSQLs[preSQLUpdate]
 }
 
 // GetColumnInfo returns the column info by ID
