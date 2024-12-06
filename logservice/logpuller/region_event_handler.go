@@ -59,7 +59,7 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 			continue
 		}
 		if event.entries != nil {
-			// kvEvents = handleEventEntries(span, event.state, event.entries, kvEvents)
+			kvEvents = handleEventEntries(span, event.state, event.entries, kvEvents)
 		} else if event.resolvedTs != 0 {
 			handleResolvedTs(span, event.state, event.resolvedTs)
 		} else {
