@@ -82,6 +82,7 @@ func (s *EventTestHelper) ApplyJob(job *timodel.Job) {
 		job.SchemaID,
 		job.SchemaName,
 		job.BinlogInfo.TableInfo)
+	info.InitPrivateFields()
 	s.tableInfos[key] = info
 }
 

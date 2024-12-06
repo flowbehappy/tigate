@@ -290,11 +290,14 @@ type TableInfo struct {
 // initPrivateFields initializes the private fields of TableInfo
 // We do it to reduce the memory allocation and GC overhead
 // It must be called after TableName and columnSchema are initialized
-func (ti *TableInfo) initPrivateFields() {
+func (ti *TableInfo) InitPrivateFields() {
+	if ti == nil {
+		return
+	}
 	ti.TableName.quotedName = ti.TableName.QuoteString()
-	ti.preSQLs[preSQLInsert] = ti.columnSchema.PreSQLs[preSQLInsert] + ti.TableName.QuoteString()
-	ti.preSQLs[preSQLReplace] = ti.columnSchema.PreSQLs[preSQLReplace] + ti.TableName.QuoteString()
-	ti.preSQLs[preSQLUpdate] = ti.columnSchema.PreSQLs[preSQLUpdate] + ti.TableName.QuoteString()
+	ti.preSQLs[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
+	ti.preSQLs[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
+	ti.preSQLs[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
 }
 
 func (ti *TableInfo) MarshalJSON() ([]byte, error) {
@@ -336,7 +339,6 @@ func UnmarshalJSONToTableInfo(data []byte) (*TableInfo, error) {
 		return nil, err
 	}
 
-	ti.initPrivateFields()
 	// when this tableInfo is released, we need to cut down the reference count of the columnSchema
 	// This function should be appear when tableInfo is created as a pair.
 	runtime.SetFinalizer(ti, func(ti *TableInfo) {
@@ -571,6 +573,7 @@ func NewTableInfo(schemaID int64, schemaName string, tableName string, tableID i
 			Table:       tableName,
 			TableID:     tableID,
 			IsPartition: isPartition,
+			quotedName:  QuoteSchema(schemaName, tableName),
 		},
 		Version:      version,
 		columnSchema: columnSchema,
