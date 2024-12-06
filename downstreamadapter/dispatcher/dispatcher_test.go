@@ -154,7 +154,8 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	require.Equal(t, uint64(0), checkpointTs)
 
 	// ===== dml event =====
-	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), dmlEvent)}, callback)
+	nodeID := node.NewID()
+	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, dmlEvent)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 1, len(sink.dmls))
 
@@ -181,7 +182,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 		},
 	}
 
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// no pending event
@@ -206,7 +207,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			TableIDs:      []int64{1},
 		},
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent21)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent21)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// no pending event
@@ -245,7 +246,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			},
 		},
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent2)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent2)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// no pending event
@@ -293,7 +294,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			TableIDs:      []int64{0, 1},
 		},
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent3)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent3)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// pending event
@@ -351,7 +352,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	syncPointEvent := &commonEvent.SyncPointEvent{
 		CommitTs: 6,
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), syncPointEvent)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, syncPointEvent)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// pending event
@@ -397,7 +398,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	resolvedEvent := commonEvent.ResolvedEvent{
 		ResolvedTs: 7,
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), resolvedEvent)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, resolvedEvent)}, callback)
 	require.Equal(t, false, block)
 	require.Equal(t, 0, len(sink.dmls))
 	require.Equal(t, uint64(7), dispatcher.GetResolvedTs())
@@ -428,7 +429,8 @@ func TestUncompeleteTableSpanDispatcherHandleEvents(t *testing.T) {
 		},
 	}
 
-	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	nodeID := node.NewID()
+	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// pending event
 	require.NotNil(t, dispatcher.blockEventStatus.blockPendingEvent)
@@ -499,7 +501,8 @@ func TestTableTriggerEventDispatcherInMysql(t *testing.T) {
 		},
 	}
 
-	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	nodeID := node.NewID()
+	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// no pending event
 	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
@@ -532,7 +535,7 @@ func TestTableTriggerEventDispatcherInMysql(t *testing.T) {
 		},
 	}
 
-	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// no pending event
 	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
@@ -571,7 +574,8 @@ func TestTableTriggerEventDispatcherInKafka(t *testing.T) {
 		},
 	}
 
-	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	nodeID := node.NewID()
+	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// no pending event
 	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
@@ -603,7 +607,7 @@ func TestTableTriggerEventDispatcherInKafka(t *testing.T) {
 		},
 	}
 
-	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// no pending event
 	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
@@ -639,7 +643,8 @@ func TestDispatcherClose(t *testing.T) {
 		dispatcher.SetInitialTableInfo(tableInfo)
 
 		// ===== dml event =====
-		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), dmlEvent)}, callback)
+		nodeID := node.NewID()
+		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, dmlEvent)}, callback)
 
 		_, ok := dispatcher.TryClose()
 		require.Equal(t, false, ok)
@@ -661,7 +666,8 @@ func TestDispatcherClose(t *testing.T) {
 		dispatcher.SetInitialTableInfo(tableInfo)
 
 		// ===== dml event =====
-		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), dmlEvent)}, callback)
+		nodeID := node.NewID()
+		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, dmlEvent)}, callback)
 
 		_, ok := dispatcher.TryClose()
 		require.Equal(t, false, ok)
