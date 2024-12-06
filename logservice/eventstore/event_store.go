@@ -304,7 +304,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			buffer := make([]kvEventsAndCallback, 0, 1024)
+			buffer := make([]kvEventsAndCallback, 0, 64)
 			for {
 				events, ok := p.dataCh.GetMultipleNoGroup(buffer)
 				if !ok {
