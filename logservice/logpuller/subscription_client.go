@@ -116,7 +116,7 @@ type subscribedSpan struct {
 
 	advanceInterval int64
 
-	// kvEventsCache []common.RawKVEntry
+	kvEventsCache []common.RawKVEntry
 
 	// To handle span removing.
 	stopped atomic.Bool

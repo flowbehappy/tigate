@@ -52,36 +52,37 @@ func (h *regionEventHandler) Path(event regionEvent) SubscriptionID {
 }
 
 func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent) bool {
-	var kvEvents []common.RawKVEntry
+	// var kvEvents []common.RawKVEntry
 	for _, event := range events {
 		if event.state.isStale() {
 			// TODO: do we need handle it here?
 			continue
 		}
 		if event.entries != nil {
-			kvEvents = handleEventEntries(span, event.state, event.entries, kvEvents)
+			// kvEvents = handleEventEntries(span, event.state, event.entries, kvEvents)
+			handleEventEntries(span, event.state, event.entries)
 		} else if event.resolvedTs != 0 {
 			handleResolvedTs(span, event.state, event.resolvedTs)
 		} else {
 			log.Panic("should not reach", zap.Any("event", event), zap.Any("events", events))
 		}
 	}
-	if len(kvEvents) > 0 {
-		return span.consumeKVEvents(kvEvents, func() {
-			h.subClient.wakeSubscription(span.subID)
-		})
-	}
-	// if len(span.kvEventsCache) > 0 {
-	// 	return span.consumeKVEvents(span.kvEventsCache, func() {
-	// 		// TODO: check the cap and release it if it is too large
-	// 		if cap(span.kvEventsCache) > 16 {
-	// 			span.kvEventsCache = make([]common.RawKVEntry, 0, 16)
-	// 		} else {
-	// 			span.kvEventsCache = span.kvEventsCache[:0]
-	// 		}
+	// if len(kvEvents) > 0 {
+	// 	return span.consumeKVEvents(kvEvents, func() {
 	// 		h.subClient.wakeSubscription(span.subID)
 	// 	})
 	// }
+	if len(span.kvEventsCache) > 0 {
+		return span.consumeKVEvents(span.kvEventsCache, func() {
+			// TODO: check the cap and release it if it is too large
+			if cap(span.kvEventsCache) > 16 {
+				span.kvEventsCache = make([]common.RawKVEntry, 0, 8)
+			} else {
+				span.kvEventsCache = span.kvEventsCache[:0]
+			}
+			h.subClient.wakeSubscription(span.subID)
+		})
+	}
 	return false
 }
 
@@ -122,7 +123,8 @@ func (h *regionEventHandler) GetType(event regionEvent) dynstream.EventType {
 
 func (h *regionEventHandler) OnDrop(event regionEvent) {}
 
-func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *cdcpb.Event_Entries_, kvEvents []common.RawKVEntry) []common.RawKVEntry {
+// func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *cdcpb.Event_Entries_, kvEvents []common.RawKVEntry) []common.RawKVEntry {
+func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *cdcpb.Event_Entries_) {
 	regionID, _, _ := state.getRegionMeta()
 	assembleRowEvent := func(regionID uint64, entry *cdcpb.Event_Row) common.RawKVEntry {
 		var opType common.OpType
@@ -161,8 +163,8 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 				zap.Stringer("span", &state.region.span))
 
 			for _, cachedEvent := range state.matcher.matchCachedRow(true) {
-				kvEvents = append(kvEvents, assembleRowEvent(regionID, cachedEvent))
-				// span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, cachedEvent))
+				// kvEvents = append(kvEvents, assembleRowEvent(regionID, cachedEvent))
+				span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, cachedEvent))
 			}
 			state.matcher.matchCachedRollbackRow(true)
 		case cdcpb.Event_COMMITTED:
@@ -174,8 +176,8 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 					zap.Uint64("resolvedTs", resolvedTs),
 					zap.Uint64("regionID", regionID))
 			}
-			kvEvents = append(kvEvents, assembleRowEvent(regionID, entry))
-			// span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, entry))
+			// kvEvents = append(kvEvents, assembleRowEvent(regionID, entry))
+			span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, entry))
 		case cdcpb.Event_PREWRITE:
 			// log.Info("handle prewrite",
 			// 	zap.String("key", hex.EncodeToString(entry.GetKey())),
@@ -198,7 +200,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 					zap.Any("type", entry.GetType()),
 					zap.Uint64("regionID", state.getRegionID()),
 					zap.Any("opType", entry.GetOpType()))
-				return kvEvents
+				return
 			}
 
 			// TiKV can send events with StartTs/CommitTs less than startTs.
@@ -215,10 +217,10 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 					zap.Uint64("CommitTs", entry.CommitTs),
 					zap.Uint64("resolvedTs", resolvedTs),
 					zap.Uint64("regionID", regionID))
-				return kvEvents
+				return
 			}
-			kvEvents = append(kvEvents, assembleRowEvent(regionID, entry))
-			// span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, entry))
+			// kvEvents = append(kvEvents, assembleRowEvent(regionID, entry))
+			span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, entry))
 		case cdcpb.Event_ROLLBACK:
 			if !state.isInitialized() {
 				state.matcher.cacheRollbackRow(entry)
@@ -227,7 +229,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 			state.matcher.rollbackRow(entry)
 		}
 	}
-	return kvEvents
+	// return kvEvents
 }
 
 func handleResolvedTs(span *subscribedSpan, state *regionFeedState, resolvedTs uint64) {
