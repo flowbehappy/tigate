@@ -116,7 +116,7 @@ type subscribedSpan struct {
 
 	advanceInterval int64
 
-	kvEventsCache []common.RawKVEntry
+	// kvEventsCache []common.RawKVEntry
 
 	// To handle span removing.
 	stopped atomic.Bool
@@ -824,7 +824,7 @@ func (s *SubscriptionClient) newSubscribedSpan(
 		advanceResolvedTs: advanceResolvedTs,
 		advanceInterval:   advanceInterval,
 
-		kvEventsCache: make([]common.RawKVEntry, 0, 16),
+		// kvEventsCache: make([]common.RawKVEntry, 0, 16),
 	}
 	rt.resolvedTs.Store(startTs)
 
