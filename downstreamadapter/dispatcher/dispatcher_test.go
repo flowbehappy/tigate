@@ -180,6 +180,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0},
 		},
+		TableInfo: tableInfo,
 	}
 
 	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
@@ -206,6 +207,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{1},
 		},
+		TableInfo: tableInfo,
 	}
 	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent21)}, callback)
 	require.Equal(t, true, block)
@@ -245,6 +247,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 				TableID:  1,
 			},
 		},
+		TableInfo: tableInfo,
 	}
 	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent2)}, callback)
 	require.Equal(t, true, block)
@@ -293,6 +296,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0, 1},
 		},
+		TableInfo: tableInfo,
 	}
 	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent3)}, callback)
 	require.Equal(t, true, block)
@@ -420,6 +424,10 @@ func TestUncompeleteTableSpanDispatcherHandleEvents(t *testing.T) {
 	tableSpan := getUncompleteTableSpan()
 	dispatcher := newDispatcherForTest(sink, tableSpan)
 
+	dmlEvent := helper.DML2Event("test", "t", "insert into t values(1, 1)")
+	require.NotNil(t, dmlEvent)
+	tableInfo := dmlEvent.TableInfo
+
 	// basic ddl event
 	ddlEvent := &commonEvent.DDLEvent{
 		FinishedTs: 2,
@@ -427,6 +435,7 @@ func TestUncompeleteTableSpanDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0},
 		},
+		TableInfo: tableInfo,
 	}
 
 	nodeID := node.NewID()
@@ -492,6 +501,10 @@ func TestTableTriggerEventDispatcherInMysql(t *testing.T) {
 	ddlJob := helper.DDL2Job("create table t(id int primary key, v int)")
 	require.NotNil(t, ddlJob)
 
+	dmlEvent := helper.DML2Event("test", "t", "insert into t values(1, 1)")
+	require.NotNil(t, dmlEvent)
+	tableInfo := dmlEvent.TableInfo
+
 	// basic ddl event(non-block)
 	ddlEvent := &commonEvent.DDLEvent{
 		FinishedTs: 2,
@@ -499,6 +512,7 @@ func TestTableTriggerEventDispatcherInMysql(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0},
 		},
+		TableInfo: tableInfo,
 	}
 
 	nodeID := node.NewID()
@@ -533,6 +547,7 @@ func TestTableTriggerEventDispatcherInMysql(t *testing.T) {
 				},
 			},
 		},
+		TableInfo: tableInfo,
 	}
 
 	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
@@ -565,6 +580,10 @@ func TestTableTriggerEventDispatcherInKafka(t *testing.T) {
 	ddlJob := helper.DDL2Job("create table t(id int primary key, v int)")
 	require.NotNil(t, ddlJob)
 
+	dmlEvent := helper.DML2Event("test", "t", "insert into t values(1, 1)")
+	require.NotNil(t, dmlEvent)
+	tableInfo := dmlEvent.TableInfo
+
 	// basic ddl event(non-block)
 	ddlEvent := &commonEvent.DDLEvent{
 		FinishedTs: 2,
@@ -572,6 +591,7 @@ func TestTableTriggerEventDispatcherInKafka(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0},
 		},
+		TableInfo: tableInfo,
 	}
 
 	nodeID := node.NewID()
@@ -605,6 +625,7 @@ func TestTableTriggerEventDispatcherInKafka(t *testing.T) {
 				},
 			},
 		},
+		TableInfo: tableInfo,
 	}
 
 	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
