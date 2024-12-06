@@ -230,6 +230,9 @@ func (m *Manager) onAddMaintainerRequest(req *heartbeatpb.AddMaintainerRequest) 
 	if err != nil {
 		log.Panic("decode changefeed fail", zap.Error(err))
 	}
+	if cfConfig.StartTs == 0 {
+		log.Panic("invalid start ts in changefeed config", zap.Any("config", cfConfig))
+	}
 	cf = NewMaintainer(cfID, m.conf, cfConfig, m.selfNode, m.stream, m.taskScheduler,
 		m.pdAPI, m.tsoClient, m.regionCache,
 		req.CheckpointTs)
