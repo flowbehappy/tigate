@@ -154,7 +154,8 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	require.Equal(t, uint64(0), checkpointTs)
 
 	// ===== dml event =====
-	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), dmlEvent)}, callback)
+	nodeID := node.NewID()
+	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, dmlEvent)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 1, len(sink.dmls))
 
@@ -179,9 +180,10 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0},
 		},
+		TableInfo: tableInfo,
 	}
 
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// no pending event
@@ -205,8 +207,9 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{1},
 		},
+		TableInfo: tableInfo,
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent21)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent21)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// no pending event
@@ -244,8 +247,9 @@ func TestDispatcherHandleEvents(t *testing.T) {
 				TableID:  1,
 			},
 		},
+		TableInfo: tableInfo,
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent2)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent2)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// no pending event
@@ -292,8 +296,9 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0, 1},
 		},
+		TableInfo: tableInfo,
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent3)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent3)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// pending event
@@ -351,7 +356,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	syncPointEvent := &commonEvent.SyncPointEvent{
 		CommitTs: 6,
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), syncPointEvent)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, syncPointEvent)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// pending event
@@ -397,7 +402,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	resolvedEvent := commonEvent.ResolvedEvent{
 		ResolvedTs: 7,
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), resolvedEvent)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, resolvedEvent)}, callback)
 	require.Equal(t, false, block)
 	require.Equal(t, 0, len(sink.dmls))
 	require.Equal(t, uint64(7), dispatcher.GetResolvedTs())
@@ -419,6 +424,10 @@ func TestUncompeleteTableSpanDispatcherHandleEvents(t *testing.T) {
 	tableSpan := getUncompleteTableSpan()
 	dispatcher := newDispatcherForTest(sink, tableSpan)
 
+	dmlEvent := helper.DML2Event("test", "t", "insert into t values(1, 1)")
+	require.NotNil(t, dmlEvent)
+	tableInfo := dmlEvent.TableInfo
+
 	// basic ddl event
 	ddlEvent := &commonEvent.DDLEvent{
 		FinishedTs: 2,
@@ -426,9 +435,11 @@ func TestUncompeleteTableSpanDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0},
 		},
+		TableInfo: tableInfo,
 	}
 
-	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	nodeID := node.NewID()
+	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// pending event
 	require.NotNil(t, dispatcher.blockEventStatus.blockPendingEvent)
@@ -490,6 +501,10 @@ func TestTableTriggerEventDispatcherInMysql(t *testing.T) {
 	ddlJob := helper.DDL2Job("create table t(id int primary key, v int)")
 	require.NotNil(t, ddlJob)
 
+	dmlEvent := helper.DML2Event("test", "t", "insert into t values(1, 1)")
+	require.NotNil(t, dmlEvent)
+	tableInfo := dmlEvent.TableInfo
+
 	// basic ddl event(non-block)
 	ddlEvent := &commonEvent.DDLEvent{
 		FinishedTs: 2,
@@ -497,9 +512,11 @@ func TestTableTriggerEventDispatcherInMysql(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0},
 		},
+		TableInfo: tableInfo,
 	}
 
-	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	nodeID := node.NewID()
+	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// no pending event
 	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
@@ -530,9 +547,10 @@ func TestTableTriggerEventDispatcherInMysql(t *testing.T) {
 				},
 			},
 		},
+		TableInfo: tableInfo,
 	}
 
-	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// no pending event
 	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
@@ -562,6 +580,10 @@ func TestTableTriggerEventDispatcherInKafka(t *testing.T) {
 	ddlJob := helper.DDL2Job("create table t(id int primary key, v int)")
 	require.NotNil(t, ddlJob)
 
+	dmlEvent := helper.DML2Event("test", "t", "insert into t values(1, 1)")
+	require.NotNil(t, dmlEvent)
+	tableInfo := dmlEvent.TableInfo
+
 	// basic ddl event(non-block)
 	ddlEvent := &commonEvent.DDLEvent{
 		FinishedTs: 2,
@@ -569,9 +591,11 @@ func TestTableTriggerEventDispatcherInKafka(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0},
 		},
+		TableInfo: tableInfo,
 	}
 
-	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	nodeID := node.NewID()
+	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// no pending event
 	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
@@ -601,9 +625,10 @@ func TestTableTriggerEventDispatcherInKafka(t *testing.T) {
 				},
 			},
 		},
+		TableInfo: tableInfo,
 	}
 
-	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
+	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// no pending event
 	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
@@ -639,7 +664,8 @@ func TestDispatcherClose(t *testing.T) {
 		dispatcher.SetInitialTableInfo(tableInfo)
 
 		// ===== dml event =====
-		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), dmlEvent)}, callback)
+		nodeID := node.NewID()
+		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, dmlEvent)}, callback)
 
 		_, ok := dispatcher.TryClose()
 		require.Equal(t, false, ok)
@@ -661,7 +687,8 @@ func TestDispatcherClose(t *testing.T) {
 		dispatcher.SetInitialTableInfo(tableInfo)
 
 		// ===== dml event =====
-		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), dmlEvent)}, callback)
+		nodeID := node.NewID()
+		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(&nodeID, dmlEvent)}, callback)
 
 		_, ok := dispatcher.TryClose()
 		require.Equal(t, false, ok)
