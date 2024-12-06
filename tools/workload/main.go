@@ -101,6 +101,9 @@ func init() {
 }
 
 func main() {
+	if flags := flag.Args(); len(flags) > 0 {
+		panic(fmt.Sprintf("unparsed flags: %v", flags))
+	}
 	err := logutil.InitLogger(&logutil.Config{
 		Level: logLevel,
 		File:  logFile,
@@ -135,7 +138,7 @@ func main() {
 		dbs[0] = db
 	}
 
-	qpsForUpdate := qps * percentageForUpdate / 100
+	qpsForUpdate := qps * percentageForUpdate
 	qpsForInsert := qps - qpsForUpdate
 
 	log.Info("database info", zap.Int("dbCount", dbNum), zap.Int("tableCount", tableCount))
@@ -155,7 +158,7 @@ func main() {
 
 	go printTPS()
 	group := &sync.WaitGroup{}
-	if !skipCreateTable && (action == "prepare") {
+	if !skipCreateTable && action == "prepare" {
 		log.Info("start to create tables", zap.Int("tableCount", tableCount))
 		for _, db := range dbs {
 			if err := initTables(db, workload); err != nil {
@@ -267,7 +270,7 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 		updateSql := workload.BuildUpdateSql(task.UpdateOption)
 		res, err := db.Exec(updateSql)
 		if err != nil {
-			log.Info("update error", zap.Error(err), zap.String("sql", updateSql))
+			log.Info("update error", zap.Error(err), zap.String("sql", updateSql[:20]))
 			atomic.AddUint64(&totalError, 1)
 		}
 		if res != nil {
@@ -276,7 +279,7 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 				log.Info("get rows affected error", zap.Error(err), zap.Int64("affectedRows", cnt), zap.Int("rowCount", task.RowCount))
 				atomic.AddUint64(&totalError, 1)
 			}
-			atomic.AddUint64(&total, 1)
+			atomic.AddUint64(&total, uint64(cnt))
 			if task.IsSpecialUpdate {
 				log.Info("update full table succeed, row count %d\n", zap.Int("table", task.Table), zap.Int64("affectedRows", cnt))
 			}
@@ -338,13 +341,8 @@ func printTPS() {
 		old = temp
 		temp = atomic.LoadUint64(&totalError)
 		errQps := (float64(temp) - float64(oldErr)) / duration
-		log.Info("metric",
-			zap.Uint64("total", total),
-			zap.Uint64("totalErr", totalError),
-			zap.Float64("qps", qps),
-			zap.Float64("errQps", errQps),
-			zap.Float64("tps", qps*float64(rps)),
-		)
+		fmt.Printf("total %d, total err %d, qps is %f, err qps %f\n", total, totalError, qps, errQps)
+
 		oldErr = temp
 	}
 }
