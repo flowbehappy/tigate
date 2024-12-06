@@ -291,6 +291,9 @@ type TableInfo struct {
 // We do it to reduce the memory allocation and GC overhead
 // It must be called after TableName and columnSchema are initialized
 func (ti *TableInfo) InitPrivateFields() {
+	if ti == nil {
+		return
+	}
 	ti.TableName.quotedName = ti.TableName.QuoteString()
 	ti.preSQLs[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
 	ti.preSQLs[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
