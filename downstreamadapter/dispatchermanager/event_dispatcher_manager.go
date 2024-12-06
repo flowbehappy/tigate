@@ -100,12 +100,13 @@ type EventDispatcherManager struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 
-	tableEventDispatcherCount      prometheus.Gauge
-	metricCreateDispatcherDuration prometheus.Observer
-	metricCheckpointTs             prometheus.Gauge
-	metricCheckpointTsLag          prometheus.Gauge
-	metricResolvedTs               prometheus.Gauge
-	metricResolvedTsLag            prometheus.Gauge
+	metricTableTriggerEventDispatcherCount prometheus.Gauge
+	metricEventDispatcherCount             prometheus.Gauge
+	metricCreateDispatcherDuration         prometheus.Observer
+	metricCheckpointTs                     prometheus.Gauge
+	metricCheckpointTsLag                  prometheus.Gauge
+	metricResolvedTs                       prometheus.Gauge
+	metricResolvedTsLag                    prometheus.Gauge
 }
 
 // return actual startTs of the table trigger event dispatcher
@@ -118,23 +119,24 @@ func NewEventDispatcherManager(
 	maintainerID node.ID) (*EventDispatcherManager, uint64, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &EventDispatcherManager{
-		dispatcherMap:                  newDispatcherMap(),
-		changefeedID:                   changefeedID,
-		maintainerID:                   maintainerID,
-		statusesChan:                   make(chan TableSpanStatusWithSeq, 8192),
-		blockStatusesChan:              make(chan *heartbeatpb.TableSpanBlockStatus, 1024*1024),
-		errCh:                          make(chan error, 1),
-		cancel:                         cancel,
-		config:                         cfConfig,
-		filterConfig:                   toFilterConfigPB(cfConfig.Filter),
-		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
-		latestWatermark:                NewWatermark(startTs),
-		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
-		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
-		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
-		metricCheckpointTsLag:          metrics.EventDispatcherManagerCheckpointTsLagGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
-		metricResolvedTs:               metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
-		metricResolvedTsLag:            metrics.EventDispatcherManagerResolvedTsLagGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		dispatcherMap:                          newDispatcherMap(),
+		changefeedID:                           changefeedID,
+		maintainerID:                           maintainerID,
+		statusesChan:                           make(chan TableSpanStatusWithSeq, 8192),
+		blockStatusesChan:                      make(chan *heartbeatpb.TableSpanBlockStatus, 1024*1024),
+		errCh:                                  make(chan error, 1),
+		cancel:                                 cancel,
+		config:                                 cfConfig,
+		filterConfig:                           toFilterConfigPB(cfConfig.Filter),
+		schemaIDToDispatchers:                  dispatcher.NewSchemaIDToDispatchers(),
+		latestWatermark:                        NewWatermark(startTs),
+		metricTableTriggerEventDispatcherCount: metrics.TableTriggerEventDispatcherGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricEventDispatcherCount:             metrics.EventDispatcherGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricCreateDispatcherDuration:         metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricCheckpointTs:                     metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricCheckpointTsLag:                  metrics.EventDispatcherManagerCheckpointTsLagGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricResolvedTs:                       metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricResolvedTsLag:                    metrics.EventDispatcherManagerResolvedTsLagGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
 	}
 
 	// Set Sync Point Config
@@ -256,7 +258,8 @@ func (e *EventDispatcherManager) close(remove bool) {
 	e.cancel()
 	e.wg.Wait()
 
-	metrics.TableEventDispatcherGauge.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
+	metrics.TableTriggerEventDispatcherGauge.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
+	metrics.EventDispatcherGauge.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
 	metrics.CreateDispatcherDuration.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
 	metrics.EventDispatcherManagerCheckpointTsGauge.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
 	metrics.EventDispatcherManagerResolvedTsGauge.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
@@ -385,7 +388,11 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 			Seq:     seq,
 		}
 
-		e.tableEventDispatcherCount.Inc()
+		if d.IsTableTriggerEventDispatcher() {
+			e.metricTableTriggerEventDispatcherCount.Inc()
+		} else {
+			e.metricEventDispatcherCount.Inc()
+		}
 
 		log.Info("new dispatcher created",
 			zap.String("ID", id.String()),
@@ -637,7 +644,11 @@ func (e *EventDispatcherManager) cleanDispatcher(id common.DispatcherID, schemaI
 	if e.tableTriggerEventDispatcher != nil && e.tableTriggerEventDispatcher.GetId() == id {
 		e.tableTriggerEventDispatcher = nil
 	}
-	e.tableEventDispatcherCount.Dec()
+	if id == e.tableTriggerEventDispatcher.GetId() {
+		e.metricTableTriggerEventDispatcherCount.Dec()
+	} else {
+		e.metricEventDispatcherCount.Dec()
+	}
 	log.Info("table event dispatcher completely stopped, and delete it from event dispatcher manager", zap.Any("dispatcher id", id))
 }
 

@@ -221,13 +221,13 @@ func TestCoordinatorScheduling(t *testing.T) {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	go func() {
-		t.Fatal(http.ListenAndServe(":8300", mux))
+		t.Fatal(http.ListenAndServe(":38300", mux))
 	}()
 
 	ctx := context.Background()
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
-	info := node.NewInfo("127.0.0.1:8300", "")
+	info := node.NewInfo("127.0.0.1:38300", "")
 	nodeManager.GetAliveNodes()[info.ID] = info
 	mc := messaging.NewMessageCenter(ctx,
 		info.ID, 100, config.NewDefaultMessageCenterConfig())
@@ -278,7 +278,7 @@ func TestCoordinatorScheduling(t *testing.T) {
 	time.Sleep(time.Second * time.Duration(sleepTime))
 
 	cancel()
-	co.stream.Close()
+	// co.stream.Close()
 	require.Equal(t, cfSize,
 		co.controller.changefeedDB.GetReplicatingSize())
 	require.Equal(t, cfSize,
@@ -289,7 +289,7 @@ func TestScaleNode(t *testing.T) {
 	ctx := context.Background()
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
-	info := node.NewInfo("127.0.0.1:8300", "")
+	info := node.NewInfo("127.0.0.1:28300", "")
 	nodeManager.GetAliveNodes()[info.ID] = info
 	mc1 := messaging.NewMessageCenter(ctx, info.ID, 0, config.NewDefaultMessageCenterConfig())
 	appcontext.SetService(appcontext.MessageCenter, mc1)

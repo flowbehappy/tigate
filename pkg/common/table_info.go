@@ -199,6 +199,7 @@ type TableName struct {
 	Table       string `toml:"tbl-name" msg:"tbl-name"`
 	TableID     int64  `toml:"tbl-id" msg:"tbl-id"`
 	IsPartition bool   `toml:"is-partition" msg:"is-partition"`
+	quotedName  string `json:"-"`
 }
 
 // String implements fmt.Stringer interface.
@@ -229,7 +230,10 @@ func EscapeName(name string) string {
 
 // QuoteString returns quoted full table name
 func (t TableName) QuoteString() string {
-	return QuoteSchema(t.Schema, t.Table)
+	if t.quotedName == "" {
+		log.Panic("quotedName is not initialized")
+	}
+	return t.quotedName
 }
 
 // GetSchema returns schema name.
@@ -279,6 +283,18 @@ type TableInfo struct {
 	// Version means the version of the table info.
 	Version      uint16        `json:"version"`
 	columnSchema *columnSchema `json:"-"`
+
+	preSQLs [4]string `json:"-"`
+}
+
+// initPrivateFields initializes the private fields of TableInfo
+// We do it to reduce the memory allocation and GC overhead
+// It must be called after TableName and columnSchema are initialized
+func (ti *TableInfo) initPrivateFields() {
+	ti.TableName.quotedName = ti.TableName.QuoteString()
+	ti.preSQLs[preSQLInsert] = ti.columnSchema.PreSQLs[preSQLInsert] + ti.TableName.QuoteString()
+	ti.preSQLs[preSQLReplace] = ti.columnSchema.PreSQLs[preSQLReplace] + ti.TableName.QuoteString()
+	ti.preSQLs[preSQLUpdate] = ti.columnSchema.PreSQLs[preSQLUpdate] + ti.TableName.QuoteString()
 }
 
 func (ti *TableInfo) MarshalJSON() ([]byte, error) {
@@ -319,6 +335,8 @@ func UnmarshalJSONToTableInfo(data []byte) (*TableInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	ti.initPrivateFields()
 	// when this tableInfo is released, we need to cut down the reference count of the columnSchema
 	// This function should be appear when tableInfo is created as a pair.
 	runtime.SetFinalizer(ti, func(ti *TableInfo) {
@@ -356,15 +374,24 @@ func (ti *TableInfo) GetColumnsFlag() map[int64]*ColumnFlagType {
 }
 
 func (ti *TableInfo) GetPreInsertSQL() string {
-	return fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
+	if ti.preSQLs[preSQLInsert] == "" {
+		log.Panic("preSQLs[preSQLInsert] is not initialized")
+	}
+	return ti.preSQLs[preSQLInsert]
 }
 
 func (ti *TableInfo) GetPreReplaceSQL() string {
-	return fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
+	if ti.preSQLs[preSQLReplace] == "" {
+		log.Panic("preSQLs[preSQLReplace] is not initialized")
+	}
+	return ti.preSQLs[preSQLReplace]
 }
 
 func (ti *TableInfo) GetPreUpdateSQL() string {
-	return fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
+	if ti.preSQLs[preSQLUpdate] == "" {
+		log.Panic("preSQLs[preSQLUpdate] is not initialized")
+	}
+	return ti.preSQLs[preSQLUpdate]
 }
 
 // GetColumnInfo returns the column info by ID
