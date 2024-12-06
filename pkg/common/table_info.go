@@ -230,10 +230,9 @@ func EscapeName(name string) string {
 
 // QuoteString returns quoted full table name
 func (t TableName) QuoteString() string {
-	if t.quotedName != "" {
-		return t.quotedName
+	if t.quotedName == "" {
+		log.Panic("quotedName is not initialized")
 	}
-	t.quotedName = QuoteSchema(t.Schema, t.Table)
 	return t.quotedName
 }
 
@@ -288,6 +287,16 @@ type TableInfo struct {
 	preSQLs [4]string `json:"-"`
 }
 
+// initPrivateFields initializes the private fields of TableInfo
+// We do it to reduce the memory allocation and GC overhead
+// It must be called after TableName and columnSchema are initialized
+func (ti *TableInfo) initPrivateFields() {
+	ti.TableName.quotedName = ti.TableName.QuoteString()
+	ti.preSQLs[preSQLInsert] = ti.columnSchema.PreSQLs[preSQLInsert] + ti.TableName.QuoteString()
+	ti.preSQLs[preSQLReplace] = ti.columnSchema.PreSQLs[preSQLReplace] + ti.TableName.QuoteString()
+	ti.preSQLs[preSQLUpdate] = ti.columnSchema.PreSQLs[preSQLUpdate] + ti.TableName.QuoteString()
+}
+
 func (ti *TableInfo) MarshalJSON() ([]byte, error) {
 	// otherField | columnSchemaData | columnSchemaDataSize
 	data, err := json.Marshal(ti)
@@ -326,6 +335,8 @@ func UnmarshalJSONToTableInfo(data []byte) (*TableInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	ti.initPrivateFields()
 	// when this tableInfo is released, we need to cut down the reference count of the columnSchema
 	// This function should be appear when tableInfo is created as a pair.
 	runtime.SetFinalizer(ti, func(ti *TableInfo) {
@@ -363,35 +374,23 @@ func (ti *TableInfo) GetColumnsFlag() map[int64]*ColumnFlagType {
 }
 
 func (ti *TableInfo) GetPreInsertSQL() string {
-	if ti.preSQLs[preSQLInsert] != "" {
-		return ti.preSQLs[preSQLInsert]
+	if ti.preSQLs[preSQLInsert] == "" {
+		log.Panic("preSQLs[preSQLInsert] is not initialized")
 	}
-	var builder strings.Builder
-	builder.Grow(len(ti.columnSchema.PreSQLs[preSQLInsert]) + len(ti.TableName.QuoteString()))
-	builder.WriteString(ti.columnSchema.PreSQLs[preSQLInsert])
-	builder.WriteString(ti.TableName.QuoteString())
-	ti.preSQLs[preSQLInsert] = builder.String()
 	return ti.preSQLs[preSQLInsert]
 }
 
 func (ti *TableInfo) GetPreReplaceSQL() string {
-	if ti.preSQLs[preSQLReplace] != "" {
-		return ti.preSQLs[preSQLReplace]
+	if ti.preSQLs[preSQLReplace] == "" {
+		log.Panic("preSQLs[preSQLReplace] is not initialized")
 	}
-	var builder strings.Builder
-	builder.Grow(len(ti.columnSchema.PreSQLs[preSQLReplace]) + len(ti.TableName.QuoteString()))
-	builder.WriteString(ti.columnSchema.PreSQLs[preSQLReplace])
-	builder.WriteString(ti.TableName.QuoteString())
-	ti.preSQLs[preSQLReplace] = builder.String()
 	return ti.preSQLs[preSQLReplace]
 }
 
 func (ti *TableInfo) GetPreUpdateSQL() string {
-	var builder strings.Builder
-	builder.Grow(len(ti.columnSchema.PreSQLs[preSQLUpdate]) + len(ti.TableName.QuoteString()))
-	builder.WriteString(ti.columnSchema.PreSQLs[preSQLUpdate])
-	builder.WriteString(ti.TableName.QuoteString())
-	ti.preSQLs[preSQLUpdate] = builder.String()
+	if ti.preSQLs[preSQLUpdate] == "" {
+		log.Panic("preSQLs[preSQLUpdate] is not initialized")
+	}
 	return ti.preSQLs[preSQLUpdate]
 }
 
