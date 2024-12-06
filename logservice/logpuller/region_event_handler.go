@@ -68,8 +68,8 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 	if len(span.kvEventsCache) > 0 {
 		return span.consumeKVEvents(span.kvEventsCache, func() {
 			// TODO: check the cap and release it if it is too large
-			if cap(span.kvEventsCache) > 10 {
-				span.kvEventsCache = make([]common.RawKVEntry, 0, 10)
+			if cap(span.kvEventsCache) > 16 {
+				span.kvEventsCache = make([]common.RawKVEntry, 0, 16)
 			} else {
 				span.kvEventsCache = span.kvEventsCache[:0]
 			}

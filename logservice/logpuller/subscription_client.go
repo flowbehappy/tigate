@@ -824,7 +824,7 @@ func (s *SubscriptionClient) newSubscribedSpan(
 		advanceResolvedTs: advanceResolvedTs,
 		advanceInterval:   advanceInterval,
 
-		kvEventsCache: make([]common.RawKVEntry, 0, 10),
+		kvEventsCache: make([]common.RawKVEntry, 0, 16),
 	}
 	rt.resolvedTs.Store(startTs)
 
