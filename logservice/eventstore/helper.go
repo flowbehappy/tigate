@@ -45,7 +45,7 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) boo
 		defer subStat.dispatchers.RUnlock()
 
 		// Add resolvedTs event to memory sorter
-		subStat.memorySorter.Add(subStat.subID, events[0])
+		subStat.memorySorter.Add(subStat.tableSorter, events[0])
 		for _, notifier := range subStat.dispatchers.notifiers {
 			notifier(events[0].raw.CRTs, subStat.maxEventCommitTs.Load())
 		}
@@ -58,7 +58,7 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) boo
 		events[i].tableID = subStat.tableID
 		events[i].batchSeq = batchSeq
 	}
-	subStat.memorySorter.Add(subStat.subID, events...)
+	subStat.memorySorter.Add(subStat.tableSorter, events...)
 	// FIZZ: 会不会存在 resolvedTs 已经更新给 eventBroker 了，但是 event 还没有写入 DB,
 	// 所以 eventBroker scan 不到这段数据？
 	subStat.eventCh.Push(events...)

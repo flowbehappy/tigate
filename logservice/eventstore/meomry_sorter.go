@@ -113,26 +113,16 @@ func (s *MemorySorter) RemoveSubscription(sub logpuller.SubscriptionID) {
 }
 
 // Add implements sorter.SortEngine.
-func (s *MemorySorter) Add(sub logpuller.SubscriptionID, events ...kvEvent) {
+func (s *MemorySorter) Add(tableSorter *tableSorter, events ...kvEvent) {
 	// Must add resolvedTs event
 	if len(events) == 1 && events[0].raw.IsResolved() {
-		value, exists := s.subscriptions.Load(sub)
-		if !exists {
-			log.Panic("add events into a non-existing subscription", zap.Any("subscriptionID", sub))
-		}
-		value.(*tableSorter).add(events[0])
+		tableSorter.add(events[0])
 		return
 	}
-
 	if !s.isAvailable.Load() {
 		return
 	}
-
-	value, exists := s.subscriptions.Load(sub)
-	if !exists {
-		log.Panic("add events into a non-existing subscription", zap.Any("subscriptionID", sub))
-	}
-	totalSize := value.(*tableSorter).add(events...)
+	totalSize := tableSorter.add(events...)
 	s.memoryUsage.Add(totalSize)
 	if s.memoryUsage.Load() > int64(s.capacity) {
 		s.isAvailable.Store(false)

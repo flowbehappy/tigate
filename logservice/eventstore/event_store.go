@@ -125,6 +125,7 @@ type subscriptionStat struct {
 	maxEventCommitTs atomic.Uint64
 
 	memorySorter *MemorySorter
+	tableSorter  *tableSorter
 }
 
 type kvEvent struct {
@@ -561,8 +562,14 @@ func (e *eventStore) RegisterDispatcher(
 		dispatchersForSameTable[dispatcherID] = true
 	}
 
+	// Add subscription to memory sorter
 	e.memorySorter.AddSubscription(stat.subID, startTs)
 	subStat.memorySorter = e.memorySorter
+	ts, ok := e.memorySorter.subscriptions.Load(stat.subID)
+	if !ok {
+		log.Panic("should not happen")
+	}
+	subStat.tableSorter = ts.(*tableSorter)
 
 	return true, nil
 }

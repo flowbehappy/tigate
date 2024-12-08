@@ -27,8 +27,10 @@ func TestMemorySorterBasic(t *testing.T) {
 		{raw: &common.RawKVEntry{StartTs: 0, CRTs: 110, OpType: common.OpTypeResolved}},
 	}
 
+	ts, ok := sorter.subscriptions.Load(subID)
+	require.True(t, ok)
 	// Add events
-	sorter.Add(subID, events...)
+	sorter.Add(ts.(*tableSorter), events...)
 
 	// Test Fetch
 	iter := sorter.Fetch(subID, 100, 110)
