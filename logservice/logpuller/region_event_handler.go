@@ -80,7 +80,7 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 			} else {
 				span.kvEventsCache = span.kvEventsCache[:0]
 			}
-			log.Info("wake subscription", zap.Uint64("subID", uint64(span.subID)), zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)))
+			// log.Info("wake subscription", zap.Uint64("subID", uint64(span.subID)), zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)))
 			h.subClient.wakeSubscription(span.subID)
 		})
 	}
@@ -150,14 +150,14 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 
 	// TODO: add a check that len(span.kvEventsCache) is 0
 
-	log.Info("handleEventEntries",
-		zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)),
-		zap.Uint64("subID", uint64(span.subID)))
-	defer func() {
-		log.Info("handleEventEntries done",
-			zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)),
-			zap.Uint64("subID", uint64(span.subID)))
-	}()
+	// log.Info("handleEventEntries",
+	// 	zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)),
+	// 	zap.Uint64("subID", uint64(span.subID)))
+	// defer func() {
+	// 	log.Info("handleEventEntries done",
+	// 		zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)),
+	// 		zap.Uint64("subID", uint64(span.subID)))
+	// }()
 
 	for _, entry := range entries.Entries.GetEntries() {
 		// log.Info("handleEventEntries",
