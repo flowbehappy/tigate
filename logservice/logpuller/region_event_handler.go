@@ -148,7 +148,8 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 	}
 
 	log.Info("handleEventEntries",
-		zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)))
+		zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)),
+		zap.Uint64("subID", uint64(span.subID)))
 
 	for _, entry := range entries.Entries.GetEntries() {
 		// log.Info("handleEventEntries",
