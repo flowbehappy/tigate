@@ -39,6 +39,8 @@ var metricEventBrokerScanTaskCount = metrics.EventServiceScanTaskCount
 var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
 var metricEventBrokerTaskHandleDuration = metrics.EventServiceTaskHandleDuration
 var metricEventBrokerPendingScanTaskCount = metrics.EventServicePendingScanTaskCount
+var metricEventBrokerDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-broker")
+var metricEventBrokerDSChannelSize = metrics.DynamicStreamEventChanSize.WithLabelValues("event-broker")
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -61,6 +63,9 @@ type eventBroker struct {
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskQueue chan scanTask
+
+	// GID here is the internal changefeedID, use to identify the area of the dispatcher.
+	ds dynstream.DynamicStream[common.GID, common.DispatcherID, scanTask, *eventBroker, *dispatcherEventsHandler]
 
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
@@ -88,6 +93,13 @@ type eventBroker struct {
 	}
 }
 
+type pathHasher struct {
+}
+
+func (h pathHasher) HashPath(path common.DispatcherID) uint64 {
+	return (common.GID)(path).FastHash()
+}
+
 func newEventBroker(
 	ctx context.Context,
 	id uint64,
@@ -101,6 +113,8 @@ func newEventBroker(
 
 	option := dynstream.NewOption()
 	option.UseBuffer = true
+	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &dispatcherEventsHandler{}, option)
+	ds.Start()
 
 	messageWorkerCount := runtime.NumCPU()
 	if messageWorkerCount < streamCount {
@@ -119,6 +133,7 @@ func newEventBroker(
 		msgSender:               mc,
 		taskQueue:               make(chan scanTask, conf.ScanTaskQueueSize),
 		scanWorkerCount:         defaultScanWorkerCount,
+		ds:                      ds,
 		messageCh:               make([]chan *wrapEvent, messageWorkerCount),
 		cancel:                  cancel,
 		wg:                      wg,
@@ -323,14 +338,14 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 	}
 }
 
+func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
+	c.ds.Wake(dispatcherID) <- dispatcherID
+}
+
 // checkNeedScan checks if the dispatcher needs to scan the event store.
 // If the dispatcher needs to scan the event store, it returns true.
 // If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
-func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common.DataRange) {
-	if !mustCheck && task.scanning.Load() {
-		return false, common.DataRange{}
-	}
-
+func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	if task.resetTs.Load() == 0 {
 		remoteID := node.ID(task.info.GetServerID())
 		c.sendReadyEvent(remoteID, task)
@@ -339,6 +354,7 @@ func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common
 	}
 
 	c.checkAndInitDispatcher(task)
+
 	// 1. Get the data range of the dispatcher.
 	dataRange, needScan := task.getDataRange()
 	if !needScan {
@@ -427,6 +443,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 
 	defer func() {
 		task.scanning.Store(false)
+		c.wakeDispatcher(dispatcherID)
 	}()
 
 	// If the target is not ready to send, we don't need to scan the event store.
@@ -436,7 +453,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		return
 	}
 
-	needScan, dataRange := c.checkNeedScan(task, true)
+	needScan, dataRange := c.checkNeedScan(task)
 	if !needScan {
 		return
 	}
@@ -694,8 +711,17 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(sentMinWaterMark)) / 1e3
 				c.metricEventServiceSentResolvedTs.Set(lag)
 
+				dsMetrics := c.ds.GetMetrics()
+
+				metricEventBrokerDSChannelSize.Set(float64(dsMetrics.EventChanSize))
+				metricEventBrokerDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 				metricEventBrokerPendingScanTaskCount.Set(float64(len(c.taskQueue)))
 
+				c.metricEventStoreDSAddPathNum.Set(float64(dsMetrics.AddPath))
+				c.metricEventStoreDSRemovePathNum.Set(float64(dsMetrics.RemovePath))
+				c.metricEventStoreDSArrangeStreamNum.createSolo.Set(float64(dsMetrics.ArrangeStream.CreateSolo))
+				c.metricEventStoreDSArrangeStreamNum.removeSolo.Set(float64(dsMetrics.ArrangeStream.RemoveSolo))
+				c.metricEventStoreDSArrangeStreamNum.shuffle.Set(float64(dsMetrics.ArrangeStream.Shuffle))
 			}
 		}
 	}()
@@ -732,15 +758,16 @@ func (c *eventBroker) reportDispatcherStatToStore(ctx context.Context) {
 func (c *eventBroker) close() {
 	c.cancel()
 	c.wg.Wait()
+	c.ds.Close()
 }
 
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommitTs uint64) {
 	if d.onResolvedTs(resolvedTs) {
 		d.onLatestCommitTs(latestCommitTs)
-		needScan, _ := c.checkNeedScan(d, false)
+		needScan, _ := c.checkNeedScan(d)
 		if needScan {
 			d.scanning.Store(true)
-			c.taskQueue <- d
+			c.ds.In(d.id) <- d
 		}
 	}
 }
@@ -810,6 +837,8 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 
 	c.dispatchers.Store(id, dispatcher)
 
+	c.ds.AddPath(id, c, dynstream.AreaSettings{})
+
 	log.Info("register dispatcher", zap.Uint64("clusterID", c.tidbClusterID),
 		zap.Any("dispatcherID", id), zap.Int64("tableID", span.TableID),
 		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
@@ -823,6 +852,7 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 		c.tableTriggerDispatchers.Delete(id)
 		return
 	}
+	c.ds.RemovePath(id)
 	c.eventStore.UnregisterDispatcher(id)
 	c.schemaStore.UnregisterTable(dispatcherInfo.GetTableSpan().TableID)
 	c.dispatchers.Delete(id)
@@ -856,5 +886,4 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 	log.Info("reset dispatcher", zap.Any("dispatcher", stat.id), zap.Uint64("startTs", stat.info.GetStartTs()))
 	stat.resetTs.Store(dispatcherInfo.GetStartTs())
 	stat.isInitialized.Store(false)
-	stat.scanning.Store(false)
 }
