@@ -148,6 +148,8 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 		}
 	}
 
+	// TODO: add a check that len(span.kvEventsCache) is 0
+
 	log.Info("handleEventEntries",
 		zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)),
 		zap.Uint64("subID", uint64(span.subID)))
