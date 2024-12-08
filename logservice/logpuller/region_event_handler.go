@@ -80,6 +80,7 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 			} else {
 				span.kvEventsCache = span.kvEventsCache[:0]
 			}
+			log.Info("wake subscription", zap.Uint64("subID", uint64(span.subID)), zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)))
 			h.subClient.wakeSubscription(span.subID)
 		})
 	}
