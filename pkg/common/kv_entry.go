@@ -59,6 +59,11 @@ type RawKVEntry struct {
 	OldValue []byte `msg:"old_value"`
 }
 
+func (v *RawKVEntry) Size() int64 {
+	// Only count the size of the key, value and old value.
+	return int64(len(v.Key) + len(v.Value) + len(v.OldValue))
+}
+
 func (v *RawKVEntry) IsResolved() bool {
 	return v.OpType == OpTypeResolved
 }

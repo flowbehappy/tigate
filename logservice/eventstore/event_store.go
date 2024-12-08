@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/ticdc/logservice/txnutil"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
-	"github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
@@ -124,6 +123,8 @@ type subscriptionStat struct {
 	resolvedTs atomic.Uint64
 	// the max commit ts of dml event in the store
 	maxEventCommitTs atomic.Uint64
+
+	memorySorter *MemorySorter
 }
 
 type kvEvent struct {
@@ -140,6 +141,7 @@ func kvEventSizer(e kvEvent) int { return int(e.raw.KeyLen + e.raw.ValueLen + e.
 type eventStore struct {
 	pdClock pdutil.Clock
 
+	memorySorter   *MemorySorter
 	dbs            []*pebble.DB
 	chs            []*chann.UnlimitedChannel[kvEvent, uint64]
 	writeTaskPools []*writeTaskPool
@@ -188,10 +190,10 @@ const (
 	streamCount         = 8
 
 	// Pebble options
-	targetMemoryLimit = 2 << 30   // 2GB
-	memTableSize      = 256 << 20 // 256MB
+	targetMemoryLimit = 1 << 30   // 1GB
+	memTableSize      = 128 << 20 // 128MB
 	memTableCount     = 4
-	blockCacheSize    = targetMemoryLimit - (memTableSize * memTableCount) // 1GB
+	blockCacheSize    = targetMemoryLimit - (memTableSize * memTableCount) // 512MB
 )
 
 type pathHasher struct {
@@ -249,8 +251,8 @@ func New(
 	ds.Start()
 
 	store := &eventStore{
-		pdClock: pdClock,
-
+		pdClock:        pdClock,
+		memorySorter:   NewMemorySorter(ctx),
 		dbs:            make([]*pebble.DB, 0, dbCount),
 		chs:            make([]*chann.UnlimitedChannel[kvEvent, uint64], 0, dbCount),
 		writeTaskPools: make([]*writeTaskPool, 0, dbCount),
@@ -558,6 +560,10 @@ func (e *eventStore) RegisterDispatcher(
 	} else {
 		dispatchersForSameTable[dispatcherID] = true
 	}
+
+	e.memorySorter.AddSubscription(stat.subID, startTs)
+	subStat.memorySorter = e.memorySorter
+
 	return true, nil
 }
 
@@ -599,6 +605,9 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 		delete(e.dispatcherMeta.tableToDispatchers, tableID)
 		e.ds.RemovePath(subID)
 	}
+
+	// remove subscription from memory sorter
+	e.memorySorter.RemoveSubscription(subID)
 
 	return nil
 }
@@ -685,6 +694,18 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	db := e.dbs[subscriptionStat.dbIndex]
 	e.dispatcherMeta.RUnlock()
 
+	memoryIter := e.memorySorter.Fetch(stat.subID, dataRange.StartTs, dataRange.EndTs)
+	if memoryIter.Valid() {
+		return &eventStoreIter{
+			tableID:    stat.tableSpan.TableID,
+			memoryIter: memoryIter,
+			startTs:    dataRange.StartTs,
+			endTs:      dataRange.EndTs,
+			rowCount:   0,
+			decoder:    e.decoder,
+		}, nil
+	}
+
 	// convert range before pass it to pebble: (startTs, endTs] is equal to [startTs + 1, endTs + 1)
 	start := EncodeKeyPrefix(uint64(subscriptionStat.subID), stat.tableSpan.TableID, dataRange.StartTs+1)
 	end := EncodeKeyPrefix(uint64(subscriptionStat.subID), stat.tableSpan.TableID, dataRange.EndTs+1)
@@ -702,10 +723,9 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 
 	return &eventStoreIter{
 		tableID:      stat.tableSpan.TableID,
-		innerIter:    iter,
+		pebbleIter:   iter,
 		prevStartTs:  0,
 		prevCommitTs: 0,
-		iterMounter:  event.NewMounter(time.Local), // FIXME
 		startTs:      dataRange.StartTs,
 		endTs:        dataRange.EndTs,
 		rowCount:     0,
@@ -796,10 +816,10 @@ func (e *eventStore) deleteEvents(dbIndex int, uniqueKeyID uint64, tableID int64
 
 type eventStoreIter struct {
 	tableID      common.TableID
-	innerIter    *pebble.Iterator
+	memoryIter   *eventIter
+	pebbleIter   *pebble.Iterator
 	prevStartTs  uint64
 	prevCommitTs uint64
-	iterMounter  event.Mounter
 
 	// for debug
 	startTs  uint64
@@ -809,15 +829,22 @@ type eventStoreIter struct {
 }
 
 func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
-	if iter.innerIter == nil {
+	if iter.pebbleIter == nil && iter.memoryIter == nil {
 		log.Panic("iter is nil")
 	}
 
-	if !iter.innerIter.Valid() {
-		return nil, false, nil
+	if iter.memoryIter != nil {
+		if !iter.memoryIter.Valid() {
+			return nil, false, nil
+		}
+		iter.rowCount++
+		return iter.memoryIter.Next()
 	}
 
-	value := iter.innerIter.Value()
+	if !iter.pebbleIter.Valid() {
+		return nil, false, nil
+	}
+	value := iter.pebbleIter.Value()
 	decompressedValue, err := iter.decoder.DecodeAll(value, nil)
 	if err != nil {
 		log.Panic("failed to decompress value", zap.Error(err))
@@ -829,15 +856,16 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 	if iter.prevCommitTs == 0 || (rawKV.StartTs != iter.prevStartTs || rawKV.CRTs != iter.prevCommitTs) {
 		isNewTxn = true
 	}
+
 	iter.prevCommitTs = rawKV.CRTs
 	iter.prevStartTs = rawKV.StartTs
 	iter.rowCount++
-	iter.innerIter.Next()
+	iter.pebbleIter.Next()
 	return rawKV, isNewTxn, nil
 }
 
 func (iter *eventStoreIter) Close() (int64, error) {
-	if iter.innerIter == nil {
+	if iter.pebbleIter == nil {
 		log.Info("event store close nil iter",
 			zap.Uint64("tableID", uint64(iter.tableID)),
 			zap.Uint64("startTs", iter.startTs),
@@ -846,8 +874,8 @@ func (iter *eventStoreIter) Close() (int64, error) {
 		return 0, nil
 	}
 
-	err := iter.innerIter.Close()
-	iter.innerIter = nil
+	err := iter.pebbleIter.Close()
+	iter.pebbleIter = nil
 	return iter.rowCount, err
 }
 
