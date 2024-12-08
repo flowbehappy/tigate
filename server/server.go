@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcherorchestrator"
 	"github.com/pingcap/ticdc/downstreamadapter/eventcollector"
 	"github.com/pingcap/ticdc/logservice/eventstore"
+	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/logservice/schemastore"
+	"github.com/pingcap/ticdc/logservice/txnutil"
 	"github.com/pingcap/ticdc/maintainer"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
@@ -40,6 +42,7 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -125,13 +128,24 @@ func (c *server) initialize(ctx context.Context) error {
 	nodeManager.RegisterNodeChangeHandler(
 		appcontext.MessageCenter,
 		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
-
+	subscriptionClient := logpuller.NewSubscriptionClient(
+		&logpuller.SubscriptionClientConfig{
+			RegionRequestWorkerPerStore: 16,
+			StreamCount:                 4,
+		},
+		c.pdClient,
+		c.RegionCache,
+		c.PDClock,
+		txnutil.NewLockerResolver(c.KVStorage.(tikv.Storage)),
+		&security.Credential{},
+	)
 	conf := config.GetGlobalServerConfig()
-	schemaStore := schemastore.New(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
-	eventStore := eventstore.New(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
+	schemaStore := schemastore.New(ctx, conf.DataDir, subscriptionClient, c.pdClient, c.PDClock, c.KVStorage)
+	eventStore := eventstore.New(ctx, conf.DataDir, subscriptionClient, c.PDClock)
 	eventService := eventservice.New(eventStore, schemaStore)
 	c.subModules = []common.SubModule{
 		nodeManager,
+		subscriptionClient,
 		schemaStore,
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),

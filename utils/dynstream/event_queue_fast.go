@@ -76,7 +76,7 @@ func (q *eventQueueFast[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, 
 }
 
 func (q *eventQueueFast[A, P, T, D, H]) blockPath(path *pathInfo[A, P, T, D, H]) {
-	path.blocking = false
+	path.blocking = true
 }
 
 func (q *eventQueueFast[A, P, T, D, H]) wakePath(path *pathInfo[A, P, T, D, H]) {
