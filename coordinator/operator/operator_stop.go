@@ -74,6 +74,10 @@ func (m *StopChangefeedOperator) OnNodeRemove(n node.ID) {
 	}
 }
 
+func (m *StopChangefeedOperator) AffectedNodes() []node.ID {
+	return []node.ID{m.nodeID}
+}
+
 func (m *StopChangefeedOperator) ID() common.ChangeFeedID {
 	return m.cfID
 }

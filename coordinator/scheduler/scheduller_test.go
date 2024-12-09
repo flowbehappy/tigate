@@ -39,11 +39,11 @@ func TestExecute(t *testing.T) {
 	}
 
 	self := node.NewInfo("node1", "")
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	nodeManager.GetAliveNodes()[self.ID] = self
 	operatorController := operator.NewOperatorController(nil, self,
-		changefeedDB, nil, 10)
-	nm := watcher.NewNodeManager(nil, nil)
-	nm.GetAliveNodes()[self.ID] = self
-	s := NewScheduler(4, operatorController, changefeedDB, nm, 0)
+		changefeedDB, nil, nodeManager, 10)
+	s := NewScheduler(4, operatorController, changefeedDB, nodeManager, 0)
 	s.batchSize = 4
 	s.Execute()
 	require.Equal(t, 4, operatorController.OperatorSize())

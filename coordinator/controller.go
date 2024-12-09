@@ -88,8 +88,8 @@ func NewController(
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	changefeedDB := changefeed.NewChangefeedDB()
 
-	oc := operator.NewOperatorController(mc, selfNode, changefeedDB, backend, batchSize)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
+	oc := operator.NewOperatorController(mc, selfNode, changefeedDB, backend, nodeManager, batchSize)
 	c := &Controller{
 		version:             version,
 		batchSize:           batchSize,
