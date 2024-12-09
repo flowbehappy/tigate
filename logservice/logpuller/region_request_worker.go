@@ -437,6 +437,7 @@ func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) e
 	}
 	regionsLen := len(resolvedTs.Regions)/len(s.client.changeEventProcessors) + 1 // an average number
 	s.client.metrics.batchResolvedSize.Observe(float64(len(resolvedTs.Regions)))
+	s.client.metrics.resolvedTsCounter.Add(float64(len(resolvedTs.Regions)))
 	for i, regionID := range resolvedTs.Regions {
 		// We suppose that the length of changeEventProcessors is constant, so we can cache the hashes of the region
 		if _, exist := s.slotCache[regionID]; !exist {

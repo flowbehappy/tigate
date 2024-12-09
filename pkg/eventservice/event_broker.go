@@ -33,12 +33,18 @@ const (
 	defaultScanWorkerCount = 512
 )
 
-var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
-var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
-var metricEventBrokerScanTaskCount = metrics.EventServiceScanTaskCount
-var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
-var metricEventBrokerTaskHandleDuration = metrics.EventServiceTaskHandleDuration
-var metricEventBrokerPendingScanTaskCount = metrics.EventServicePendingScanTaskCount
+var (
+	metricEventServiceSendEventDuration   = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
+	metricEventBrokerScanTaskCount        = metrics.EventServiceScanTaskCount
+	metricEventBrokerPendingScanTaskCount = metrics.EventServicePendingScanTaskCount
+	metricEventStoreOutputKv              = metrics.EventStoreOutputEventCount.WithLabelValues("kv")
+	metricEventStoreOutputResolved        = metrics.EventStoreOutputEventCount.WithLabelValues("resolved")
+
+	metricEventServiceSendKvCount         = metrics.EventServiceSendEventCount.WithLabelValues("kv")
+	metricEventServiceSendResolvedTsCount = metrics.EventServiceSendEventCount.WithLabelValues("resolved_ts")
+	metricEventServiceSendDDLCount        = metrics.EventServiceSendEventCount.WithLabelValues("ddl")
+	metricEventServiceSendCommandCount    = metrics.EventServiceSendEventCount.WithLabelValues("command")
+)
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -163,7 +169,6 @@ func (c *eventBroker) sendWatermark(
 	server node.ID,
 	d *dispatcherStat,
 	watermark uint64,
-	counter prometheus.Counter,
 ) {
 	c.emitSyncPointEventIfNeeded(watermark, d, server)
 	re := pevent.NewResolvedEvent(watermark, d.id)
@@ -172,6 +177,8 @@ func (c *eventBroker) sendWatermark(
 		re,
 		d.getEventSenderState())
 	c.getMessageCh(d.workerIndex) <- resolvedEvent
+	metricEventServiceSendResolvedTsCount.Inc()
+
 	// We comment out the following code is because we found when some resolvedTs are dropped,
 	// the lag of the resolvedTs will increase.
 	// select {
@@ -190,8 +197,8 @@ func (c *eventBroker) sendReadyEvent(
 ) {
 	event := pevent.NewReadyEvent(d.info.GetID())
 	wrapEvent := newWrapReadyEvent(server, event)
-
 	c.getMessageCh(d.workerIndex) <- wrapEvent
+	metricEventServiceSendCommandCount.Inc()
 }
 
 func (c *eventBroker) sendNotReusableEvent(
@@ -203,6 +210,7 @@ func (c *eventBroker) sendNotReusableEvent(
 
 	// must success unless we can do retry later
 	c.getMessageCh(d.workerIndex) <- wrapEvent
+	metricEventServiceSendCommandCount.Inc()
 }
 
 func (c *eventBroker) getMessageCh(workerIndex int) chan *wrapEvent {
@@ -276,7 +284,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 					}
 					if endTs > startTs {
 						// After all the events are sent, we send the watermark to the dispatcher.
-						c.sendWatermark(remoteID, dispatcherStat, endTs, dispatcherStat.metricEventServiceSendResolvedTsCount)
+						c.sendWatermark(remoteID, dispatcherStat, endTs)
 						dispatcherStat.watermark.Store(endTs)
 					}
 					return true
@@ -319,7 +327,7 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 	case <-ctx.Done():
 		return
 	case c.getMessageCh(d.workerIndex) <- ddlEvent:
-		d.metricEventServiceSendDDLCount.Inc()
+		metricEventServiceSendDDLCount.Inc()
 	}
 }
 
@@ -361,7 +369,7 @@ func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common
 		// The dispatcher has no new events. In such case, we don't need to scan the event store.
 		// We just send the watermark to the dispatcher.
 		remoteID := node.ID(task.info.GetServerID())
-		c.sendWatermark(remoteID, task, dataRange.EndTs, task.metricEventServiceSendResolvedTsCount)
+		c.sendWatermark(remoteID, task, dataRange.EndTs)
 		task.watermark.Store(dataRange.EndTs)
 		return false, dataRange
 	}
@@ -372,7 +380,7 @@ func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common
 		// And the resolvedTs should be the last sent watermark.
 		resolvedTs := task.watermark.Load()
 		remoteID := node.ID(task.info.GetServerID())
-		c.sendWatermark(remoteID, task, resolvedTs, task.metricEventServiceSendResolvedTsCount)
+		c.sendWatermark(remoteID, task, resolvedTs)
 		return false, dataRange
 	}
 
@@ -399,6 +407,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 	}
 	//log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.id))
 	c.getMessageCh(task.workerIndex) <- wrapE
+	metricEventServiceSendCommandCount.Inc()
 }
 
 // emitSyncPointEventIfNeeded emits a sync point event if the current ts is greater than the next sync point, and updates the next sync point.
@@ -457,8 +466,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		// After all the events are sent, we send the watermark to the dispatcher.
 		c.sendWatermark(remoteID,
 			task,
-			dataRange.EndTs,
-			task.metricEventServiceSendResolvedTsCount)
+			dataRange.EndTs)
 	}()
 
 	//2. Get event iterator from eventStore.
@@ -474,7 +482,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	defer func() {
 		eventCount, _ := iter.Close()
 		if eventCount != 0 {
-			task.metricSorterOutputEventCountKV.Add(float64(eventCount))
+			metricEventStoreOutputKv.Add(float64(eventCount))
 		}
 		metricEventBrokerScanTaskCount.Inc()
 	}()
@@ -491,7 +499,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		dml.Seq = task.seq.Add(1)
 		c.emitSyncPointEventIfNeeded(dml.CommitTs, task, remoteID)
 		c.getMessageCh(task.workerIndex) <- newWrapDMLEvent(remoteID, dml, task.getEventSenderState())
-		task.metricEventServiceSendKvCount.Add(float64(dml.Len()))
+		metricEventServiceSendKvCount.Add(float64(dml.Len()))
 	}
 
 	// 3. Send the events to the dispatcher.
@@ -736,6 +744,7 @@ func (c *eventBroker) close() {
 
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommitTs uint64) {
 	if d.onResolvedTs(resolvedTs) {
+		metricEventServiceSendResolvedTsCount.Inc()
 		d.onLatestCommitTs(latestCommitTs)
 		needScan, _ := c.checkNeedScan(d, false)
 		if needScan {
