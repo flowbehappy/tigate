@@ -15,7 +15,6 @@ package logpuller
 
 import (
 	"context"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -147,7 +146,7 @@ type SubscriptionClientConfig struct {
 	// TODO: add a metric for busy ratio?
 	ChangeEventProcessorNum uint
 	// The time interval to advance resolvedTs for a region
-	AdvanceResolvedTsIntervalInMs uint
+	AdvanceResolvedTsIntervalInMs int64
 }
 
 type sharedClientMetrics struct {
@@ -818,11 +817,12 @@ func (s *SubscriptionClient) newSubscribedSpan(
 	rangeLock := regionlock.NewRangeLock(uint64(subID), span.StartKey, span.EndKey, startTs)
 
 	rt := &subscribedSpan{
-		subID:           subID,
-		span:            span,
-		startTs:         startTs,
-		rangeLock:       rangeLock,
-		advanceInterval: int64(s.config.AdvanceResolvedTsIntervalInMs)/4*3 + int64(rand.Intn(int(s.config.AdvanceResolvedTsIntervalInMs)/4)),
+		subID:     subID,
+		span:      span,
+		startTs:   startTs,
+		rangeLock: rangeLock,
+		// advanceInterval: int64(s.config.AdvanceResolvedTsIntervalInMs)/4*3 + int64(rand.Intn(int(s.config.AdvanceResolvedTsIntervalInMs)/4)),
+		advanceInterval: s.config.AdvanceResolvedTsIntervalInMs,
 	}
 	rt.resolvedTs.Store(startTs)
 

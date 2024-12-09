@@ -59,7 +59,7 @@ func newDDLJobFetcher(
 	clientConfig := &logpuller.SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:   1,
 		ChangeEventProcessorNum:       1, // must be 1, because ddlJobFetcher.input cannot be called concurrently
-		AdvanceResolvedTsIntervalInMs: 100,
+		AdvanceResolvedTsIntervalInMs: 0,
 	}
 	client := logpuller.NewSubscriptionClient(
 		logpuller.ClientIDSchemaStore,
