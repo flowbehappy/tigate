@@ -133,6 +133,14 @@ var (
 			Name:      "write_requests_count",
 			Help:      "The number of write requests received by event store.",
 		})
+
+	EventStoreReadDurationHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "ticdc",
+		Subsystem: "event_store",
+		Name:      "read_duration",
+		Help:      "Bucketed histogram of event store sorter iterator read duration",
+		Buckets:   prometheus.ExponentialBuckets(0.004, 2.0, 20),
+	}, []string{"type"})
 )
 
 func InitEventStoreMetrics(registry *prometheus.Registry) {
@@ -150,4 +158,5 @@ func InitEventStoreMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventStoreWriteBatchEventsCountHist)
 	registry.MustRegister(EventStoreWriteBatchSizeHist)
 	registry.MustRegister(EventStoreWriteRequestsCount)
+	registry.MustRegister(EventStoreReadDurationHistogram)
 }
