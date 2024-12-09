@@ -145,6 +145,10 @@ func (r *SpanReplication) initGroupID() {
 	}
 }
 
+func (r *SpanReplication) GetStatus() *heartbeatpb.TableSpanStatus {
+	return r.status.Load()
+}
+
 func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {
 	if newStatus != nil {
 		oldStatus := r.status.Load()
