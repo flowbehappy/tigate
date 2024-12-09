@@ -14,12 +14,14 @@
 package scheduler
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/coordinator/operator"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -52,4 +54,47 @@ func TestExecute(t *testing.T) {
 	s.batchSize = 6
 	s.Execute()
 	require.Equal(t, 4, operatorController.OperatorSize())
+}
+
+func TestScheduleToRemovedNode(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	changefeedDB := changefeed.NewChangefeedDB()
+	for i := 0; i < 10; i++ {
+		cfID := common.NewChangeFeedIDWithName("test")
+		cf := changefeed.NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
+			Config:  config.GetDefaultReplicaConfig(),
+			State:   model.StateNormal,
+			SinkURI: "mysql://127.0.0.1:3306"},
+			1)
+		changefeedDB.AddAbsentChangefeed(cf)
+	}
+
+	self := node.NewInfo("node1", "")
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	nodeManager.GetAliveNodes()[self.ID] = self
+	mc := messaging.NewMessageCenter(ctx, self.ID, 100, config.NewDefaultMessageCenterConfig())
+	operatorController := operator.NewOperatorController(mc, self,
+		changefeedDB, nil, nodeManager, 10)
+	s := NewScheduler(4, operatorController, changefeedDB, nodeManager, 0)
+	s.batchSize = 4
+	s.Execute()
+	require.Equal(t, 4, operatorController.OperatorSize())
+	s.Execute()
+	require.Equal(t, 4, operatorController.OperatorSize())
+
+	s.batchSize = 10
+	delete(nodeManager.GetAliveNodes(), self.ID)
+	outdatedNodeManager := watcher.NewNodeManager(nil, nil)
+	outdatedNodeManager.GetAliveNodes()[self.ID] = self
+	outdatedNodeManager.GetAliveNodes()[self.ID] = self
+	s.nodeManager = outdatedNodeManager
+	s.Execute()
+	require.Equal(t, 10, operatorController.OperatorSize())
+
+	operatorController.Execute()
+	require.Equal(t, 4, operatorController.OperatorSize())
+	operatorController.OnNodeRemoved(self.ID)
+	operatorController.Execute()
+	require.Equal(t, 0, operatorController.OperatorSize())
 }

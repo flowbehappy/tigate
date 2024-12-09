@@ -45,7 +45,7 @@ func TestSchedule(t *testing.T) {
 	nodeManager.GetAliveNodes()["node3"] = &node.Info{ID: "node3"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient,
 		heartbeatpb.DDLSpanSchemaID,
@@ -78,7 +78,7 @@ func TestRemoveAbsentTask(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -101,7 +101,7 @@ func TestBalanceGlobalEven(t *testing.T) {
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient,
 		heartbeatpb.DDLSpanSchemaID,
@@ -172,7 +172,7 @@ func TestBalanceGlobalUneven(t *testing.T) {
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient,
 		heartbeatpb.DDLSpanSchemaID,
@@ -248,7 +248,7 @@ func TestBalance(t *testing.T) {
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient,
 		heartbeatpb.DDLSpanSchemaID,
@@ -317,7 +317,7 @@ func TestStoppedWhenMoving(t *testing.T) {
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -360,7 +360,7 @@ func TestFinishBootstrap(t *testing.T) {
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient,
 		heartbeatpb.DDLSpanSchemaID,
@@ -432,7 +432,7 @@ func TestBalanceUnEvenTask(t *testing.T) {
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -518,7 +518,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -600,7 +600,7 @@ func TestDynamicSplitTableBasic(t *testing.T) {
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -691,14 +691,4 @@ type mockThreadPool struct {
 
 func (m *mockThreadPool) Submit(_ threadpool.Task, _ time.Time) *threadpool.TaskHandle {
 	return nil
-}
-
-type mockTsoClient struct {
-	err   error
-	phy   int64
-	logic int64
-}
-
-func (m *mockTsoClient) GetTS(_ context.Context) (int64, int64, error) {
-	return m.phy, m.logic, m.err
 }

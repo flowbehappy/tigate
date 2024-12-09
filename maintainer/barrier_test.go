@@ -32,7 +32,7 @@ func TestOneBlockEvent(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -161,7 +161,7 @@ func TestNormalBlock(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -349,7 +349,7 @@ func TestNormalBlockWithTableTrigger(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -498,7 +498,7 @@ func TestSchemaBlock(t *testing.T) {
 	nmap["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -702,7 +702,7 @@ func TestSyncPointBlock(t *testing.T) {
 	nmap["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -885,7 +885,7 @@ func TestNonBlocked(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -934,7 +934,8 @@ func TestUpdateCheckpointTs(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{phy: 2, logic: 3}
+
+	tsoClient := &replica.MockTsoClient{Phy: 2, Logic: 3}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -990,7 +991,7 @@ func TestHandleBlockBootstrapResponse(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -1155,7 +1156,7 @@ func TestSyncPointBlockPerf(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
