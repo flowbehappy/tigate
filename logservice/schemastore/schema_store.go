@@ -307,7 +307,7 @@ func (s *schemaStore) writeDDLEvent(ddlEvent DDLJobWithCommitTs) {
 }
 
 func (s *schemaStore) advanceResolvedTs(resolvedTs uint64) {
-	// log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
+	log.Info("advance resolved ts", zap.Uint64("resolvedTS", resolvedTs))
 	if resolvedTs < s.pendingResolvedTs.Load() {
 		log.Panic("resolved ts should not fallback",
 			zap.Uint64("pendingResolveTs", s.pendingResolvedTs.Load()),

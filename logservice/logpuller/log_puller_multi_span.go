@@ -121,6 +121,9 @@ func (p *LogPullerMultiSpan) tryUpdatePendingResolvedTs(subID SubscriptionID, ne
 			zap.Uint64("newResolvedTs", newResolvedTs),
 			zap.Uint64("oldResolvedTs", item.resolvedTs))
 	}
+	log.Info("log puller multispan update resolved ts",
+		zap.Uint64("subID", uint64(subID)),
+		zap.Uint64("newResolvedTs", newResolvedTs))
 	item.resolvedTs = newResolvedTs
 	p.resolvedTsHeap.AddOrUpdate(item)
 
