@@ -822,7 +822,8 @@ func (s *SubscriptionClient) newSubscribedSpan(
 		startTs:   startTs,
 		rangeLock: rangeLock,
 		// advanceInterval: int64(s.config.AdvanceResolvedTsIntervalInMs)/4*3 + int64(rand.Intn(int(s.config.AdvanceResolvedTsIntervalInMs)/4)),
-		advanceInterval: s.config.AdvanceResolvedTsIntervalInMs,
+		// advanceInterval: s.config.AdvanceResolvedTsIntervalInMs,
+		advanceInterval: 0,
 	}
 	rt.resolvedTs.Store(startTs)
 
