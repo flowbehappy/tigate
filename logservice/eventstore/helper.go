@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/utils/dynstream"
+	"go.uber.org/zap"
 )
 
 const (
@@ -43,8 +44,9 @@ func (h *eventsHandler) Handle(subStat *subscriptionStat, events ...kvEvent) boo
 		subStat.resolvedTs.Store(events[0].raw.CRTs)
 		subStat.dispatchers.RLock()
 		defer subStat.dispatchers.RUnlock()
-		for _, notifier := range subStat.dispatchers.notifiers {
+		for dispatcherID, notifier := range subStat.dispatchers.notifiers {
 			notifier(events[0].raw.CRTs, subStat.maxEventCommitTs.Load())
+			log.Info("event store notify resolved ts", zap.Uint64("ts", events[0].raw.CRTs), zap.Stringer("dispatcherID", dispatcherID))
 		}
 		return false
 	}

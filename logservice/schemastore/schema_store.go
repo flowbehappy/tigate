@@ -158,6 +158,8 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 		if pendingTs <= s.resolvedTs.Load() {
 			return
 		}
+		log.Info("schema store advance resolve ts",
+			zap.Uint64("resolvedTs", pendingTs))
 		resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(pendingTs)
 		if len(resolvedEvents) != 0 {
 			log.Info("schema store begin to apply resolved ddl events",
