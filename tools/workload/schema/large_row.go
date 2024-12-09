@@ -142,15 +142,15 @@ func (l *LargeRowWorkload) BuildInsertSql(tableN int, rowCount int) string {
 func (l *LargeRowWorkload) BuildUpdateSql(opts UpdateOption) string {
 	tableName := getTableName(opts.Table)
 	upsertSQL := strings.Builder{}
-	upsertSQL.WriteString(fmt.Sprintf("INSERT INTO %s VALUES (%d,%s)", tableName, rand.Int63(), l.getSmallRow()))
+	upsertSQL.WriteString(fmt.Sprintf("INSERT INTO %s VALUES (%d,%s)", tableName, rand.Int63()%100000, l.getSmallRow()))
 
 	var largeRowCount int
 	for i := 1; i < opts.RowCount; i++ {
 		if l.r.Float64() < l.largeRatio {
-			upsertSQL.WriteString(fmt.Sprintf(",(%d,%s)", rand.Int63(), l.getLargeRow()))
+			upsertSQL.WriteString(fmt.Sprintf(",(%d,%s)", rand.Int63()%100000, l.getLargeRow()))
 			largeRowCount++
 		} else {
-			upsertSQL.WriteString(fmt.Sprintf(",(%d,%s)", rand.Int63(), l.getSmallRow()))
+			upsertSQL.WriteString(fmt.Sprintf(",(%d,%s)", rand.Int63()%100000, l.getSmallRow()))
 		}
 	}
 	upsertSQL.WriteString(" ON DUPLICATE KEY UPDATE col_0=VALUES(col_0)")
