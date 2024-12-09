@@ -162,6 +162,7 @@ func (w *changeEventProcessor) handleEventEntry(ctx context.Context, x *cdcpb.Ev
 	emit := func(val *common.RawKVEntry) error {
 		// TODO: add a metric to indicate whether the event is sent successfully.
 		e := newLogEvent(val, state.region.subscribedSpan)
+		w.client.metrics.kvCounter.Add(1)
 		return w.client.consume(ctx, e)
 	}
 	tableID := state.region.subscribedSpan.span.TableID

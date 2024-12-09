@@ -155,6 +155,8 @@ type sharedClientMetrics struct {
 	// regionLocateDuration  prometheus.Observer
 	// regionConnectDuration prometheus.Observer
 	batchResolvedSize prometheus.Observer
+	kvCounter         prometheus.Counter
+	resolvedTsCounter prometheus.Counter
 	// lockResolveWaitDuration prometheus.Observer
 	// lockResolveRunDuration  prometheus.Observer
 	// slowInitializeRegion prometheus.Gauge
@@ -263,6 +265,8 @@ func (s *SubscriptionClient) AllocSubscriptionID() SubscriptionID {
 func (s *SubscriptionClient) initMetrics() {
 	id := s.id.String()
 	s.metrics.batchResolvedSize = metrics.BatchResolvedEventSize.WithLabelValues(id)
+	s.metrics.kvCounter = metrics.PullerEventCounter.WithLabelValues(id, "kv")
+	s.metrics.resolvedTsCounter = metrics.PullerEventCounter.WithLabelValues(id, "resolved_ts")
 }
 
 // Subscribe the given table span.
