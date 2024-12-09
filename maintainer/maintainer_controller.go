@@ -253,19 +253,9 @@ func (c *Controller) FinishBootstrap(
 	schemaInfos := map[int64]*heartbeatpb.SchemaInfo{}
 	for _, table := range tables {
 		if _, ok := schemaInfos[table.SchemaID]; !ok {
-			schemaInfos[table.SchemaID] = &heartbeatpb.SchemaInfo{}
-			if isMysqlCompatibleBackend {
-				schemaInfos[table.SchemaID].SchemaID = table.SchemaID
-			} else {
-				schemaInfos[table.SchemaID].SchemaName = table.SchemaName
-			}
+			schemaInfos[table.SchemaID] = getSchemaInfo(table, isMysqlCompatibleBackend)
 		}
-		tableInfo := &heartbeatpb.TableInfo{}
-		if isMysqlCompatibleBackend {
-			tableInfo.TableID = table.TableID
-		} else {
-			tableInfo.TableName = table.TableName
-		}
+		tableInfo := getTableInfo(table, isMysqlCompatibleBackend)
 		schemaInfos[table.SchemaID].Tables = append(schemaInfos[table.SchemaID].Tables, tableInfo)
 
 		tableMap, ok := workingMap[table.TableID]
@@ -413,4 +403,24 @@ func (c *Controller) loadTables(startTs uint64) ([]commonEvent.Table, error) {
 	tables, err := schemaStore.GetAllPhysicalTables(startTs, f)
 	log.Info("get table ids", zap.Int("count", len(tables)), zap.String("changefeed", c.changefeedID.Name()))
 	return tables, err
+}
+
+func getSchemaInfo(table commonEvent.Table, isMysqlCompatibleBackend bool) *heartbeatpb.SchemaInfo {
+	schemaInfo := &heartbeatpb.SchemaInfo{}
+	if isMysqlCompatibleBackend {
+		schemaInfo.SchemaID = table.SchemaID
+	} else {
+		schemaInfo.SchemaName = table.SchemaName
+	}
+	return schemaInfo
+}
+
+func getTableInfo(table commonEvent.Table, isMysqlCompatibleBackend bool) *heartbeatpb.TableInfo {
+	tableInfo := &heartbeatpb.TableInfo{}
+	if isMysqlCompatibleBackend {
+		tableInfo.TableID = table.TableID
+	} else {
+		tableInfo.TableName = table.TableName
+	}
+	return tableInfo
 }
