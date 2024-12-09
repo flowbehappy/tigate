@@ -265,8 +265,8 @@ func (s *SubscriptionClient) AllocSubscriptionID() SubscriptionID {
 func (s *SubscriptionClient) initMetrics() {
 	id := s.id.String()
 	s.metrics.batchResolvedSize = metrics.BatchResolvedEventSize.WithLabelValues(id)
-	s.metrics.kvCounter = metrics.PullerEventCounter.WithLabelValues(id, "kv")
-	s.metrics.resolvedTsCounter = metrics.PullerEventCounter.WithLabelValues(id, "resolved_ts")
+	s.metrics.kvCounter = metrics.PullerEventCounter.WithLabelValues("kv")
+	s.metrics.resolvedTsCounter = metrics.PullerEventCounter.WithLabelValues("resolved_ts")
 }
 
 // Subscribe the given table span.
