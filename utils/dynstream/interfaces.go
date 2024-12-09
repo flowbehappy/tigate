@@ -138,10 +138,16 @@ type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] inter
 	// No more events can be sent to or processed by the stream after it is closed.
 	Close()
 
+	// // In returns the channel to send events into the dynamic stream.
+	// In(path ...P) chan<- T
+	// // Wake returns the channel to mark the the path as ready to process the next event.
+	// Wake(path ...P) chan<- P
+
 	// In returns the channel to send events into the dynamic stream.
-	In(path ...P) chan<- T
+	Push(path P, event T)
 	// Wake returns the channel to mark the the path as ready to process the next event.
-	Wake(path ...P) chan<- P
+	Wake(path P)
+
 	// Feedback returns the channel to receive the feedbacks for the listener.
 	// Return nil if Option.EnableMemoryControl is false.
 	Feedback() <-chan Feedback[A, P, D]
@@ -163,9 +169,7 @@ type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] inter
 	GetMetrics() Metrics
 }
 
-type PathHasher[P Path] interface {
-	HashPath(path P) uint64
-}
+type PathHasher[P Path] func(path P) uint64
 
 const DefaultInputBufferSize = 1024
 const DefaultSchedulerInterval = 16 * time.Second
@@ -253,12 +257,12 @@ func NewDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](ha
 	return newDynamicStreamImpl(handler, opt)
 }
 
-func NewParallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](streamCount int, hasher PathHasher[P], handler H, option ...Option) DynamicStream[A, P, T, D, H] {
+func NewParallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](hasher PathHasher[P], handler H, option ...Option) DynamicStream[A, P, T, D, H] {
 	opt := NewOption()
 	if len(option) > 0 {
 		opt = option[0]
 	}
-	return newParallelDynamicStream(streamCount, hasher, handler, opt)
+	return newParallelDynamicStream(hasher, handler, opt)
 }
 
 type Metrics struct {

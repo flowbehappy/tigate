@@ -185,7 +185,6 @@ const (
 	dataDir             = "event_store"
 	dbCount             = 8
 	writeWorkerNumPerDB = 2
-	streamCount         = 8
 
 	// Pebble options
 	targetMemoryLimit = 2 << 30   // 2GB
@@ -193,13 +192,6 @@ const (
 	memTableCount     = 4
 	blockCacheSize    = targetMemoryLimit - (memTableSize * memTableCount) // 1GB
 )
-
-type pathHasher struct {
-}
-
-func (h pathHasher) HashPath(subID logpuller.SubscriptionID) uint64 {
-	return uint64(subID)
-}
 
 func New(
 	ctx context.Context,
@@ -245,7 +237,7 @@ func New(
 	option := dynstream.NewOption()
 	option.BatchCount = 4096
 	option.UseBuffer = true
-	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, &eventsHandler{}, option)
+	ds := dynstream.NewParallelDynamicStream(func(subID logpuller.SubscriptionID) uint64 { return uint64(subID) }, &eventsHandler{}, option)
 	ds.Start()
 
 	store := &eventStore{
@@ -293,10 +285,12 @@ func New(
 		if raw == nil {
 			log.Panic("should not happen: meet nil event")
 		}
-		store.ds.In(subID) <- kvEvent{
-			raw:   raw,
-			subID: subID,
-		}
+		store.ds.Push(
+			subID,
+			kvEvent{
+				raw:   raw,
+				subID: subID,
+			})
 		return nil
 	}
 	puller := logpuller.NewLogPuller(client, pdClock, consume)
@@ -395,7 +389,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 }
 
 func (e *eventStore) wakeSubscription(subID logpuller.SubscriptionID) {
-	e.ds.Wake(subID) <- subID
+	e.ds.Wake(subID)
 }
 
 func (e *eventStore) Name() string {

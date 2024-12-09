@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/ticdc/pkg/apperror"
+	"github.com/pingcap/ticdc/utils"
 	"github.com/zeebo/assert"
 )
 
@@ -71,66 +72,80 @@ func TestDynamicStreamBasic(t *testing.T) {
 	option := NewOption()
 	option.StreamCount = 1
 	option.BatchCount = 2
-	ds := NewDynamicStream(handler, option)
-	ds.Start()
+	var ds DynamicStream[int, string, *simpleEvent, struct{}, *simpleHandler]
+	for i := 0; i < 2; i++ {
+		if i == 1 {
+			ds = NewDynamicStream(handler, option)
+		} else {
+			ds = NewParallelDynamicStream(func(path string) uint64 { return utils.StringHashUInt64(path) }, handler, option)
+		}
+		ds.Start()
 
-	ds.AddPath("path1", struct{}{})
-	ds.AddPath("path2", struct{}{})
-	ds.AddPath("path3", struct{}{})
-	ds.AddPath("path4", struct{}{})
+		ds.AddPath("path1", struct{}{})
+		ds.AddPath("path2", struct{}{})
+		ds.AddPath("path3", struct{}{})
+		ds.AddPath("path4", struct{}{})
 
-	wg := &sync.WaitGroup{}
-	ds.In() <- newSimpleEvent("path1", wg)
-	ds.In() <- newSimpleEvent("path2", wg)
-	ds.In() <- newSimpleEvent("path3", wg)
-	ds.In() <- newSimpleEvent("path3", wg)
-	ds.In() <- newSimpleEvent("path3", wg)
-	ds.In() <- newSimpleEvent("path4", wg)
+		wg := &sync.WaitGroup{}
+		ds.Push("path1", newSimpleEvent("path1", wg))
+		ds.Push("path2", newSimpleEvent("path2", wg))
+		ds.Push("path3", newSimpleEvent("path3", wg))
+		ds.Push("path3", newSimpleEvent("path3", wg))
+		ds.Push("path3", newSimpleEvent("path3", wg))
+		ds.Push("path4", newSimpleEvent("path4", wg))
 
-	wg.Wait()
+		wg.Wait()
 
-	ds.RemovePath("path1")
-	ds.RemovePath("path2")
-	ds.RemovePath("path3")
+		ds.RemovePath("path1")
+		ds.RemovePath("path2")
+		ds.RemovePath("path3")
 
-	wg = &sync.WaitGroup{}
-	ds.In() <- newSimpleEvent("path4", wg)
-	wg.Wait()
+		wg = &sync.WaitGroup{}
+		ds.Push("path4", newSimpleEvent("path4", wg))
+		wg.Wait()
 
-	ds.Close()
+		ds.Close()
+	}
 }
 
 func TestDynamicStreamAddRemovePaths(t *testing.T) {
 	handler := &simpleHandler{}
-	ds := NewDynamicStream(handler)
-	ds.Start()
+	var ds DynamicStream[int, string, *simpleEvent, struct{}, *simpleHandler]
+	for i := 0; i < 2; i++ {
+		if i == 1 {
+			ds = NewDynamicStream(handler)
+		} else {
+			ds = NewParallelDynamicStream(func(path string) uint64 { return utils.StringHashUInt64(path) }, handler)
+		}
+		ds.Start()
 
-	err := ds.AddPath("path1", struct{}{})
-	assert.Nil(t, err)
-	err = ds.AddPath("path2", struct{}{})
-	assert.Nil(t, err)
-	err = ds.AddPath("path3", struct{}{})
-	assert.Nil(t, err)
-	err = ds.AddPath("path4", struct{}{})
-	assert.Nil(t, err)
+		err := ds.AddPath("path1", struct{}{})
+		assert.Nil(t, err)
+		err = ds.AddPath("path2", struct{}{})
+		assert.Nil(t, err)
+		err = ds.AddPath("path3", struct{}{})
+		assert.Nil(t, err)
+		err = ds.AddPath("path4", struct{}{})
+		assert.Nil(t, err)
 
-	appError, ok := ds.AddPath("path1", struct{}{}).(*apperror.AppError)
-	assert.True(t, ok)
-	assert.Equal(t, apperror.ErrorTypeDuplicate, appError.Type)
-	appError, ok = ds.AddPath("path2", struct{}{}).(*apperror.AppError)
-	assert.True(t, ok)
-	assert.Equal(t, apperror.ErrorTypeDuplicate, appError.Type)
-	assert.Nil(t, ds.AddPath("path5", struct{}{}))
+		appError, ok := ds.AddPath("path1", struct{}{}).(*apperror.AppError)
+		assert.True(t, ok)
+		assert.Equal(t, apperror.ErrorTypeDuplicate, appError.Type)
+		appError, ok = ds.AddPath("path2", struct{}{}).(*apperror.AppError)
+		assert.True(t, ok)
+		assert.Equal(t, apperror.ErrorTypeDuplicate, appError.Type)
+		assert.Nil(t, ds.AddPath("path5", struct{}{}))
 
-	assert.Nil(t, ds.RemovePath("path1"))
-	assert.Nil(t, ds.RemovePath("path3"))
+		assert.Nil(t, ds.RemovePath("path1"))
+		assert.Nil(t, ds.RemovePath("path3"))
 
-	assert.Nil(t, ds.RemovePath("path2"))
-	appError, ok = ds.RemovePath("path3").(*apperror.AppError)
-	assert.True(t, ok)
-	assert.Equal(t, apperror.ErrorTypeNotExist, appError.Type)
+		assert.Nil(t, ds.RemovePath("path2"))
+		appError, ok = ds.RemovePath("path3").(*apperror.AppError)
+		assert.True(t, ok)
+		assert.Equal(t, apperror.ErrorTypeNotExist, appError.Type)
 
-	ds.Close()
+		ds.Close()
+	}
 }
 
 // Note that this test is not deterministic because streams are running in separate goroutines.
@@ -162,11 +177,11 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 1, len(ds.streamInfos[2].pathMap)) // p3
 
 	wg := &sync.WaitGroup{}
-	ds.In() <- newSimpleEvent("p1", wg)
-	ds.In() <- newSimpleEvent("p2", wg)
-	ds.In() <- newSimpleEvent("p3", wg)
-	ds.In() <- newSimpleEventSleep("p4", wg, 8*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p5", wg, 8*time.Millisecond)
+	ds.Push("p1", newSimpleEvent("p1", wg))
+	ds.Push("p2", newSimpleEvent("p2", wg))
+	ds.Push("p3", newSimpleEvent("p3", wg))
+	ds.Push("p4", newSimpleEventSleep("p4", wg, 8*time.Millisecond))
+	ds.Push("p5", newSimpleEventSleep("p5", wg, 8*time.Millisecond))
 	wg.Wait()
 
 	t.Log("=====2 ")
@@ -184,12 +199,12 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	t.Log("=====3 ")
 
 	wg = &sync.WaitGroup{}
-	ds.In() <- newSimpleEvent("p1", wg)
-	ds.In() <- newSimpleEvent("p2", wg)
-	ds.In() <- newSimpleEvent("p3", wg)
-	ds.In() <- newSimpleEvent("p4", wg)
-	// ds.In() <- newSimpleEvent("p5", wg)
-	ds.In() <- newSimpleEventSleep("p5", wg, 8*time.Millisecond)
+	ds.Push("p1", newSimpleEvent("p1", wg))
+	ds.Push("p2", newSimpleEvent("p2", wg))
+	ds.Push("p3", newSimpleEvent("p3", wg))
+	ds.Push("p4", newSimpleEvent("p4", wg))
+	// ds.Push("p5", newSimpleEvent("p5", wg))
+	ds.Push("p5", newSimpleEventSleep("p5", wg, 8*time.Millisecond))
 
 	wg.Wait()
 
@@ -224,17 +239,17 @@ func TestDynamicStreamSchedule(t *testing.T) {
 
 	wg = &sync.WaitGroup{}
 	// Stream 1
-	ds.In() <- newSimpleEventSleep("p7", wg, 8*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond)
+	ds.Push("p7", newSimpleEventSleep("p7", wg, 8*time.Millisecond))
+	ds.Push("p10", newSimpleEventSleep("p10", wg, 8*time.Millisecond))
 
 	t.Log("=====7 ")
 
 	// Stream 2
-	ds.In() <- newSimpleEventSleep("p2", wg, 900*time.Microsecond)
-	ds.In() <- newSimpleEventSleep("p8", wg, 900*time.Microsecond)
+	ds.Push("p2", newSimpleEventSleep("p2", wg, 900*time.Microsecond))
+	ds.Push("p8", newSimpleEventSleep("p8", wg, 900*time.Microsecond))
 
 	// Stream 3
-	ds.In() <- newSimpleEventSleep("p9", wg, 8*time.Millisecond)
+	ds.Push("p9", newSimpleEventSleep("p9", wg, 8*time.Millisecond))
 
 	wg.Wait()
 
@@ -261,10 +276,10 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 2, len(ds.streamInfos[2].pathMap)) // p3, p6
 
 	wg = &sync.WaitGroup{}
-	ds.In() <- newSimpleEventSleep("p5", wg, 2*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p7", wg, 2*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p10", wg, 2*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p9", wg, 2*time.Millisecond)
+	ds.Push("p5", newSimpleEventSleep("p5", wg, 2*time.Millisecond))
+	ds.Push("p7", newSimpleEventSleep("p7", wg, 2*time.Millisecond))
+	ds.Push("p10", newSimpleEventSleep("p10", wg, 2*time.Millisecond))
+	ds.Push("p9", newSimpleEventSleep("p9", wg, 2*time.Millisecond))
 
 	wg.Wait()
 
@@ -278,8 +293,8 @@ func TestDynamicStreamSchedule(t *testing.T) {
 
 	ds.AddPath("p11", struct{}{})
 	wg = &sync.WaitGroup{}
-	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p11", wg, 8*time.Millisecond)
+	ds.Push("p10", newSimpleEventSleep("p10", wg, 8*time.Millisecond))
+	ds.Push("p11", newSimpleEventSleep("p11", wg, 8*time.Millisecond))
 	wg.Wait()
 
 	ds.reportAndSchedule(createSoloPath, 8*time.Millisecond)
@@ -291,8 +306,8 @@ func TestDynamicStreamSchedule(t *testing.T) {
 
 	ds.RemovePath("p10")
 	wg = &sync.WaitGroup{}
-	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond) // This event is dropped by DS
-	ds.In() <- newSimpleEventSleep("p11", wg, 8*time.Millisecond)
+	ds.Push("p10", newSimpleEventSleep("p10", wg, 8*time.Millisecond)) // This event is dropped by DS
+	ds.Push("p11", newSimpleEventSleep("p11", wg, 8*time.Millisecond))
 	wg.Done() // Manually finish the first event
 	wg.Wait()
 
@@ -345,8 +360,8 @@ func TestDynamicStreamRemovePath(t *testing.T) {
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1) // Only one event is processed
-	ds.In() <- &simpleEvent{path: "p1", wg: wg}
-	ds.In() <- &simpleEvent{path: "p1", wg: wg}
+	ds.Push("path", &simpleEvent{path: "p1", wg: wg})
+	ds.Push("path", &simpleEvent{path: "p1", wg: wg})
 
 	// The case is good if it doesn't panic
 	// Sleep is to make sure events are actually processed
@@ -427,9 +442,9 @@ func TestDynamicStreamDrop(t *testing.T) {
 			ds.AddPath("p1", struct{}{})
 		}
 		addEvent := func(ds incDS, wg *sync.WaitGroup) {
-			ds.In() <- newIncEvent("p1", total, 1, wg)
-			ds.In() <- newIncEvent("p1", total, 3, wg)
-			ds.In() <- newIncEvent("p1", total, 5, wg)
+			ds.Push("p1", newIncEvent("p1", total, 1, wg))
+			ds.Push("p1", newIncEvent("p1", total, 3, wg))
+			ds.Push("p1", newIncEvent("p1", total, 5, wg))
 		}
 		check(option, addPath, addEvent)
 
@@ -448,9 +463,9 @@ func TestDynamicStreamDrop(t *testing.T) {
 			ds.AddPath("p1", struct{}{}, AreaSettings{MaxPendingSize: memQuota, FeedbackInterval: 1 * time.Second})
 		}
 		addEvent := func(ds incDS, wg *sync.WaitGroup) {
-			ds.In() <- newIncEvent("p1", total, 1, wg)
-			ds.In() <- newIncEvent("p1", total, 3, wg)
-			ds.In() <- newIncEvent("p1", total, 5, wg)
+			ds.Push("p1", newIncEvent("p1", total, 1, wg))
+			ds.Push("p1", newIncEvent("p1", total, 3, wg))
+			ds.Push("p1", newIncEvent("p1", total, 5, wg))
 		}
 		check(option, addPath, addEvent)
 		assert.Equal(t, 1, total.Load())
@@ -521,13 +536,13 @@ func TestDynamicStreamOrder(t *testing.T) {
 
 	wg := &sync.WaitGroup{}
 	wg.Add(6)
-	ds.In() <- &testOrder{path: "p1", id: 1, timestamp: 1, wg: wg}
-	ds.In() <- &testOrder{path: "p2", id: 2, timestamp: 3, wg: wg}
-	ds.In() <- &testOrder{path: "p3", id: 3, timestamp: 6, wg: wg}
+	ds.Push("path", &testOrder{path: "p1", id: 1, timestamp: 1, wg: wg})
+	ds.Push("path", &testOrder{path: "p2", id: 2, timestamp: 3, wg: wg})
+	ds.Push("path", &testOrder{path: "p3", id: 3, timestamp: 6, wg: wg})
 
-	ds.In() <- &testOrder{path: "p1", id: 4, timestamp: 2, wg: wg}
-	ds.In() <- &testOrder{path: "p2", id: 5, timestamp: 4, wg: wg}
-	ds.In() <- &testOrder{path: "p3", id: 6, timestamp: 5, wg: wg}
+	ds.Push("path", &testOrder{path: "p1", id: 4, timestamp: 2, wg: wg})
+	ds.Push("path", &testOrder{path: "p2", id: 5, timestamp: 4, wg: wg})
+	ds.Push("path", &testOrder{path: "p3", id: 6, timestamp: 5, wg: wg})
 
 	time.Sleep(10 * time.Millisecond) // Make sure all the events are in the pending queue
 	hwg.Done()
