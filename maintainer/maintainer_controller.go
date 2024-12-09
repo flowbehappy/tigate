@@ -75,8 +75,8 @@ func NewController(changefeedID common.ChangeFeedID,
 	batchSize int, balanceInterval time.Duration) *Controller {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	replicaSetDB := replica.NewReplicaSetDB(changefeedID, ddlSpan)
-	oc := operator.NewOperatorController(changefeedID, mc, replicaSetDB, batchSize)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
+	oc := operator.NewOperatorController(changefeedID, mc, replicaSetDB, nodeManager, batchSize)
 	s := &Controller{
 		startCheckpointTs:  checkpointTs,
 		changefeedID:       changefeedID,

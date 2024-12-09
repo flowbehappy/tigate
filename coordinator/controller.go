@@ -113,7 +113,6 @@ func NewController(
 	// detect the capture changes
 	c.nodeManager.RegisterNodeChangeHandler("coordinator-controller", func(allNodes map[node.ID]*node.Info) {
 		c.nodeChanged.Store(true)
-		// c.onNodeChanged()
 	})
 	log.Info("changefeed bootstrap initial nodes",
 		zap.Int("nodes", len(nodes)))
