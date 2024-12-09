@@ -42,7 +42,8 @@ func TestOneBlockEvent(t *testing.T) {
 		}, "node1")
 	controller := NewController(cfID, 1, nil, tsoClient,
 		nil, nil, nil, ddlSpan, 1000, 0)
-	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 0)
+	startTs := uint64(10)
+	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, startTs)
 	stm := controller.GetTasksByTableIDs(1)[0]
 	controller.replicationDB.BindSpanToNode("", "node1", stm)
 	controller.replicationDB.MarkSpanReplicating(stm)

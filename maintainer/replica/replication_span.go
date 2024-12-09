@@ -63,14 +63,14 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 		schemaID:     SchemaID,
 		Span:         span,
 		ChangefeedID: cfID,
-		status: atomic.NewPointer(&heartbeatpb.TableSpanStatus{
-			ID:           id.ToPB(),
-			CheckpointTs: checkpointTs,
-		}),
-		blockState: atomic.NewPointer[heartbeatpb.State](nil),
+		status:       atomic.NewPointer[heartbeatpb.TableSpanStatus](nil),
+		blockState:   atomic.NewPointer[heartbeatpb.State](nil),
 	}
 	r.initGroupID()
-	r.checkStatus()
+	r.initStatus(&heartbeatpb.TableSpanStatus{
+		ID:           id.ToPB(),
+		CheckpointTs: checkpointTs,
+	})
 	log.Info("new replica set created",
 		zap.String("changefeed id", cfID.Name()),
 		zap.String("id", id.String()),
@@ -97,12 +97,12 @@ func NewWorkingReplicaSet(
 		Span:         span,
 		ChangefeedID: cfID,
 		nodeID:       nodeID,
-		status:       atomic.NewPointer(status),
+		status:       atomic.NewPointer[heartbeatpb.TableSpanStatus](nil),
 		blockState:   atomic.NewPointer[heartbeatpb.State](nil),
 		tsoClient:    tsoClient,
 	}
 	r.initGroupID()
-	r.checkStatus()
+	r.initStatus(status)
 	log.Info("new working replica set created",
 		zap.String("changefeed id", cfID.Name()),
 		zap.String("id", id.String()),
@@ -117,15 +117,15 @@ func NewWorkingReplicaSet(
 	return r
 }
 
-func (r *SpanReplication) checkStatus() {
-	status := r.status.Load()
+func (r *SpanReplication) initStatus(status *heartbeatpb.TableSpanStatus) {
 	if status == nil || status.CheckpointTs == 0 {
-		log.Panic("add working with invalid checkpoint ts",
+		log.Panic("add replica with invalid checkpoint ts",
 			zap.String("changefeed id", r.ChangefeedID.Name()),
 			zap.String("id", r.ID.String()),
 			zap.Uint64("checkpoint ts", status.CheckpointTs),
 		)
 	}
+	r.status.Store(status)
 }
 
 func (r *SpanReplication) initGroupID() {
