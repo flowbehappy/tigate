@@ -220,7 +220,7 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 
 func (m *Manager) onAddMaintainerRequest(req *heartbeatpb.AddMaintainerRequest) {
 	cfID := common.NewChangefeedIDFromPB(req.Id)
-	cf, ok := m.maintainers.Load(cfID)
+	_, ok := m.maintainers.Load(cfID)
 	if ok {
 		return
 	}
@@ -230,10 +230,15 @@ func (m *Manager) onAddMaintainerRequest(req *heartbeatpb.AddMaintainerRequest) 
 	if err != nil {
 		log.Panic("decode changefeed fail", zap.Error(err))
 	}
-	cf = NewMaintainer(cfID, m.conf, cfConfig, m.selfNode, m.stream, m.taskScheduler,
-		m.pdAPI, m.tsoClient, m.regionCache,
-		req.CheckpointTs)
-	err = m.stream.AddPath(cfID.Id, cf.(*Maintainer))
+	if req.CheckpointTs == 0 {
+		log.Panic("add maintainer with invalid checkpointTs",
+			zap.Stringer("changefeed", cfID),
+			zap.Uint64("checkpointTs", req.CheckpointTs),
+			zap.Any("config", cfConfig))
+	}
+	cf := NewMaintainer(cfID, m.conf, cfConfig, m.selfNode, m.stream, m.taskScheduler,
+		m.pdAPI, m.tsoClient, m.regionCache, req.CheckpointTs)
+	err = m.stream.AddPath(cfID.Id, cf)
 	if err != nil {
 		log.Warn("add path to dynstream failed, coordinator will retry later", zap.Error(err))
 		return

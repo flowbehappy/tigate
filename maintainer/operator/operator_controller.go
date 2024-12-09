@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/pkg/operator"
+	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
@@ -37,16 +38,18 @@ type Controller struct {
 	batchSize     int
 	messageCenter messaging.MessageCenter
 	replicationDB *replica.ReplicationDB
+	nodeManager   *watcher.NodeManager
 
 	lock         sync.RWMutex // protect the following fields
 	operators    map[common.DispatcherID]*operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus]
 	runningQueue operator.OperatorQueue[common.DispatcherID, *heartbeatpb.TableSpanStatus]
 }
 
-func NewOperatorController(changefeedID common.ChangeFeedID,
-	mc messaging.MessageCenter,
-	db *replica.ReplicationDB,
-	batchSize int) *Controller {
+func NewOperatorController(
+	changefeedID common.ChangeFeedID, mc messaging.MessageCenter,
+	db *replica.ReplicationDB, nodeManager *watcher.NodeManager,
+	batchSize int,
+) *Controller {
 	oc := &Controller{
 		changefeedID:  changefeedID,
 		operators:     make(map[common.DispatcherID]*operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus]),
@@ -54,6 +57,7 @@ func NewOperatorController(changefeedID common.ChangeFeedID,
 		messageCenter: mc,
 		batchSize:     batchSize,
 		replicationDB: db,
+		nodeManager:   nodeManager,
 	}
 	return oc
 }

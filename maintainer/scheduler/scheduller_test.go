@@ -32,11 +32,16 @@ func TestBasicScheduler(t *testing.T) {
 	for i := 0; i < 9; i++ {
 		id := int64(i + 1)
 		totalSpan := spanz.TableIDToComparableSpan(id)
-		absent := replica.NewReplicaSet(cfID, common.NewDispatcherID(), nil, 1, &heartbeatpb.TableSpan{id, totalSpan.StartKey, totalSpan.EndKey}, 1)
+		absent := replica.NewReplicaSet(cfID, common.NewDispatcherID(), nil, 1, &heartbeatpb.TableSpan{
+			TableID:  id,
+			StartKey: totalSpan.StartKey,
+			EndKey:   totalSpan.EndKey,
+		}, 1)
 		db.AddAbsentReplicaSet(absent)
 	}
 	self := node.NewInfo("node1", "")
-	operatorController := operator.NewOperatorController(cfID, nil, db, 10)
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	operatorController := operator.NewOperatorController(cfID, nil, db, nodeManager, 10)
 	nm := watcher.NewNodeManager(nil, nil)
 	nm.GetAliveNodes()[self.ID] = self
 	s := newBasicScheduler(cfID, 4, operatorController, db, nm)
