@@ -82,6 +82,11 @@ func (m *SplitDispatcherOperator) OnNodeRemove(n node.ID) {
 	}
 }
 
+// AffectedNodes returns the nodes that the operator will affect
+func (m *SplitDispatcherOperator) AffectedNodes() []node.ID {
+	return []node.ID{m.originNode}
+}
+
 func (m *SplitDispatcherOperator) ID() common.DispatcherID {
 	return m.replicaSet.ID
 }

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/logservice/schemastore"
+	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
@@ -69,7 +70,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 		AddTableBatchSize:    1000,
 		CheckBalanceInterval: 0,
 	}
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	manager := NewMaintainerManager(selfNode, schedulerConf, nil, tsoClient, nil)
 	msg := messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic,
@@ -221,7 +222,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
 	})
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	manager := NewMaintainerManager(selfNode, config.GetGlobalServerConfig().Debug.Scheduler, nil, tsoClient, nil)
 	msg := messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic,
@@ -326,7 +327,7 @@ func TestStopNotExistsMaintainer(t *testing.T) {
 		return nil
 	})
 	schedulerConf := &config.SchedulerConfig{AddTableBatchSize: 1000}
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	manager := NewMaintainerManager(selfNode, schedulerConf, nil, tsoClient, nil)
 	msg := messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic,

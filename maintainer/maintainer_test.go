@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
@@ -319,7 +320,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	}()
 
 	taskScheduler := threadpool.NewThreadPoolDefault()
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	maintainer := NewMaintainer(cfID,
 		&config.SchedulerConfig{
 			CheckBalanceInterval: config.TomlDuration(time.Minute),

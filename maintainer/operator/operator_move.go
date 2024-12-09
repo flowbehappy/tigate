@@ -122,6 +122,14 @@ func (m *MoveDispatcherOperator) OnNodeRemove(n node.ID) {
 	}
 }
 
+// AffectedNodes returns the nodes affected by the operator
+func (m *MoveDispatcherOperator) AffectedNodes() []node.ID {
+	m.lck.Lock()
+	defer m.lck.Unlock()
+
+	return []node.ID{m.origin, m.dest}
+}
+
 func (m *MoveDispatcherOperator) ID() common.DispatcherID {
 	return m.replicaSet.ID
 }

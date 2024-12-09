@@ -125,6 +125,13 @@ func (m *MoveMaintainerOperator) OnNodeRemove(n node.ID) {
 	}
 }
 
+func (m *MoveMaintainerOperator) AffectedNodes() []node.ID {
+	m.lck.Lock()
+	defer m.lck.Unlock()
+
+	return []node.ID{m.origin, m.dest}
+}
+
 func (m *MoveMaintainerOperator) ID() common.ChangeFeedID {
 	return m.changefeed.ID
 }

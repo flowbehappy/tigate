@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/pkg/operator"
+	"github.com/pingcap/ticdc/server/watcher"
 	"go.uber.org/zap"
 )
 
@@ -40,6 +41,7 @@ type Controller struct {
 	messageCenter messaging.MessageCenter
 	selfNode      *node.Info
 	backend       changefeed.Backend
+	nodeManger    *watcher.NodeManager
 
 	lock sync.RWMutex
 }
@@ -48,6 +50,7 @@ func NewOperatorController(mc messaging.MessageCenter,
 	selfNode *node.Info,
 	db *changefeed.ChangefeedDB,
 	backend changefeed.Backend,
+	nodeManger *watcher.NodeManager,
 	batchSize int) *Controller {
 	oc := &Controller{
 		operators:     make(map[common.ChangeFeedID]*operator.OperatorWithTime[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]),
@@ -57,6 +60,7 @@ func NewOperatorController(mc messaging.MessageCenter,
 		changefeedDB:  db,
 		selfNode:      selfNode,
 		backend:       backend,
+		nodeManger:    nodeManger,
 	}
 	return oc
 }
@@ -254,6 +258,7 @@ func (oc *Controller) pollQueueingOperator() (operator.Operator[common.ChangeFee
 
 // pushOperator add an operator to the controller queue.
 func (oc *Controller) pushOperator(op operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]) {
+	oc.checkAffectedNodes(op)
 	log.Info("add operator to running queue",
 		zap.String("operator", op.String()))
 	opWithTime := operator.NewOperatorWithTime(op, time.Now())
@@ -261,4 +266,13 @@ func (oc *Controller) pushOperator(op operator.Operator[common.ChangeFeedID, *he
 	op.Start()
 	heap.Push(&oc.runningQueue, opWithTime)
 	metrics.CoordinatorCreatedOperatorCount.WithLabelValues(op.Type()).Inc()
+}
+
+func (oc *Controller) checkAffectedNodes(op operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]) {
+	aliveNodes := oc.nodeManger.GetAliveNodes()
+	for _, n := range op.AffectedNodes() {
+		if _, ok := aliveNodes[n]; !ok {
+			op.OnNodeRemove(n)
+		}
+	}
 }
