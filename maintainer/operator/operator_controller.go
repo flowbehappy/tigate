@@ -251,6 +251,7 @@ func (oc *Controller) removeReplicaSet(op *RemoveDispatcherOperator) {
 
 // pushOperator add an operator to the controller queue.
 func (oc *Controller) pushOperator(op operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus]) {
+	oc.checkAffectedNodes(op)
 	log.Info("add operator to running queue",
 		zap.String("changefeed", oc.changefeedID.Name()),
 		zap.String("operator", op.String()))
@@ -259,4 +260,13 @@ func (oc *Controller) pushOperator(op operator.Operator[common.DispatcherID, *he
 	op.Start()
 	heap.Push(&oc.runningQueue, withTime)
 	metrics.CreatedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID.Name(), op.Type()).Inc()
+}
+
+func (oc *Controller) checkAffectedNodes(op operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus]) {
+	aliveNodes := oc.nodeManager.GetAliveNodes()
+	for _, nodeID := range op.AffectedNodes() {
+		if _, ok := aliveNodes[nodeID]; !ok {
+			op.OnNodeRemove(nodeID)
+		}
+	}
 }
