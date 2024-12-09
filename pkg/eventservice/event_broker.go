@@ -361,6 +361,7 @@ func (c *eventBroker) checkNeedScan(task scanTask, mustCheck bool) (bool, common
 		// The dispatcher has no new events. In such case, we don't need to scan the event store.
 		// We just send the watermark to the dispatcher.
 		remoteID := node.ID(task.info.GetServerID())
+		log.Info("send watermark", zap.Uint64("watermark", dataRange.EndTs), zap.Stringer("dispatcher", task.id))
 		c.sendWatermark(remoteID, task, dataRange.EndTs, task.metricEventServiceSendResolvedTsCount)
 		task.watermark.Store(dataRange.EndTs)
 		return false, dataRange
@@ -672,6 +673,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 			case <-ticker.C:
 				receivedMinResolvedTs := uint64(0)
 				sentMinWaterMark := uint64(0)
+				var dispatcherID common.DispatcherID
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
 					resolvedTs := dispatcher.resolvedTs.Load()
@@ -681,6 +683,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 					watermark := dispatcher.watermark.Load()
 					if sentMinWaterMark == 0 || watermark < sentMinWaterMark {
 						sentMinWaterMark = watermark
+						dispatcherID = dispatcher.info.GetID()
 					}
 					return true
 				})
@@ -693,6 +696,10 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				c.metricEventServiceResolvedTsLag.Set(lag)
 				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(sentMinWaterMark)) / 1e3
 				c.metricEventServiceSentResolvedTs.Set(lag)
+				log.Info("eventBroker update metrics",
+					zap.Stringer("disptcherID", dispatcherID),
+					zap.Float64("lag(s)", lag),
+					zap.Uint64("sentResolvedTs", sentMinWaterMark))
 
 				metricEventBrokerPendingScanTaskCount.Set(float64(len(c.taskQueue)))
 
@@ -746,7 +753,7 @@ func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommi
 }
 
 func (c *eventBroker) onDDLResolveTsUpdate(d *dispatcherStat) {
-	log.Info("resolve ts update")
+	log.Info("resolve ts update", zap.Stringer("dispatcher", d.id))
 	needScan, _ := c.checkNeedScan(d, false)
 	if needScan {
 		d.scanning.Store(true)
