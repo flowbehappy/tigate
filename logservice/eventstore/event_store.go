@@ -54,6 +54,10 @@ import (
 var metricEventStoreDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-store")
 var metricEventStoreDSChannelSize = metrics.DynamicStreamEventChanSize.WithLabelValues("event-store")
 
+var metricEventStoreFirstReadDurationHistogram = metrics.EventStoreReadDurationHistogram.WithLabelValues("first")
+var metricEventStoreNextReadDurationHistogram = metrics.EventStoreReadDurationHistogram.WithLabelValues("next")
+var metricEventStoreCloseReadDurationHistogram = metrics.EventStoreReadDurationHistogram.WithLabelValues("close")
+
 type ResolvedTsNotifier func(watermark uint64, latestCommitTs uint64)
 
 type EventStore interface {
@@ -696,8 +700,9 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	if err != nil {
 		return nil, err
 	}
+	startTime := time.Now()
 	iter.First()
-
+	metricEventStoreFirstReadDurationHistogram.Observe(time.Since(startTime).Seconds())
 	metrics.EventStoreScanRequestsCount.Inc()
 
 	return &eventStoreIter{
@@ -832,7 +837,9 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 	iter.prevCommitTs = rawKV.CRTs
 	iter.prevStartTs = rawKV.StartTs
 	iter.rowCount++
+	startTime := time.Now()
 	iter.innerIter.Next()
+	metricEventStoreNextReadDurationHistogram.Observe(float64(time.Since(startTime).Seconds()))
 	return rawKV, isNewTxn, nil
 }
 
@@ -845,9 +852,10 @@ func (iter *eventStoreIter) Close() (int64, error) {
 			zap.Int64("rowCount", iter.rowCount))
 		return 0, nil
 	}
-
+	startTime := time.Now()
 	err := iter.innerIter.Close()
 	iter.innerIter = nil
+	metricEventStoreCloseReadDurationHistogram.Observe(float64(time.Since(startTime).Seconds()))
 	return iter.rowCount, err
 }
 

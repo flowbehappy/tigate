@@ -9,10 +9,8 @@ import (
 	pevent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/messaging"
-	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/tiflow/pkg/util"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -64,11 +62,6 @@ type dispatcherStat struct {
 	// If so, we should wait until it is done before we send next resolvedTs event of
 	// this dispatcher.
 	scanning atomic.Bool
-
-	metricSorterOutputEventCountKV        prometheus.Counter
-	metricEventServiceSendKvCount         prometheus.Counter
-	metricEventServiceSendDDLCount        prometheus.Counter
-	metricEventServiceSendResolvedTsCount prometheus.Counter
 }
 
 func newDispatcherStat(
@@ -77,17 +70,12 @@ func newDispatcherStat(
 	filter filter.Filter,
 	workerIndex int,
 ) *dispatcherStat {
-	changefeedID := info.GetChangefeedID()
 	dispStat := &dispatcherStat{
-		id:                                    info.GetID(),
-		workerIndex:                           workerIndex,
-		info:                                  info,
-		filter:                                filter,
-		startTs:                               startTs,
-		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
-		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
-		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "ddl"),
-		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "resolved_ts"),
+		id:          info.GetID(),
+		workerIndex: workerIndex,
+		info:        info,
+		filter:      filter,
+		startTs:     startTs,
 	}
 	if info.SyncPointEnabled() {
 		dispStat.enableSyncPoint = true

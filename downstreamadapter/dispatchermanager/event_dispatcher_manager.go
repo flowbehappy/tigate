@@ -643,8 +643,6 @@ func (e *EventDispatcherManager) cleanDispatcher(id common.DispatcherID, schemaI
 	e.schemaIDToDispatchers.Delete(schemaID, id)
 	if e.tableTriggerEventDispatcher != nil && e.tableTriggerEventDispatcher.GetId() == id {
 		e.tableTriggerEventDispatcher = nil
-	}
-	if id == e.tableTriggerEventDispatcher.GetId() {
 		e.metricTableTriggerEventDispatcherCount.Dec()
 	} else {
 		e.metricEventDispatcherCount.Dec()

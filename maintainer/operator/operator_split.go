@@ -57,6 +57,7 @@ func NewSplitDispatcherOperator(db *replica.ReplicationDB,
 		replicaSet:    replicaSet,
 		originNode:    originNode,
 		splitSpans:    splitSpans,
+		checkpointTs:  replicaSet.GetStatus().GetCheckpointTs(),
 		db:            db,
 		splitSpanInfo: spansInfo,
 	}
@@ -121,12 +122,12 @@ func (m *SplitDispatcherOperator) PostFinish() {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	m.db.ReplaceReplicaSet(m.replicaSet, m.splitSpans, m.checkpointTs)
 	log.Info("split dispatcher operator finished", zap.String("id", m.replicaSet.ID.String()))
+	m.db.ReplaceReplicaSet(m.replicaSet, m.splitSpans, m.checkpointTs)
 }
 
 func (m *SplitDispatcherOperator) String() string {
-	return fmt.Sprintf("move dispatcher operator: %s, splitSpans:%s",
+	return fmt.Sprintf("split dispatcher operator: %s, splitSpans:%s",
 		m.replicaSet.ID, m.splitSpanInfo)
 }
 

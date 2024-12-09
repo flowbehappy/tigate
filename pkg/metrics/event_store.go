@@ -34,6 +34,14 @@ var (
 			Help:      "The number of events received by event store.",
 		}, []string{"type"}) // types : kv, resolved.
 
+	// EventStoreOutputEventCount is the metric that counts events output by the sorter.
+	EventStoreOutputEventCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "ticdc",
+		Subsystem: "event_store",
+		Name:      "output_event_count",
+		Help:      "The number of events output by the sorter",
+	}, []string{"type"}) // types : kv, resolved.
+
 	EventStoreWriteBytes = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "ticdc",
@@ -133,11 +141,20 @@ var (
 			Name:      "write_requests_count",
 			Help:      "The number of write requests received by event store.",
 		})
+
+	EventStoreReadDurationHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "ticdc",
+		Subsystem: "event_store",
+		Name:      "read_duration",
+		Help:      "Bucketed histogram of event store sorter iterator read duration",
+		Buckets:   prometheus.ExponentialBuckets(0.004, 2.0, 20),
+	}, []string{"type"})
 )
 
 func InitEventStoreMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventStoreSubscriptionGauge)
 	registry.MustRegister(EventStoreReceivedEventCount)
+	registry.MustRegister(EventStoreOutputEventCount)
 	registry.MustRegister(EventStoreWriteBytes)
 	registry.MustRegister(EventStoreWriteDurationHistogram)
 	registry.MustRegister(EventStoreScanRequestsCount)
@@ -150,4 +167,5 @@ func InitEventStoreMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventStoreWriteBatchEventsCountHist)
 	registry.MustRegister(EventStoreWriteBatchSizeHist)
 	registry.MustRegister(EventStoreWriteRequestsCount)
+	registry.MustRegister(EventStoreReadDurationHistogram)
 }

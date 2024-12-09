@@ -42,7 +42,8 @@ func TestOneBlockEvent(t *testing.T) {
 		}, "node1")
 	controller := NewController(cfID, 1, nil, tsoClient,
 		nil, nil, nil, ddlSpan, 1000, 0)
-	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 0)
+	startTs := uint64(10)
+	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, startTs)
 	stm := controller.GetTasksByTableIDs(1)[0]
 	controller.replicationDB.BindSpanToNode("", "node1", stm)
 	controller.replicationDB.MarkSpanReplicating(stm)
@@ -171,7 +172,7 @@ func TestNormalBlock(t *testing.T) {
 	controller := NewController(cfID, 1, nil, tsoClient, nil, nil, nil, ddlSpan, 1000, 0)
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
 	for id := 1; id < 4; id++ {
-		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 0)
+		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 10)
 		stm := controller.GetTasksByTableIDs(int64(id))[0]
 		blockedDispatcherIDS = append(blockedDispatcherIDS, stm.ID.ToPB())
 		controller.replicationDB.BindSpanToNode("", "node1", stm)
@@ -359,7 +360,7 @@ func TestNormalBlockWithTableTrigger(t *testing.T) {
 	controller := NewController(cfID, 1, nil, tsoClient, nil, nil, nil, ddlSpan, 1000, 0)
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
 	for id := 1; id < 3; id++ {
-		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 0)
+		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 10)
 		stm := controller.GetTasksByTableIDs(int64(id))[0]
 		blockedDispatcherIDS = append(blockedDispatcherIDS, stm.ID.ToPB())
 		controller.replicationDB.BindSpanToNode("", "node1", stm)
@@ -1000,7 +1001,7 @@ func TestHandleBlockBootstrapResponse(t *testing.T) {
 	controller := NewController(cfID, 1, nil, tsoClient, nil, nil, nil, ddlSpan, 1000, 0)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	for id := 1; id < 4; id++ {
-		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 0)
+		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 2)
 		stm := controller.GetTasksByTableIDs(int64(id))[0]
 		dispatcherIDs = append(dispatcherIDs, stm.ID.ToPB())
 		controller.replicationDB.BindSpanToNode("", "node1", stm)
