@@ -274,6 +274,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_C1}",
+          "description": "The number of bytes input ticdc",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -287,15 +288,17 @@
             "y": 1
           },
           "hiddenSeries": false,
-          "id": 20000,
+          "id": 20198,
           "legend": {
+            "alignAsTable": true,
             "avg": false,
-            "current": false,
+            "current": true,
             "max": false,
             "min": false,
+            "rightSide": true,
             "show": true,
             "total": false,
-            "values": false
+            "values": true
           },
           "lines": true,
           "linewidth": 1,
@@ -315,10 +318,9 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_sink_write_bytes_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (instance, type)",
-              "hide": false,
+              "expr": "sum(rate(ticdc_event_store_write_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance)",
               "interval": "",
-              "legendFormat": "{{instance}}-{{type}}",
+              "legendFormat": "{{instance}}",
               "queryType": "randomWalk",
               "refId": "A"
             }
@@ -327,7 +329,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Sink Write Bytes/s",
+          "title": "TiCDC Input Bytes/s",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -343,14 +345,16 @@
           },
           "yaxes": [
             {
-              "format": "short",
+              "$$hashKey": "object:336",
+              "format": "binBps",
               "label": null,
               "logBase": 1,
               "max": null,
-              "min": null,
+              "min": "0",
               "show": true
             },
             {
+              "$$hashKey": "object:337",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -476,6 +480,102 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_C1}",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 6,
+            "w": 12,
+            "x": 12,
+            "y": 7
+          },
+          "hiddenSeries": false,
+          "id": 20000,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(ticdc_sink_write_bytes_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (instance, type)",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{instance}}-{{type}}",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Sink Write Bytes/s",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_C1}",
           "decimals": 1,
           "description": "",
           "editable": true,
@@ -492,8 +592,8 @@
           "gridPos": {
             "h": 6,
             "w": 12,
-            "x": 12,
-            "y": 7
+            "x": 0,
+            "y": 13
           },
           "hiddenSeries": false,
           "id": 10049,
@@ -1480,12 +1580,12 @@
           "steppedLine": false,
           "targets": [
             {
-              "exemplar": true,
-              "expr": "sum (rate(ticdc_puller_txn_collect_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", changefeed=~\"$changefeed\", changefeed!~\".*ddl_puller\", instance=~\"$ticdc_instance\"}[1m])) by (namespace,changefeed, instance, type)",
+              "exemplar": false,
+              "expr": "sum(rate(ticdc_kvclient_pull_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance,type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{namespace}}-{{changefeed}}-{{instance}}-{{type}}",
+              "legendFormat": "{{instance}}-{{type}}",
               "refId": "A"
             }
           ],
@@ -1588,12 +1688,20 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(ticdc_puller_txn_collect_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\",changefeed=~\"$changefeed\", instance=~\"$ticdc_instance\"}) by (namespace,changefeed, instance, type)",
+              "expr": "sum(ticdc_kvclient_pull_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",instance=~\"$ticdc_instance\", type=\"kv\"}) by (instance,type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{namespace}}-{{changefeed}}-{{instance}}-{{type}}",
+              "legendFormat": "{{instance}}-{{type}}",
               "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(ticdc_kvclient_pull_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",instance=~\"$ticdc_instance\", type=\"resolved_ts\"}) by (instance,type)",
+              "hide": true,
+              "interval": "",
+              "legendFormat": "{{instance}}-{{type}}",
+              "refId": "B"
             }
           ],
           "thresholds": [],
@@ -1693,11 +1801,11 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_event_service_send_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",namespace=~\"$namespace\", changefeed=~\"$changefeed\", instance=~\"$ticdc_instance\"}[1m])) by (instance,namespace,changefeed,type)",
+              "expr": "sum(rate(ticdc_event_service_send_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance,type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{namespace}}-{{changefeed}}-{{instance}}-{{type}}",
+              "legendFormat": "{{instance}}-{{type}}",
               "refId": "A"
             }
           ],
@@ -1705,7 +1813,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "EventService output events",
+          "title": "EventService output events/s",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1750,7 +1858,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_C1}",
-          "description": "The p99 send event duration of EventService",
+          "description": "The total number of events that puller outputs",
           "fieldConfig": {
             "defaults": {
               "links": []
@@ -1766,7 +1874,7 @@
             "y": 7
           },
           "hiddenSeries": false,
-          "id": 10041,
+          "id": 20199,
           "legend": {
             "alignAsTable": true,
             "avg": false,
@@ -1775,6 +1883,8 @@
             "min": false,
             "rightSide": false,
             "show": true,
+            "sort": "max",
+            "sortDesc": true,
             "total": false,
             "values": true
           },
@@ -1798,11 +1908,11 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(ticdc_event_service_send_event_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",namespace=~\"$namespace\", changefeed=~\"$changefeed\", instance=~\"$ticdc_instance\"}[1m])) by (le,instance,type))",
+              "expr": "sum(ticdc_event_service_send_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",instance=~\"$ticdc_instance\"}) by (instance,type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "p99-{{instance}}-{{type}}",
+              "legendFormat": "{{instance}}-{{type}}",
               "refId": "A"
             }
           ],
@@ -1810,7 +1920,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "EventService send event duration pencentile",
+          "title": "EventService output events",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1826,8 +1936,8 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:1403",
-              "format": "s",
+              "$$hashKey": "object:915",
+              "format": "none",
               "label": null,
               "logBase": 1,
               "max": null,
@@ -1835,7 +1945,7 @@
               "show": true
             },
             {
-              "$$hashKey": "object:1404",
+              "$$hashKey": "object:916",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -2009,7 +2119,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(ticdc_dispatcher_received_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\",changefeed=~\"$changefeed\", instance=~\"$ticdc_instance\"}) by (namespace,changefeed, instance,type)",
+              "expr": "sum(ticdc_dispatcher_received_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",instance=~\"$ticdc_instance\"}) by (instance,type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
@@ -2037,6 +2147,7 @@
           },
           "yaxes": [
             {
+              "$$hashKey": "object:1770",
               "format": "none",
               "label": null,
               "logBase": 1,
@@ -2045,6 +2156,7 @@
               "show": true
             },
             {
+              "$$hashKey": "object:1771",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -6974,18 +7086,8 @@
           "steppedLine": false,
           "targets": [
             {
-              "exemplar": true,
-              "expr": "sum(rate(ticdc_kvclient_send_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance, type)",
-              "format": "time_series",
-              "hide": true,
-              "interval": "",
-              "intervalFactor": 1,
-              "legendFormat": "{{instance}}-{{type}}",
-              "refId": "A"
-            },
-            {
               "exemplar": false,
-              "expr": "sum(rate(ticdc_kvclient_batch_resolved_event_size_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance, type)",
+              "expr": "sum(rate(ticdc_kvclient_pull_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance, type)",
               "format": "time_series",
               "hide": false,
               "interval": "",
