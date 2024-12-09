@@ -116,6 +116,9 @@ func (p *LogPullerMultiSpan) tryUpdatePendingResolvedTs(subID SubscriptionID, ne
 		log.Panic("unknown zubscriptionID, should not happen",
 			zap.Uint64("subID", uint64(subID)))
 	}
+	log.Info("schema store update pending resolved ts",
+		zap.Uint64("subID", uint64(subID)),
+		zap.Uint64("newResolvedTs", newResolvedTs))
 	if newResolvedTs < item.resolvedTs {
 		log.Panic("resolved ts should not fallback",
 			zap.Uint64("newResolvedTs", newResolvedTs),
