@@ -39,7 +39,9 @@ import (
 )
 
 var (
-	handleEventDuration = metrics.EventCollectorHandleEventDuration
+	handleEventDuration      = metrics.EventCollectorHandleEventDuration
+	metricsDSInputChanLen    = metrics.DynamicStreamEventChanSize.WithLabelValues("event-collector")
+	metricsDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-collector")
 )
 
 type DispatcherRequest struct {
@@ -355,6 +357,9 @@ func (c *EventCollector) updateMetrics(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			dsMetrics := c.ds.GetMetrics()
+			metricsDSInputChanLen.Set(float64(dsMetrics.EventChanSize))
+			metricsDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 			c.updateResolvedTsMetric()
 		}
 	}
