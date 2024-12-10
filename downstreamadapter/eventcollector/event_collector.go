@@ -39,7 +39,9 @@ import (
 )
 
 var (
-	handleEventDuration = metrics.EventCollectorHandleEventDuration
+	handleEventDuration      = metrics.EventCollectorHandleEventDuration
+	metricsDSInputChanLen    = metrics.DynamicStreamEventChanSize.WithLabelValues("event-collector")
+	metricsDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("event-collector")
 )
 
 type DispatcherRequest struct {
@@ -49,7 +51,7 @@ type DispatcherRequest struct {
 	OnlyUse    bool
 }
 
-type TargetAndDispatcherRequest struct {
+type DispatcherRequestWithTarget struct {
 	Target node.ID
 	Topic  string
 	Req    DispatcherRequest
@@ -70,14 +72,13 @@ EventCollector is the relay between EventService and DispatcherManager, responsi
 EventCollector is an instance-level component.
 */
 type EventCollector struct {
-	serverId          node.ID
-	dispatcherMap     sync.Map
-	globalMemoryQuota int64
-	mc                messaging.MessageCenter
-	wg                sync.WaitGroup
+	serverId      node.ID
+	dispatcherMap sync.Map
+	mc            messaging.MessageCenter
+	wg            sync.WaitGroup
 
 	// dispatcherRequestChan is used cached dispatcher request when some error occurs.
-	dispatcherRequestChan *chann.DrainableChann[TargetAndDispatcherRequest]
+	dispatcherRequestChan *chann.DrainableChann[DispatcherRequestWithTarget]
 
 	logCoordinatorRequestChan *chann.DrainableChann[*logservicepb.ReusableEventServiceRequest]
 
@@ -99,9 +100,8 @@ type EventCollector struct {
 func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventCollector {
 	eventCollector := EventCollector{
 		serverId:                             serverId,
-		globalMemoryQuota:                    globalMemoryQuota,
 		dispatcherMap:                        sync.Map{},
-		dispatcherRequestChan:                chann.NewAutoDrainChann[TargetAndDispatcherRequest](),
+		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequestWithTarget](),
 		logCoordinatorRequestChan:            chann.NewAutoDrainChann[*logservicepb.ReusableEventServiceRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
@@ -200,7 +200,7 @@ func (c *EventCollector) ResetDispatcherStat(stat *DispatcherStat) {
 }
 
 func (c *EventCollector) addDispatcherRequestToSendingQueue(serverId node.ID, topic string, req DispatcherRequest) {
-	c.dispatcherRequestChan.In() <- TargetAndDispatcherRequest{
+	c.dispatcherRequestChan.In() <- DispatcherRequestWithTarget{
 		Target: serverId,
 		Topic:  topic,
 		Req:    req,
@@ -268,7 +268,7 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 			ChangefeedId: req.Dispatcher.GetChangefeedID().ToPB(),
 			DispatcherId: req.Dispatcher.GetId().ToPB(),
 			ActionType:   req.ActionType,
-			// FIXME: It can be another server id in the future.
+			// ServerId is the id of the request sender.
 			ServerId:  c.serverId.String(),
 			TableSpan: req.Dispatcher.GetTableSpan(),
 			StartTs:   req.StartTs,
@@ -276,7 +276,7 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 		},
 	}
 
-	// If the action type is register, we need fill all config related fields.
+	// If the action type is register and reset, we need fill all config related fields.
 	if req.ActionType == eventpb.ActionType_ACTION_TYPE_REGISTER ||
 		req.ActionType == eventpb.ActionType_ACTION_TYPE_RESET {
 		message.RegisterDispatcherRequest.FilterConfig = req.Dispatcher.GetFilterConfig()
@@ -297,7 +297,7 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 			zap.Stringer("target", target),
 			zap.Error(err))
 		// Put the request back to the channel for later retry.
-		c.dispatcherRequestChan.In() <- TargetAndDispatcherRequest{
+		c.dispatcherRequestChan.In() <- DispatcherRequestWithTarget{
 			Target: target,
 			Topic:  topic,
 			Req:    req,
@@ -309,8 +309,9 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 
 // RecvEventsMessage is the handler for the events message from EventService.
 func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *messaging.TargetMessage) error {
-	inflightDuration := time.Since(time.UnixMilli(targetMessage.CreateAt)).Milliseconds()
-	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
+	inflightDuration := time.Since(time.UnixMilli(targetMessage.CreateAt)).Seconds()
+	c.metricReceiveEventLagDuration.Observe(inflightDuration)
+
 	start := time.Now()
 	for _, msg := range targetMessage.Message {
 		switch msg.(type) {
@@ -341,7 +342,8 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 			log.Panic("invalid message type", zap.Any("msg", msg))
 		}
 	}
-	handleEventDuration.Observe(float64(time.Since(start).Milliseconds()))
+
+	handleEventDuration.Observe(time.Since(start).Seconds())
 	return nil
 }
 
@@ -355,6 +357,9 @@ func (c *EventCollector) updateMetrics(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			dsMetrics := c.ds.GetMetrics()
+			metricsDSInputChanLen.Set(float64(dsMetrics.EventChanSize))
+			metricsDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 			c.updateResolvedTsMetric()
 		}
 	}
@@ -597,6 +602,7 @@ func (d *DispatcherStat) unregisterDispatcher(eventCollector *EventCollector) {
 	}
 }
 
+// FIXME: Implement this method.
 func (d *DispatcherStat) resetDispatcher(eventCollector *EventCollector) {
 	d.eventServiceInfo.RLock()
 	defer d.eventServiceInfo.RUnlock()
