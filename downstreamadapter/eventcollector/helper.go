@@ -22,17 +22,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	streamCount = 8
-)
-
-type pathHasher struct {
-}
-
-func (h pathHasher) HashPath(path common.DispatcherID) uint64 {
-	return (common.GID)(path).FastHash()
-}
-
 func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
@@ -43,7 +32,7 @@ func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[co
 	eventsHandler := &EventsHandler{
 		eventCollector: collector,
 	}
-	stream := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, eventsHandler, option)
+	stream := dynstream.NewParallelDynamicStream(func(id common.DispatcherID) uint64 { return (common.GID)(id).FastHash() }, eventsHandler, option)
 	stream.Start()
 	return stream
 }

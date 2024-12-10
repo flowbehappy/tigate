@@ -81,7 +81,7 @@ func New(node *node.Info,
 		stateChangedCh:      make(chan *ChangefeedStateChangeEvent, 8),
 		backend:             backend,
 	}
-	c.stream = dynstream.NewDynamicStream[int, string, *Event, *Controller, *StreamHandler](NewStreamHandler())
+	c.stream = dynstream.NewDynamicStream(NewStreamHandler())
 	c.stream.Start()
 	c.taskScheduler = threadpool.NewThreadPoolDefault()
 
@@ -97,7 +97,7 @@ func New(node *node.Info,
 }
 
 func (c *coordinator) recvMessages(_ context.Context, msg *messaging.TargetMessage) error {
-	c.stream.In() <- &Event{message: msg}
+	c.stream.Push("coordinator", &Event{message: msg})
 	return nil
 }
 

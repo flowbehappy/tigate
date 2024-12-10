@@ -498,7 +498,7 @@ func (c *Controller) RemoveNode(id node.ID) {
 
 func (c *Controller) submitPeriodTask() {
 	task := func() time.Time {
-		c.stream.In() <- &Event{eventType: EventPeriod}
+		c.stream.Push("coordinator", &Event{eventType: EventPeriod})
 		return time.Now().Add(time.Millisecond * 500)
 	}
 	periodTaskhandler := c.taskScheduler.SubmitFunc(task, time.Now().Add(time.Millisecond*500))

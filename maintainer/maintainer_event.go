@@ -49,7 +49,7 @@ func SubmitScheduledEvent(
 	event *Event,
 	scheduleTime time.Time) {
 	task := func() time.Time {
-		stream.In() <- event
+		stream.Push(event.changefeedID.Id, event)
 		return time.Time{}
 	}
 	scheduler.SubmitFunc(task, scheduleTime)

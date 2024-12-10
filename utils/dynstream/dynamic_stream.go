@@ -234,19 +234,19 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 	return ds
 }
 
-func (d *dynamicStreamImpl[A, P, T, D, H]) In(path ...P) chan<- T {
+func (d *dynamicStreamImpl[A, P, T, D, H]) Push(path P, event T) {
 	if d.option.UseBuffer {
-		return d.inChan
+		d.inChan <- event
 	} else {
-		return d.eventChan
+		d.eventChan <- event
 	}
 }
 
-func (d *dynamicStreamImpl[A, P, T, D, H]) Wake(path ...P) chan<- P {
+func (d *dynamicStreamImpl[A, P, T, D, H]) Wake(path P) {
 	if d.option.UseBuffer {
-		return d.wakeInChan
+		d.wakeInChan <- path
 	} else {
-		return d.wakeChan
+		d.wakeChan <- path
 	}
 }
 
