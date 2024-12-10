@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/logservice/logpuller/regionlock"
 	"github.com/pingcap/ticdc/logservice/txnutil"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockcopr"
@@ -34,66 +35,68 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-// func TestGenerateResolveLockTask(t *testing.T) {
-// 	client := &SubscriptionClient{
-// 		resolveLockTaskCh: make(chan resolveLockTask, 10),
-// 	}
-// 	rawSpan := heartbeatpb.TableSpan{
-// 		TableID:  1,
-// 		StartKey: []byte{'a'},
-// 		EndKey:   []byte{'z'},
-// 	}
-// 	span := client.newSubscribedSpan(SubscriptionID(1), rawSpan, 100)
-// 	client.totalSpans.spanMap = make(map[SubscriptionID]*subscribedSpan)
-// 	client.totalSpans.spanMap[SubscriptionID(1)] = span
-// 	client.pdClock = pdutil.NewClock4Test()
+func TestGenerateResolveLockTask(t *testing.T) {
+	client := &SubscriptionClient{
+		resolveLockTaskCh: make(chan resolveLockTask, 10),
+	}
+	rawSpan := heartbeatpb.TableSpan{
+		TableID:  1,
+		StartKey: []byte{'a'},
+		EndKey:   []byte{'z'},
+	}
+	consumeKVEvents := func(_ []common.RawKVEntry, _ func()) bool { return false }
+	advanceResolvedTs := func(ts uint64) {}
+	span := client.newSubscribedSpan(SubscriptionID(1), rawSpan, 100, consumeKVEvents, advanceResolvedTs, 0)
+	client.totalSpans.spanMap = make(map[SubscriptionID]*subscribedSpan)
+	client.totalSpans.spanMap[SubscriptionID(1)] = span
+	client.pdClock = pdutil.NewClock4Test()
 
-// 	// Lock a range, and then ResolveLock will trigger a task for it.
-// 	res := span.rangeLock.LockRange(context.Background(), []byte{'b'}, []byte{'c'}, 1, 100)
-// 	require.Equal(t, regionlock.LockRangeStatusSuccess, res.Status)
-// 	res.LockedRangeState.Initialized.Store(true)
-// 	client.ResolveLock(SubscriptionID(1), 200)
-// 	select {
-// 	case task := <-client.resolveLockTaskCh:
-// 		require.Equal(t, uint64(1), task.regionID)
-// 		require.Equal(t, uint64(200), task.targetTs)
-// 	case <-time.After(100 * time.Millisecond):
-// 		require.True(t, false, "must get a resolve lock task")
-// 	}
+	// Lock a range, and then ResolveLock will trigger a task for it.
+	res := span.rangeLock.LockRange(context.Background(), []byte{'b'}, []byte{'c'}, 1, 100)
+	require.Equal(t, regionlock.LockRangeStatusSuccess, res.Status)
+	res.LockedRangeState.Initialized.Store(true)
+	client.ResolveLock(SubscriptionID(1), 200)
+	select {
+	case task := <-client.resolveLockTaskCh:
+		require.Equal(t, uint64(1), task.regionID)
+		require.Equal(t, uint64(200), task.targetTs)
+	case <-time.After(100 * time.Millisecond):
+		require.True(t, false, "must get a resolve lock task")
+	}
 
-// 	// Lock another range, no task will be triggered before initialized.
-// 	res = span.rangeLock.LockRange(context.Background(), []byte{'c'}, []byte{'d'}, 2, 100)
-// 	require.Equal(t, regionlock.LockRangeStatusSuccess, res.Status)
-// 	state := newRegionFeedState(regionInfo{lockedRangeState: res.LockedRangeState, subscribedSpan: span}, 1)
-// 	client.ResolveLock(SubscriptionID(1), 200)
-// 	select {
-// 	case task := <-client.resolveLockTaskCh:
-// 		require.Equal(t, uint64(1), task.regionID)
-// 	case <-time.After(100 * time.Millisecond):
-// 	}
-// 	select {
-// 	case <-client.resolveLockTaskCh:
-// 		require.True(t, false, "shouldn't get a resolve lock task")
-// 	case <-time.After(100 * time.Millisecond):
-// 	}
+	// Lock another range, no task will be triggered before initialized.
+	res = span.rangeLock.LockRange(context.Background(), []byte{'c'}, []byte{'d'}, 2, 100)
+	require.Equal(t, regionlock.LockRangeStatusSuccess, res.Status)
+	state := newRegionFeedState(regionInfo{lockedRangeState: res.LockedRangeState, subscribedSpan: span}, 1)
+	client.ResolveLock(SubscriptionID(1), 200)
+	select {
+	case task := <-client.resolveLockTaskCh:
+		require.Equal(t, uint64(1), task.regionID)
+	case <-time.After(100 * time.Millisecond):
+	}
+	select {
+	case <-client.resolveLockTaskCh:
+		require.True(t, false, "shouldn't get a resolve lock task")
+	case <-time.After(100 * time.Millisecond):
+	}
 
-// 	// Task will be triggered after initialized.
-// 	state.setInitialized()
-// 	client.ResolveLock(SubscriptionID(1), 200)
-// 	select {
-// 	case <-client.resolveLockTaskCh:
-// 	case <-time.After(100 * time.Millisecond):
-// 		require.True(t, false, "must get a resolve lock task")
-// 	}
-// 	select {
-// 	case <-client.resolveLockTaskCh:
-// 	case <-time.After(100 * time.Millisecond):
-// 		require.True(t, false, "must get a resolve lock task")
-// 	}
-// 	require.Equal(t, 0, len(client.resolveLockTaskCh))
+	// Task will be triggered after initialized.
+	state.setInitialized()
+	client.ResolveLock(SubscriptionID(1), 200)
+	select {
+	case <-client.resolveLockTaskCh:
+	case <-time.After(100 * time.Millisecond):
+		require.True(t, false, "must get a resolve lock task")
+	}
+	select {
+	case <-client.resolveLockTaskCh:
+	case <-time.After(100 * time.Millisecond):
+		require.True(t, false, "must get a resolve lock task")
+	}
+	require.Equal(t, 0, len(client.resolveLockTaskCh))
 
-// 	close(client.resolveLockTaskCh)
-// }
+	close(client.resolveLockTaskCh)
+}
 
 func TestSubscriptionWithFailedTiKV(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
