@@ -516,10 +516,10 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			c.metricScanEventDuration.Observe(time.Since(start).Seconds())
 			return
 		}
-		if e.CRTs < dataRange.EndTs {
-			// If the commitTs of the event is less than the endTs of the data range,
+		if e.CRTs < dataRange.StartTs {
+			// If the commitTs of the event is less than the startTs of the data range,
 			// there are some bugs in the eventStore.
-			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("dataRangeEndTs", dataRange.EndTs))
+			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("dataRangeStartTs", dataRange.StartTs))
 		}
 
 		if isNewTxn {
@@ -745,7 +745,7 @@ func (c *eventBroker) close() {
 
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommitTs uint64) {
 	if d.onResolvedTs(resolvedTs) {
-		metricEventServiceSendResolvedTsCount.Inc()
+		metricEventStoreOutputResolved.Inc()
 		d.onLatestCommitTs(latestCommitTs)
 		needScan, _ := c.checkNeedScan(d, false)
 		if needScan {
