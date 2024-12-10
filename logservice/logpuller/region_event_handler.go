@@ -27,6 +27,8 @@ import (
 const (
 	DataGroupResolvedTs = 1
 	DataGroupEntries    = 2
+
+	kvEventsCacheMaxSize = 32
 )
 
 type regionEvent struct {
@@ -52,14 +54,12 @@ func (h *regionEventHandler) Path(event regionEvent) SubscriptionID {
 }
 
 func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent) bool {
-	// var kvEvents []common.RawKVEntry
 	for _, event := range events {
 		if event.state.isStale() {
 			// TODO: do we need handle it here?
 			continue
 		}
 		if event.entries != nil {
-			// kvEvents = handleEventEntries(span, event.state, event.entries, kvEvents)
 			handleEventEntries(span, event.state, event.entries)
 		} else if event.resolvedTs != 0 {
 			handleResolvedTs(span, event.state, event.resolvedTs)
@@ -67,20 +67,13 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 			log.Panic("should not reach", zap.Any("event", event), zap.Any("events", events))
 		}
 	}
-	// if len(kvEvents) > 0 {
-	// 	return span.consumeKVEvents(kvEvents, func() {
-	// 		h.subClient.wakeSubscription(span.subID)
-	// 	})
-	// }
 	if len(span.kvEventsCache) > 0 {
 		return span.consumeKVEvents(span.kvEventsCache, func() {
-			// TODO: check the cap and release it if it is too large
-			if cap(span.kvEventsCache) > 8 {
-				span.kvEventsCache = make([]common.RawKVEntry, 0, 8)
+			if cap(span.kvEventsCache) > kvEventsCacheMaxSize {
+				span.kvEventsCache = nil
 			} else {
 				span.kvEventsCache = span.kvEventsCache[:0]
 			}
-			// log.Info("wake subscription", zap.Uint64("subID", uint64(span.subID)), zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)))
 			h.subClient.wakeSubscription(span.subID)
 		})
 	}
@@ -148,23 +141,11 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 		}
 	}
 
-	// TODO: add a check that len(span.kvEventsCache) is 0
-
-	// log.Info("handleEventEntries",
-	// 	zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)),
-	// 	zap.Uint64("subID", uint64(span.subID)))
-	// defer func() {
-	// 	log.Info("handleEventEntries done",
-	// 		zap.Int("kvEntriesCacheLen", len(span.kvEventsCache)),
-	// 		zap.Uint64("subID", uint64(span.subID)))
-	// }()
+	if len(span.kvEventsCache) != 0 {
+		log.Fatal("kvEventsCache is not empty", zap.Int("kvEventsCacheLen", len(span.kvEventsCache)))
+	}
 
 	for _, entry := range entries.Entries.GetEntries() {
-		// log.Info("handleEventEntries",
-		// 	zap.Uint64("startTs", entry.StartTs),
-		// 	zap.Uint64("commitTs", entry.CommitTs),
-		// 	zap.Any("type", entry.Type),
-		// 	zap.Any("opType", entry.OpType))
 		switch entry.Type {
 		case cdcpb.Event_INITIALIZED:
 			state.setInitialized()
@@ -175,7 +156,6 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 				zap.Stringer("span", &state.region.span))
 
 			for _, cachedEvent := range state.matcher.matchCachedRow(true) {
-				// kvEvents = append(kvEvents, assembleRowEvent(regionID, cachedEvent))
 				span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, cachedEvent))
 			}
 			state.matcher.matchCachedRollbackRow(true)
@@ -188,15 +168,8 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 					zap.Uint64("resolvedTs", resolvedTs),
 					zap.Uint64("regionID", regionID))
 			}
-			// kvEvents = append(kvEvents, assembleRowEvent(regionID, entry))
 			span.kvEventsCache = append(span.kvEventsCache, assembleRowEvent(regionID, entry))
 		case cdcpb.Event_PREWRITE:
-			// log.Info("handle prewrite",
-			// 	zap.String("key", hex.EncodeToString(entry.GetKey())),
-			// 	zap.Uint64("startTs", entry.StartTs),
-			// 	zap.Uint64("commitTs", entry.CommitTs),
-			// 	zap.Any("type", entry.Type),
-			// 	zap.Any("opType", entry.OpType))
 			state.matcher.putPrewriteRow(entry)
 		case cdcpb.Event_COMMIT:
 			// NOTE: matchRow should always be called even if the event is stale.
@@ -241,7 +214,6 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 			state.matcher.rollbackRow(entry)
 		}
 	}
-	// return kvEvents
 }
 
 func handleResolvedTs(span *subscribedSpan, state *regionFeedState, resolvedTs uint64) {

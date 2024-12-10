@@ -251,7 +251,7 @@ func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
 		case <-ticker1.C:
 			resolvedTsLag := s.GetResolvedTsLag()
 			if resolvedTsLag > 0 {
-				metrics.LogPullerResolvedTsLag.Set(resolvedTsLag)
+				metrics.SubscriptionClientResolvedTsLagGauge.Set(resolvedTsLag)
 			}
 		case <-ticker2.C:
 			dsMetrics := s.ds.GetMetrics()
@@ -827,8 +827,6 @@ func (s *SubscriptionClient) newSubscribedSpan(
 		consumeKVEvents:   consumeKVEvents,
 		advanceResolvedTs: advanceResolvedTs,
 		advanceInterval:   advanceInterval,
-
-		kvEventsCache: make([]common.RawKVEntry, 0, 8),
 	}
 	rt.resolvedTs.Store(startTs)
 

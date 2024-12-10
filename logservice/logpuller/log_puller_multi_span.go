@@ -80,7 +80,7 @@ func NewLogPullerMultiSpan(
 		advanceSubSpanResolvedTs := func(ts uint64) {
 			pullerWrapper.tryUpdatePendingResolvedTs(subID, ts)
 		}
-		subClient.Subscribe(subID, span, startTs, consume, advanceSubSpanResolvedTs, 100)
+		subClient.Subscribe(subID, span, startTs, consume, advanceSubSpanResolvedTs, 0)
 	}
 	return pullerWrapper
 }
@@ -137,7 +137,7 @@ func (p *LogPullerMultiSpan) sendResolvedTsPeriodically(ctx context.Context) err
 			p.prevResolvedTs = p.pendingResolvedTs
 		}
 	}
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
