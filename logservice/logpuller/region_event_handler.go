@@ -54,6 +54,12 @@ func (h *regionEventHandler) Path(event regionEvent) SubscriptionID {
 }
 
 func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent) bool {
+	if len(span.kvEventsCache) != 0 {
+		log.Panic("kvEventsCache is not empty",
+			zap.Int("kvEventsCacheLen", len(span.kvEventsCache)),
+			zap.Uint64("subID", uint64(span.subID)))
+	}
+
 	for _, event := range events {
 		if event.state.isStale() {
 			// TODO: do we need handle it here?
@@ -68,9 +74,6 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 		}
 	}
 	if len(span.kvEventsCache) > 0 {
-		log.Info("consumeKVEvents",
-			zap.Uint64("subID", uint64(span.subID)),
-			zap.Int("kvEventsCacheLen", len(span.kvEventsCache)))
 		return span.consumeKVEvents(span.kvEventsCache, func() {
 			if cap(span.kvEventsCache) > kvEventsCacheMaxSize {
 				span.kvEventsCache = nil
@@ -78,9 +81,6 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 				span.kvEventsCache = span.kvEventsCache[:0]
 			}
 			h.subClient.wakeSubscription(span.subID)
-			log.Info("wakeSubscription",
-				zap.Uint64("subID", uint64(span.subID)),
-				zap.Int("kvEventsCacheLen", len(span.kvEventsCache)))
 		})
 	}
 	return false
@@ -145,12 +145,6 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 			RegionID: regionID,
 			OldValue: entry.GetOldValue(),
 		}
-	}
-
-	if len(span.kvEventsCache) != 0 {
-		log.Panic("kvEventsCache is not empty",
-			zap.Int("kvEventsCacheLen", len(span.kvEventsCache)),
-			zap.Uint64("subID", uint64(state.region.subscribedSpan.subID)))
 	}
 
 	for _, entry := range entries.Entries.GetEntries() {
