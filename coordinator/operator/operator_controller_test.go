@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,8 +31,11 @@ func TestController_StopChangefeed(t *testing.T) {
 	changefeedDB := changefeed.NewChangefeedDB()
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
+	self := node.NewInfo("localhost:8300", "")
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	nodeManager.GetAliveNodes()[self.ID] = self
 	oc := NewOperatorController(nil, node.NewInfo("localhost:8300", ""), changefeedDB,
-		backend, 10)
+		backend, nodeManager, 10)
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := changefeed.NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
 		Config:  config.GetDefaultReplicaConfig(),
@@ -53,8 +57,11 @@ func TestController_AddOperator(t *testing.T) {
 	changefeedDB := changefeed.NewChangefeedDB()
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
+	self := node.NewInfo("localhost:8300", "")
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	nodeManager.GetAliveNodes()[self.ID] = self
 	oc := NewOperatorController(nil, node.NewInfo("localhost:8300", ""), changefeedDB,
-		backend, 10)
+		backend, nodeManager, 10)
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := changefeed.NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
 		Config:  config.GetDefaultReplicaConfig(),

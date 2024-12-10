@@ -196,6 +196,7 @@ func (d *Dispatcher) InitalizeTableSchemaStore(schemaInfo []*heartbeatpb.SchemaI
 		return nil
 	}
 	d.tableSchemaStore = util.NewTableSchemaStore(schemaInfo, d.sink.SinkType())
+	d.sink.SetTableSchemaStore(d.tableSchemaStore)
 	return nil
 }
 
@@ -303,6 +304,9 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 			event := event.(*commonEvent.DDLEvent)
 			// Update the table info of the dispatcher, when it receive ddl event.
 			d.tableInfo = event.TableInfo
+			if d.sink.SinkType() == common.MysqlSinkType {
+				d.tableInfo.InitPrivateFields()
+			}
 			log.Info("dispatcher receive ddl event",
 				zap.Stringer("dispatcher", d.id),
 				zap.String("query", event.Query),
@@ -336,7 +340,13 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 }
 
 func (d *Dispatcher) SetInitialTableInfo(tableInfo *common.TableInfo) {
+	if tableInfo == nil {
+		return
+	}
 	d.tableInfo = tableInfo
+	if d.sink.SinkType() == common.MysqlSinkType {
+		d.tableInfo.InitPrivateFields()
+	}
 }
 
 func isCompleteSpan(tableSpan *heartbeatpb.TableSpan) bool {

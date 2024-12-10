@@ -142,6 +142,8 @@ type sharedClientMetrics struct {
 	// regionLocateDuration  prometheus.Observer
 	// regionConnectDuration prometheus.Observer
 	batchResolvedSize prometheus.Observer
+	kvCounter         prometheus.Counter
+	resolvedTsCounter prometheus.Counter
 	// lockResolveWaitDuration prometheus.Observer
 	// lockResolveRunDuration  prometheus.Observer
 	// slowInitializeRegion prometheus.Gauge
@@ -214,7 +216,11 @@ func NewSubscriptionClient(
 	option := dynstream.NewOption()
 	option.BatchCount = 1024
 	option.UseBuffer = true
-	ds := dynstream.NewParallelDynamicStream(config.StreamCount, pathHasher{}, &regionEventHandler{subClient: subClient}, option)
+	ds := dynstream.NewParallelDynamicStream(
+		func(subID SubscriptionID) uint64 { return uint64(subID) },
+		&regionEventHandler{subClient: subClient},
+		option,
+	)
 	ds.Start()
 	subClient.ds = ds
 
@@ -315,7 +321,7 @@ func (s *SubscriptionClient) Unsubscribe(subID SubscriptionID) {
 }
 
 func (s *SubscriptionClient) wakeSubscription(subID SubscriptionID) {
-	s.ds.Wake(subID) <- subID
+	s.ds.Wake(subID)
 }
 
 // ResolveLock is a function. If outsider subscribers find a span resolved timestamp is

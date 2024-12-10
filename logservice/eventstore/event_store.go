@@ -49,6 +49,10 @@ var (
 	CounterResolved = metrics.EventStoreReceivedEventCount.WithLabelValues("resolved")
 )
 
+var metricEventStoreFirstReadDurationHistogram = metrics.EventStoreReadDurationHistogram.WithLabelValues("first")
+var metricEventStoreNextReadDurationHistogram = metrics.EventStoreReadDurationHistogram.WithLabelValues("next")
+var metricEventStoreCloseReadDurationHistogram = metrics.EventStoreReadDurationHistogram.WithLabelValues("close")
+
 type ResolvedTsNotifier func(watermark uint64, latestCommitTs uint64)
 
 type EventStore interface {
@@ -167,7 +171,6 @@ const (
 	dataDir             = "event_store"
 	dbCount             = 8
 	writeWorkerNumPerDB = 2
-	streamCount         = 8
 
 	// Pebble options
 	targetMemoryLimit = 2 << 30   // 2GB
@@ -175,13 +178,6 @@ const (
 	memTableCount     = 4
 	blockCacheSize    = targetMemoryLimit - (memTableSize * memTableCount) // 1GB
 )
-
-type pathHasher struct {
-}
-
-func (h pathHasher) HashPath(subID logpuller.SubscriptionID) uint64 {
-	return uint64(subID)
-}
 
 func New(
 	ctx context.Context,
@@ -619,8 +615,9 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	if err != nil {
 		return nil, err
 	}
+	startTime := time.Now()
 	iter.First()
-
+	metricEventStoreFirstReadDurationHistogram.Observe(time.Since(startTime).Seconds())
 	metrics.EventStoreScanRequestsCount.Inc()
 
 	return &eventStoreIter{
@@ -750,7 +747,9 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 	iter.prevCommitTs = rawKV.CRTs
 	iter.prevStartTs = rawKV.StartTs
 	iter.rowCount++
+	startTime := time.Now()
 	iter.innerIter.Next()
+	metricEventStoreNextReadDurationHistogram.Observe(float64(time.Since(startTime).Seconds()))
 	return rawKV, isNewTxn, nil
 }
 
@@ -763,9 +762,10 @@ func (iter *eventStoreIter) Close() (int64, error) {
 			zap.Int64("rowCount", iter.rowCount))
 		return 0, nil
 	}
-
+	startTime := time.Now()
 	err := iter.innerIter.Close()
 	iter.innerIter = nil
+	metricEventStoreCloseReadDurationHistogram.Observe(float64(time.Since(startTime).Seconds()))
 	return iter.rowCount, err
 }
 

@@ -191,7 +191,7 @@ func (c *EventCollector) RemoveDispatcher(target *dispatcher.Dispatcher) {
 }
 
 func (c *EventCollector) WakeDispatcher(dispatcherID common.DispatcherID) {
-	c.ds.Wake(dispatcherID) <- dispatcherID
+	c.ds.Wake(dispatcherID)
 }
 
 func (c *EventCollector) ResetDispatcherStat(stat *DispatcherStat) {
@@ -331,11 +331,11 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 			case commonEvent.TypeBatchResolvedEvent:
 				for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 					c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-					c.ds.In(e.DispatcherID) <- dispatcher.NewDispatcherEvent(&targetMessage.From, e)
+					c.ds.Push(e.DispatcherID, dispatcher.NewDispatcherEvent(&targetMessage.From, e))
 				}
 			default:
 				c.metricDispatcherReceivedKVEventCount.Inc()
-				c.ds.In(event.GetDispatcherID()) <- dispatcher.NewDispatcherEvent(&targetMessage.From, event)
+				c.ds.Push(event.GetDispatcherID(), dispatcher.NewDispatcherEvent(&targetMessage.From, event))
 			}
 		default:
 			log.Panic("invalid message type", zap.Any("msg", msg))

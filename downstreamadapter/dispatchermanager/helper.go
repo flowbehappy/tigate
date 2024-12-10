@@ -83,22 +83,24 @@ func NewSchedulerDispatcherRequest(req *heartbeatpb.ScheduleDispatcherRequest) S
 	return SchedulerDispatcherRequest{req}
 }
 
-var schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[int, common.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]
+var schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[int, common.GID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]
 var schedulerDispatcherRequestDynamicStreamOnce sync.Once
 
-func GetSchedulerDispatcherRequestDynamicStream() dynstream.DynamicStream[int, common.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler] {
+func GetSchedulerDispatcherRequestDynamicStream() dynstream.DynamicStream[int, common.GID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler] {
 	if schedulerDispatcherRequestDynamicStream == nil {
 		schedulerDispatcherRequestDynamicStreamOnce.Do(func() {
 			option := dynstream.NewOption()
 			option.BatchCount = 128
-			schedulerDispatcherRequestDynamicStream = dynstream.NewDynamicStream(&SchedulerDispatcherRequestHandler{}, option)
+			schedulerDispatcherRequestDynamicStream = dynstream.NewParallelDynamicStream(
+				func(id common.GID) uint64 { return id.FastHash() },
+				&SchedulerDispatcherRequestHandler{}, option)
 			schedulerDispatcherRequestDynamicStream.Start()
 		})
 	}
 	return schedulerDispatcherRequestDynamicStream
 }
 
-func SetSchedulerDispatcherRequestDynamicStream(dynamicStream dynstream.DynamicStream[int, common.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]) {
+func SetSchedulerDispatcherRequestDynamicStream(dynamicStream dynstream.DynamicStream[int, common.GID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]) {
 	schedulerDispatcherRequestDynamicStream = dynamicStream
 }
 
@@ -110,20 +112,22 @@ func NewHeartBeatResponse(resp *heartbeatpb.HeartBeatResponse) HeartBeatResponse
 	return HeartBeatResponse{resp}
 }
 
-var heartBeatResponseDynamicStream dynstream.DynamicStream[int, common.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]
+var heartBeatResponseDynamicStream dynstream.DynamicStream[int, common.GID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]
 var heartBeatResponseDynamicStreamOnce sync.Once
 
-func GetHeartBeatResponseDynamicStream() dynstream.DynamicStream[int, common.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler] {
+func GetHeartBeatResponseDynamicStream() dynstream.DynamicStream[int, common.GID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler] {
 	if heartBeatResponseDynamicStream == nil {
 		heartBeatResponseDynamicStreamOnce.Do(func() {
-			heartBeatResponseDynamicStream = dynstream.NewDynamicStream(&HeartBeatResponseHandler{dispatcher.GetDispatcherStatusDynamicStream()})
+			heartBeatResponseDynamicStream = dynstream.NewParallelDynamicStream(
+				func(id common.GID) uint64 { return id.FastHash() },
+				&HeartBeatResponseHandler{dispatcher.GetDispatcherStatusDynamicStream()})
 			heartBeatResponseDynamicStream.Start()
 		})
 	}
 	return heartBeatResponseDynamicStream
 }
 
-func SetHeartBeatResponseDynamicStream(dynamicStream dynstream.DynamicStream[int, common.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]) {
+func SetHeartBeatResponseDynamicStream(dynamicStream dynstream.DynamicStream[int, common.GID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]) {
 	heartBeatResponseDynamicStream = dynamicStream
 }
 
@@ -135,13 +139,15 @@ func NewCheckpointTsMessage(msg *heartbeatpb.CheckpointTsMessage) CheckpointTsMe
 	return CheckpointTsMessage{msg}
 }
 
-var checkpointTsMessageDynamicStream dynstream.DynamicStream[int, common.ChangeFeedID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler]
+var checkpointTsMessageDynamicStream dynstream.DynamicStream[int, common.GID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler]
 var checkpointTsMessageDynamicStreamOnce sync.Once
 
-func GetCheckpointTsMessageDynamicStream() dynstream.DynamicStream[int, common.ChangeFeedID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler] {
+func GetCheckpointTsMessageDynamicStream() dynstream.DynamicStream[int, common.GID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler] {
 	if checkpointTsMessageDynamicStream == nil {
 		checkpointTsMessageDynamicStreamOnce.Do(func() {
-			checkpointTsMessageDynamicStream = dynstream.NewDynamicStream(&CheckpointTsMessageHandler{})
+			checkpointTsMessageDynamicStream = dynstream.NewParallelDynamicStream(
+				func(id common.GID) uint64 { return id.FastHash() },
+				&CheckpointTsMessageHandler{})
 			checkpointTsMessageDynamicStream.Start()
 		})
 	}

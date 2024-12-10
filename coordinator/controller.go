@@ -88,8 +88,8 @@ func NewController(
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	changefeedDB := changefeed.NewChangefeedDB()
 
-	oc := operator.NewOperatorController(mc, selfNode, changefeedDB, backend, batchSize)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
+	oc := operator.NewOperatorController(mc, selfNode, changefeedDB, backend, nodeManager, batchSize)
 	c := &Controller{
 		version:             version,
 		batchSize:           batchSize,
@@ -113,7 +113,6 @@ func NewController(
 	// detect the capture changes
 	c.nodeManager.RegisterNodeChangeHandler("coordinator-controller", func(allNodes map[node.ID]*node.Info) {
 		c.nodeChanged.Store(true)
-		// c.onNodeChanged()
 	})
 	log.Info("changefeed bootstrap initial nodes",
 		zap.Int("nodes", len(nodes)))
@@ -499,7 +498,7 @@ func (c *Controller) RemoveNode(id node.ID) {
 
 func (c *Controller) submitPeriodTask() {
 	task := func() time.Time {
-		c.stream.In() <- &Event{eventType: EventPeriod}
+		c.stream.Push("coordinator", &Event{eventType: EventPeriod})
 		return time.Now().Add(time.Millisecond * 500)
 	}
 	periodTaskhandler := c.taskScheduler.SubmitFunc(task, time.Now().Add(time.Millisecond*500))

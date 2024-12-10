@@ -44,6 +44,8 @@ type Operator[T comparable, S any] interface {
 	Check(from node.ID, status S)
 	// OnNodeRemove is called when node offline
 	OnNodeRemove(node.ID)
+	// AffectedNodes returns the nodes that are affected by this operator
+	AffectedNodes() []node.ID
 	// OnTaskRemoved is called when the task is removed
 	OnTaskRemoved()
 	// String returns the string representation of the operator

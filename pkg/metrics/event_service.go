@@ -18,21 +18,13 @@ import (
 )
 
 var (
-	// SorterOutputEventCount is the metric that counts events output by the sorter.
-	SorterOutputEventCount = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "ticdc",
-		Subsystem: "sorter",
-		Name:      "output_event_count",
-		Help:      "The number of events output by the sorter",
-	}, []string{"namespace", "changefeed", "type"})
-
 	// EventServiceSendEventCount is the metric that counts events sent by the event service.
 	EventServiceSendEventCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "ticdc",
 		Subsystem: "event_service",
 		Name:      "send_event_count",
 		Help:      "The number of events sent by the event service",
-	}, []string{"namespace", "changefeed", "type"})
+	}, []string{"type"})
 
 	// EventServiceSendEventDuration is the metric that records the duration of sending events by the event service.
 	EventServiceSendEventDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -71,35 +63,12 @@ var (
 			Name:      "dispatcher_count",
 			Help:      "The number of dispatchers in event service",
 		}, []string{"cluster"})
-	EventServiceDropScanTaskCount = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "ticdc",
-			Subsystem: "event_service",
-			Name:      "drop_scan_task_count",
-			Help:      "The number of scan tasks dropped",
-		})
 	EventServiceScanTaskCount = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
 			Name:      "scan_task_count",
 			Help:      "The number of scan tasks that have been done",
-		})
-	EventServiceScanTaskQueueDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "ticdc",
-			Subsystem: "event_service",
-			Name:      "scan_task_queue_duration",
-			Help:      "The duration of a scan task being queued",
-			Buckets:   prometheus.DefBuckets,
-		})
-	EventServiceTaskHandleDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "ticdc",
-			Subsystem: "event_service",
-			Name:      "task_handle_duration",
-			Help:      "The duration of handling a scan task",
-			Buckets:   prometheus.DefBuckets,
 		})
 	EventServicePendingScanTaskCount = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -112,16 +81,12 @@ var (
 
 // InitMetrics registers all metrics in this file.
 func InitEventServiceMetrics(registry *prometheus.Registry) {
-	registry.MustRegister(SorterOutputEventCount)
 	registry.MustRegister(EventServiceSendEventCount)
 	registry.MustRegister(EventServiceSendEventDuration)
 	registry.MustRegister(EventServiceResolvedTsGauge)
 	registry.MustRegister(EventServiceResolvedTsLagGauge)
 	registry.MustRegister(EventServiceScanDuration)
 	registry.MustRegister(EventServiceDispatcherGauge)
-	registry.MustRegister(EventServiceDropScanTaskCount)
 	registry.MustRegister(EventServiceScanTaskCount)
-	registry.MustRegister(EventServiceScanTaskQueueDuration)
-	registry.MustRegister(EventServiceTaskHandleDuration)
 	registry.MustRegister(EventServicePendingScanTaskCount)
 }

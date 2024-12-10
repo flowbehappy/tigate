@@ -217,6 +217,13 @@ func NewChangefeedIDFromPB(pb *heartbeatpb.ChangefeedID) ChangeFeedID {
 	return d
 }
 
+func NewChangefeedGIDFromPB(pb *heartbeatpb.ChangefeedID) GID {
+	return GID{
+		Low:  pb.Low,
+		High: pb.High,
+	}
+}
+
 func (c ChangeFeedID) ToPB() *heartbeatpb.ChangefeedID {
 	return &heartbeatpb.ChangefeedID{
 		Low:       c.Id.Low,

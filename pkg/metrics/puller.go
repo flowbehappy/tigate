@@ -28,7 +28,6 @@ var (
 			Name:      "event_feed_error_count",
 			Help:      "The number of error return by tikv",
 		}, []string{"type"})
-
 	eventSize = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
@@ -37,13 +36,13 @@ var (
 			Help:      "Size of KV events.",
 			Buckets:   prometheus.ExponentialBuckets(16, 2, 25),
 		}, []string{"type"})
-	pullEventCounter = prometheus.NewCounterVec(
+	PullerEventCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "ticdc",
 			Subsystem: "kvclient",
 			Name:      "pull_event_count",
 			Help:      "event count received by this puller",
-		}, []string{"type", "namespace", "changefeed"})
+		}, []string{"type"})
 	clientChannelSize = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
@@ -111,7 +110,7 @@ func InitPullerMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventFeedErrorCounter)
 	registry.MustRegister(BatchResolvedEventSize)
 	registry.MustRegister(eventSize)
-	registry.MustRegister(pullEventCounter)
+	registry.MustRegister(PullerEventCounter)
 	registry.MustRegister(clientChannelSize)
 	registry.MustRegister(LockResolveDuration)
 	registry.MustRegister(regionWorkerQueueDuration)

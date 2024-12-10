@@ -76,9 +76,9 @@ func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}
 	wg.Wait()
 	log.Warn("begin to push data into dispatchers")
 	for _, event := range eventList {
-		eventCollectorItem.GetDS().In(event.DispatcherID) <- dispatcher.DispatcherEvent{
+		eventCollectorItem.GetDS().Push(event.DispatcherID, dispatcher.DispatcherEvent{
 			Event: event,
-		}
+		})
 	}
 	log.Warn("end to push data into dispatchers")
 }

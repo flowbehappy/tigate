@@ -63,13 +63,14 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 		schemaID:     SchemaID,
 		Span:         span,
 		ChangefeedID: cfID,
-		status: atomic.NewPointer(&heartbeatpb.TableSpanStatus{
-			ID:           id.ToPB(),
-			CheckpointTs: checkpointTs,
-		}),
-		blockState: atomic.NewPointer[heartbeatpb.State](nil),
+		status:       atomic.NewPointer[heartbeatpb.TableSpanStatus](nil),
+		blockState:   atomic.NewPointer[heartbeatpb.State](nil),
 	}
 	r.initGroupID()
+	r.initStatus(&heartbeatpb.TableSpanStatus{
+		ID:           id.ToPB(),
+		CheckpointTs: checkpointTs,
+	})
 	log.Info("new replica set created",
 		zap.String("changefeed id", cfID.Name()),
 		zap.String("id", id.String()),
@@ -96,11 +97,12 @@ func NewWorkingReplicaSet(
 		Span:         span,
 		ChangefeedID: cfID,
 		nodeID:       nodeID,
-		status:       atomic.NewPointer(status),
+		status:       atomic.NewPointer[heartbeatpb.TableSpanStatus](nil),
 		blockState:   atomic.NewPointer[heartbeatpb.State](nil),
 		tsoClient:    tsoClient,
 	}
 	r.initGroupID()
+	r.initStatus(status)
 	log.Info("new working replica set created",
 		zap.String("changefeed id", cfID.Name()),
 		zap.String("id", id.String()),
@@ -113,6 +115,17 @@ func NewWorkingReplicaSet(
 		zap.String("start", hex.EncodeToString(span.StartKey)),
 		zap.String("end", hex.EncodeToString(span.EndKey)))
 	return r
+}
+
+func (r *SpanReplication) initStatus(status *heartbeatpb.TableSpanStatus) {
+	if status == nil || status.CheckpointTs == 0 {
+		log.Panic("add replica with invalid checkpoint ts",
+			zap.String("changefeed id", r.ChangefeedID.Name()),
+			zap.String("id", r.ID.String()),
+			zap.Uint64("checkpoint ts", status.CheckpointTs),
+		)
+	}
+	r.status.Store(status)
 }
 
 func (r *SpanReplication) initGroupID() {
@@ -130,6 +143,10 @@ func (r *SpanReplication) initGroupID() {
 	if !bytes.Equal(span.StartKey, totalSpan.StartKey) || !bytes.Equal(span.EndKey, totalSpan.EndKey) {
 		r.groupID = getGroupID(groupTable, span.TableID)
 	}
+}
+
+func (r *SpanReplication) GetStatus() *heartbeatpb.TableSpanStatus {
+	return r.status.Load()
 }
 
 func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {
@@ -156,6 +173,11 @@ func (r *SpanReplication) IsDropped() bool {
 	// 	}
 	// }
 	// return false
+}
+
+func (r *SpanReplication) IsWorking() bool {
+	status := r.status.Load()
+	return status.ComponentStatus == heartbeatpb.ComponentState_Working
 }
 
 func (r *SpanReplication) UpdateBlockState(newState heartbeatpb.State) {

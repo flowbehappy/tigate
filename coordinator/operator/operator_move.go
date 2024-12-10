@@ -106,7 +106,7 @@ func (m *MoveMaintainerOperator) OnNodeRemove(n node.ID) {
 			return
 		}
 
-		log.Info("changefeed changefeedIsRemoved from dest node",
+		log.Info("changefeed changefeed is removed from dest node",
 			zap.String("dest", m.dest.String()),
 			zap.String("origin", m.origin.String()),
 			zap.String("changefeed", m.changefeed.ID.String()))
@@ -123,6 +123,13 @@ func (m *MoveMaintainerOperator) OnNodeRemove(n node.ID) {
 			zap.String("changefeed", m.changefeed.ID.String()))
 		m.originNodeStopped = true
 	}
+}
+
+func (m *MoveMaintainerOperator) AffectedNodes() []node.ID {
+	m.lck.Lock()
+	defer m.lck.Unlock()
+
+	return []node.ID{m.origin, m.dest}
 }
 
 func (m *MoveMaintainerOperator) ID() common.ChangeFeedID {

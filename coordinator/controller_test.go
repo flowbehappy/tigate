@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/stretchr/testify/require"
@@ -63,11 +64,15 @@ func TestPauseChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
 	changefeedDB := changefeed.NewChangefeedDB()
+
+	self := node.NewInfo("localhost:8300", "")
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	nodeManager.GetAliveNodes()[self.ID] = self
 	controller := &Controller{
 		backend:      backend,
 		changefeedDB: changefeedDB,
 		operatorController: operator.NewOperatorController(nil, node.NewInfo("node1", ""),
-			changefeedDB, backend, 10),
+			changefeedDB, backend, nodeManager, 10),
 	}
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := changefeed.NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
@@ -154,11 +159,14 @@ func TestRemoveChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
 	changefeedDB := changefeed.NewChangefeedDB()
+	self := node.NewInfo("localhost:8300", "")
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	nodeManager.GetAliveNodes()[self.ID] = self
 	controller := &Controller{
 		backend:      backend,
 		changefeedDB: changefeedDB,
 		operatorController: operator.NewOperatorController(nil, node.NewInfo("node1", ""),
-			changefeedDB, backend, 10),
+			changefeedDB, backend, nodeManager, 10),
 	}
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := changefeed.NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
@@ -185,11 +193,14 @@ func TestListChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
 	changefeedDB := changefeed.NewChangefeedDB()
+	self := node.NewInfo("localhost:8300", "")
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	nodeManager.GetAliveNodes()[self.ID] = self
 	controller := &Controller{
 		backend:      backend,
 		changefeedDB: changefeedDB,
 		operatorController: operator.NewOperatorController(nil, node.NewInfo("node1", ""),
-			changefeedDB, backend, 10),
+			changefeedDB, backend, nodeManager, 10),
 	}
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := changefeed.NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
@@ -223,11 +234,14 @@ func TestCreateChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
 	changefeedDB := changefeed.NewChangefeedDB()
+	self := node.NewInfo("localhost:8300", "")
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	nodeManager.GetAliveNodes()[self.ID] = self
 	controller := &Controller{
 		backend:      backend,
 		changefeedDB: changefeedDB,
 		operatorController: operator.NewOperatorController(nil, node.NewInfo("node1", ""),
-			changefeedDB, backend, 10),
+			changefeedDB, backend, nodeManager, 10),
 		bootstrapped: atomic.NewBool(false),
 	}
 	cfID := common.NewChangeFeedIDWithName("test")
