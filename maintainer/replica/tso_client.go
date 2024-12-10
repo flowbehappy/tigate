@@ -20,3 +20,13 @@ type TSOClient interface {
 	// GetTS gets a timestamp from PD or TSO microservice.
 	GetTS(ctx context.Context) (int64, int64, error)
 }
+
+type MockTsoClient struct {
+	Err   error
+	Phy   int64
+	Logic int64
+}
+
+func (m *MockTsoClient) GetTS(_ context.Context) (int64, int64, error) {
+	return m.Phy, m.Logic, m.Err
+}

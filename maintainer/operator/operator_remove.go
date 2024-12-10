@@ -62,6 +62,11 @@ func (m *RemoveDispatcherOperator) OnNodeRemove(n node.ID) {
 	}
 }
 
+// AffectedNodes returns the nodes that the operator will affect
+func (m *RemoveDispatcherOperator) AffectedNodes() []node.ID {
+	return []node.ID{m.replicaSet.GetNodeID()}
+}
+
 func (m *RemoveDispatcherOperator) ID() common.DispatcherID {
 	return m.replicaSet.ID
 }

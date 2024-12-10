@@ -69,6 +69,10 @@ func (m *AddMaintainerOperator) OnNodeRemove(n node.ID) {
 	}
 }
 
+func (m *AddMaintainerOperator) AffectedNodes() []node.ID {
+	return []node.ID{m.dest}
+}
+
 func (m *AddMaintainerOperator) ID() common.ChangeFeedID {
 	return m.cf.ID
 }

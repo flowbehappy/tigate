@@ -34,7 +34,7 @@ func TestScheduleEvent(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -86,7 +86,7 @@ func TestResendAction(t *testing.T) {
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
@@ -191,7 +191,7 @@ func TestUpdateSchemaID(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
 	cfID := common.NewChangeFeedIDWithName("test")
-	tsoClient := &mockTsoClient{}
+	tsoClient := &replica.MockTsoClient{}
 	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID,
 		tsoClient, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
