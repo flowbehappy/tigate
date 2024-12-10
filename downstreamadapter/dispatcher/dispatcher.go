@@ -196,6 +196,7 @@ func (d *Dispatcher) InitalizeTableSchemaStore(schemaInfo []*heartbeatpb.SchemaI
 		return nil
 	}
 	d.tableSchemaStore = util.NewTableSchemaStore(schemaInfo, d.sink.SinkType())
+	d.sink.SetTableSchemaStore(d.tableSchemaStore)
 	return nil
 }
 

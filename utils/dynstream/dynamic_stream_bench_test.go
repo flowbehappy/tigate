@@ -48,7 +48,7 @@ func prepareDynamicStream(pathCount int, eventCount int, times int) (DynamicStre
 		times: times,
 		wg:    wg}
 
-	ds := NewDynamicStream(handler)
+	ds := NewParallelDynamicStream(func(p int) uint64 { return uint64(p) }, handler)
 	ds.Start()
 
 	for i := 0; i < pathCount; i++ {
@@ -67,7 +67,7 @@ func runDynamicStream(ds DynamicStream[int, int, intEvent, D, *intEventHandler],
 		go func(from, to, eventCount int) {
 			for i := 0; i < eventCount; i++ {
 				for p := from; p < to; p++ {
-					ds.In() <- intEvent(p)
+					ds.Push(p, intEvent(p))
 				}
 			}
 		}(from, to, eventCount)

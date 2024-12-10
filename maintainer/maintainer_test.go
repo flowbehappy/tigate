@@ -303,11 +303,11 @@ func TestMaintainerSchedule(t *testing.T) {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	mc.RegisterHandler(messaging.MaintainerManagerTopic,
 		func(ctx context.Context, msg *messaging.TargetMessage) error {
-			stream.In() <- &Event{
+			stream.Push(cfID.Id, &Event{
 				changefeedID: cfID,
 				eventType:    EventMessage,
 				message:      msg,
-			}
+			})
 			return nil
 		})
 	dispatcherManager := MockDispatcherManager(mc, n.ID)

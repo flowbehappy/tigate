@@ -244,7 +244,7 @@ func (m *Manager) onAddMaintainerRequest(req *heartbeatpb.AddMaintainerRequest) 
 		return
 	}
 	m.maintainers.Store(cfID, cf)
-	m.stream.In() <- &Event{changefeedID: cfID, eventType: EventInit}
+	m.stream.Push(cfID.Id, &Event{changefeedID: cfID, eventType: EventInit})
 }
 
 func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heartbeatpb.MaintainerStatus {
@@ -275,11 +275,11 @@ func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heart
 	}
 	log.Info("received remove maintainer request",
 		zap.String("changefeed", cfID.String()))
-	m.stream.In() <- &Event{
+	m.stream.Push(cfID.Id, &Event{
 		changefeedID: cfID,
 		eventType:    EventMessage,
 		message:      msg,
-	}
+	})
 	return nil
 }
 
@@ -354,13 +354,12 @@ func (m *Manager) dispatcherMaintainerMessage(
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case m.stream.In() <- &Event{
-		changefeedID: changefeed,
-		eventType:    EventMessage,
-		message:      msg,
-	}:
 	default:
-		log.Warn("maintainer is busy", zap.String("changefeed", changefeed.Name()))
+		m.stream.Push(changefeed.Id, &Event{
+			changefeedID: changefeed,
+			eventType:    EventMessage,
+			message:      msg,
+		})
 	}
 	return nil
 }

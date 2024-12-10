@@ -22,17 +22,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	streamCount = 8
-)
-
-type pathHasher struct {
-}
-
-func (h pathHasher) HashPath(path common.DispatcherID) uint64 {
-	return (common.GID)(path).FastHash()
-}
-
 func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
@@ -43,7 +32,7 @@ func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[co
 	eventsHandler := &EventsHandler{
 		eventCollector: collector,
 	}
-	stream := dynstream.NewParallelDynamicStream(streamCount, pathHasher{}, eventsHandler, option)
+	stream := dynstream.NewParallelDynamicStream(func(id common.DispatcherID) uint64 { return (common.GID)(id).FastHash() }, eventsHandler, option)
 	stream.Start()
 	return stream
 }
@@ -79,39 +68,39 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 	if len(events) == 0 {
 		return false
 	}
-	switch events[0].GetType() {
-	case commonEvent.TypeDDLEvent,
-		commonEvent.TypeSyncPointEvent,
-		commonEvent.TypeHandshakeEvent,
-		commonEvent.TypeReadyEvent,
-		commonEvent.TypeNotReusableEvent:
-		if len(events) > 1 {
-			log.Panic("receive multiple non-batchable events",
-				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-				zap.Stringer("dispatcher", stat.target.GetId()),
-				zap.Any("events", events))
-		}
-	case commonEvent.TypeResolvedEvent,
-		commonEvent.TypeDMLEvent:
-		// TypeResolvedEvent and TypeDMLEvent can be in the same batch
-		for i := 0; i < len(events); i++ {
-			if events[i].GetType() != commonEvent.TypeResolvedEvent && events[i].GetType() != commonEvent.TypeDMLEvent {
-				log.Panic("receive multiple events with upexpected types",
-					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-					zap.Stringer("dispatcher", stat.target.GetId()),
-					zap.Any("events", events))
-			}
-		}
-	default:
-		for i := 1; i < len(events); i++ {
-			if events[i].GetType() != events[0].GetType() {
-				log.Panic("receive multiple events with different types",
-					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-					zap.Stringer("dispatcher", stat.target.GetId()),
-					zap.Any("events", events))
-			}
-		}
-	}
+	// switch events[0].GetType() {
+	// case commonEvent.TypeDDLEvent,
+	// 	commonEvent.TypeSyncPointEvent,
+	// 	commonEvent.TypeHandshakeEvent,
+	// 	commonEvent.TypeReadyEvent,
+	// 	commonEvent.TypeNotReusableEvent:
+	// 	if len(events) > 1 {
+	// 		log.Panic("receive multiple non-batchable events",
+	// 			zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+	// 			zap.Stringer("dispatcher", stat.target.GetId()),
+	// 			zap.Any("events", events))
+	// 	}
+	// case commonEvent.TypeResolvedEvent,
+	// 	commonEvent.TypeDMLEvent:
+	// 	// TypeResolvedEvent and TypeDMLEvent can be in the same batch
+	// 	for i := 0; i < len(events); i++ {
+	// 		if events[i].GetType() != commonEvent.TypeResolvedEvent && events[i].GetType() != commonEvent.TypeDMLEvent {
+	// 			log.Panic("receive multiple events with upexpected types",
+	// 				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+	// 				zap.Stringer("dispatcher", stat.target.GetId()),
+	// 				zap.Any("events", events))
+	// 		}
+	// 	}
+	// default:
+	// 	for i := 1; i < len(events); i++ {
+	// 		if events[i].GetType() != events[0].GetType() {
+	// 			log.Panic("receive multiple events with different types",
+	// 				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+	// 				zap.Stringer("dispatcher", stat.target.GetId()),
+	// 				zap.Any("events", events))
+	// 		}
+	// 	}
+	// }
 
 	// just check the first event type, because all event types should be same
 	switch events[0].GetType() {

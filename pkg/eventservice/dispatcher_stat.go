@@ -62,6 +62,8 @@ type dispatcherStat struct {
 	// If so, we should wait until it is done before we send next resolvedTs event of
 	// this dispatcher.
 	scanning atomic.Bool
+
+	isRemoved atomic.Bool
 }
 
 func newDispatcherStat(

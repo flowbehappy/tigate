@@ -164,6 +164,7 @@ type eventWrap[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	paused    bool
 	eventSize int
 	eventType EventType
+
 	timestamp Timestamp
 	queueTime time.Time
 }
@@ -217,13 +218,17 @@ func newStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 		id:                  id,
 		handler:             handler,
 		eventQueue:          newEventQueueFast(option, handler),
-		doneChan:            make(chan doneInfo[A, P, T, D, H], 64),
 		reportNow:           make(chan struct{}, 1),
 		reportChan:          reportChan,
 		maxBusyPathsToTrack: maxBusyPathsToTrack,
 		option:              option,
 		startTime:           time.Now(),
 	}
+
+	if reportChan != nil {
+		s.doneChan = make(chan doneInfo[A, P, T, D, H], 64)
+	}
+
 	if option.UseBuffer {
 		s.inChan = make(chan eventWrap[A, P, T, D, H], 64)
 		s.outChan = make(chan eventWrap[A, P, T, D, H], 64)
@@ -262,14 +267,12 @@ func (s *stream[A, P, T, D, H]) start(acceptedPaths []*pathInfo[A, P, T, D, H], 
 	}
 
 	s.handleWg.Add(1)
-	if s.option.UseBuffer {
-		go s.handleLoop(acceptedPaths, formerStreams)
-	} else {
-		go s.handleLoop(acceptedPaths, formerStreams)
-	}
+	go s.handleLoop(acceptedPaths, formerStreams)
 
-	s.reportWg.Add(1)
-	go s.reportStatLoop()
+	if s.reportChan != nil {
+		s.reportWg.Add(1)
+		go s.reportStatLoop()
+	}
 }
 
 // Close the stream and wait for all goroutines to exit.
@@ -347,7 +350,9 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 				zap.Any("recover", r),
 				zap.Stack("stack"))
 		}
-		close(s.doneChan)
+		if s.doneChan != nil {
+			close(s.doneChan)
+		}
 
 		// Move remaining events in the eventChan to pendingQueue.
 		for e := range s.eventChan {
@@ -421,8 +426,9 @@ Loop:
 				}
 				beginTime := time.Now()
 				path.blocking = s.handler.Handle(path.dest, eventBuf...)
-				s.doneChan <- doneInfo[A, P, T, D, H]{pathInfo: path, handleTime: time.Since(beginTime)}
-
+				if s.doneChan != nil {
+					s.doneChan <- doneInfo[A, P, T, D, H]{pathInfo: path, handleTime: time.Since(beginTime)}
+				}
 				if path.blocking {
 					s.eventQueue.blockPath(path)
 				}
