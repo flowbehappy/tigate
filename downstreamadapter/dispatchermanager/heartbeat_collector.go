@@ -78,11 +78,11 @@ func NewHeartBeatCollector(serverId node.ID) *HeartBeatCollector {
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
 	m.SetHeartbeatRequestQueue(c.heartBeatReqQueue)
 	m.SetBlockStatusRequestQueue(c.blockStatusReqQueue)
-	err := c.heartBeatResponseDynamicStream.AddPath(m.changefeedID, m)
+	err := c.heartBeatResponseDynamicStream.AddPath(m.changefeedID.Id, m)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = c.schedulerDispatcherRequestDynamicStream.AddPath(m.changefeedID, m)
+	err = c.schedulerDispatcherRequestDynamicStream.AddPath(m.changefeedID.Id, m)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -90,16 +90,16 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 }
 
 func (c *HeartBeatCollector) RegisterCheckpointTsMessageDs(m *EventDispatcherManager) error {
-	err := c.checkpointTsMessageDynamicStream.AddPath(m.changefeedID, m)
+	err := c.checkpointTsMessageDynamicStream.AddPath(m.changefeedID.Id, m)
 	return errors.Trace(err)
 }
 
 func (c *HeartBeatCollector) RemoveEventDispatcherManager(m *EventDispatcherManager) error {
-	err := c.heartBeatResponseDynamicStream.RemovePath(m.changefeedID)
+	err := c.heartBeatResponseDynamicStream.RemovePath(m.changefeedID.Id)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = c.schedulerDispatcherRequestDynamicStream.RemovePath(m.changefeedID)
+	err = c.schedulerDispatcherRequestDynamicStream.RemovePath(m.changefeedID.Id)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -107,7 +107,7 @@ func (c *HeartBeatCollector) RemoveEventDispatcherManager(m *EventDispatcherMana
 }
 
 func (c *HeartBeatCollector) RemoveCheckpointTsMessage(changefeedID common.ChangeFeedID) error {
-	err := c.checkpointTsMessageDynamicStream.RemovePath(changefeedID)
+	err := c.checkpointTsMessageDynamicStream.RemovePath(changefeedID.Id)
 	return errors.Trace(err)
 }
 
@@ -159,7 +159,7 @@ func (c *HeartBeatCollector) RecvMessages(_ context.Context, msg *messaging.Targ
 	case messaging.TypeCheckpointTsMessage:
 		checkpointTsMessage := msg.Message[0].(*heartbeatpb.CheckpointTsMessage)
 		c.checkpointTsMessageDynamicStream.Push(
-			common.NewChangefeedIDFromPB(checkpointTsMessage.ChangefeedID),
+			common.NewChangefeedIDFromPB(checkpointTsMessage.ChangefeedID).Id,
 			NewCheckpointTsMessage(checkpointTsMessage))
 	default:
 		log.Panic("unknown message type", zap.Any("message", msg.Message))
