@@ -27,15 +27,19 @@ import (
 const (
 	DataGroupResolvedTs = 1
 	DataGroupEntries    = 2
+	DataGroupError      = 3
 
 	kvEventsCacheMaxSize = 32
 )
 
 type regionEvent struct {
-	state *regionFeedState
-	// only one of the following two fields will be set
+	state  *regionFeedState
+	worker *regionRequestWorker // TODO: remove the field
+
+	// only one of the following fields will be set
 	entries    *cdcpb.Event_Entries_
 	resolvedTs uint64
+	err        *cdcpb.Event_Error
 }
 
 type pathHasher struct {
@@ -66,14 +70,15 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 
 	for _, event := range events {
 		if event.state.isStale() {
-			log.Info("meet stale event")
-			// TODO: do we need handle it here?
+			h.handleRegionError(event.state, event.worker)
 			continue
 		}
 		if event.entries != nil {
 			handleEventEntries(span, event.state, event.entries)
 		} else if event.resolvedTs != 0 {
 			handleResolvedTs(span, event.state, event.resolvedTs)
+		} else if event.err != nil {
+			h.handleRegionError(event.state, event.worker)
 		} else {
 			log.Panic("should not reach", zap.Any("event", event), zap.Any("events", events))
 		}
@@ -121,12 +126,33 @@ func (h *regionEventHandler) GetType(event regionEvent) dynstream.EventType {
 	} else if event.resolvedTs != 0 {
 		return dynstream.EventType{DataGroup: DataGroupResolvedTs, Property: dynstream.PeriodicSignal}
 	} else {
-		log.Panic("should not reach", zap.Any("event", event))
+		// We consider all other kinds of event as error
+		return dynstream.EventType{DataGroup: DataGroupError, Property: dynstream.BatchableData}
 	}
-	return dynstream.DefaultEventType
+	// else {
+	// 	log.Panic("should not reach", zap.Any("event", event))
+	// }
+	// return dynstream.DefaultEventType
 }
 
 func (h *regionEventHandler) OnDrop(event regionEvent) {}
+
+func (h *regionEventHandler) handleRegionError(state *regionFeedState, worker *regionRequestWorker) {
+	stepsToRemoved := state.markRemoved()
+	err := state.takeError()
+	if err != nil {
+		log.Debug("region event handler get a region error",
+			zap.Uint64("workerID", worker.workerID),
+			zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
+			zap.Uint64("regionID", state.region.verID.GetID()),
+			zap.Bool("reschedule", stepsToRemoved),
+			zap.Error(err))
+	}
+	if stepsToRemoved {
+		worker.takeRegionState(SubscriptionID(state.requestID), state.getRegionID())
+		h.subClient.onRegionFail(newRegionErrorInfo(state.getRegionInfo(), err))
+	}
+}
 
 // func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *cdcpb.Event_Entries_, kvEvents []common.RawKVEntry) []common.RawKVEntry {
 func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *cdcpb.Event_Entries_) {

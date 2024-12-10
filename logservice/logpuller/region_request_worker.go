@@ -103,12 +103,17 @@ func newRegionRequestWorker(
 			if canceled := worker.run(ctx, credential); canceled {
 				return nil
 			}
-			for _, m := range worker.clearRegionStates() {
+			for subID, m := range worker.clearRegionStates() {
 				for _, state := range m {
 					state.markStopped(&sendRequestToStoreErr{})
+					regionEvent := regionEvent{
+						state:  state,
+						worker: worker,
+					}
+					worker.client.ds.Push(subID, regionEvent)
 				}
 			}
-			// The store may fail forever, so we need try to re-schedule al pending regions.
+			// The store may fail forever, so we need try to re-schedule all pending regions.
 			for _, region := range worker.clearPendingRegions() {
 				if region.isStopped() {
 					// It means it's a special task for stopping the table.
@@ -204,12 +209,11 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 	for _, event := range events {
 		regionID := event.RegionId
 		subscriptionID := SubscriptionID(event.RequestId)
-
 		state := s.getRegionState(subscriptionID, regionID)
-
 		if state != nil {
 			regionEvent := regionEvent{
-				state: state,
+				state:  state,
+				worker: s,
 			}
 			switch eventData := event.Event.(type) {
 			case *cdcpb.Event_Entries_:
@@ -223,9 +227,7 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 					zap.Uint64("regionID", event.RegionId),
 					zap.Bool("stateIsNil", state == nil),
 					zap.Any("error", eventData.Error))
-				state.markStopped(&eventError{err: eventData.Error})
-				s.handleRegionError(state)
-				continue
+				regionEvent.err = eventData
 			case *cdcpb.Event_ResolvedTs:
 				regionEvent.resolvedTs = eventData.ResolvedTs
 			case *cdcpb.Event_LongTxn_:
@@ -252,26 +254,10 @@ func (s *regionRequestWorker) dispatchResolvedTsEvent(resolvedTsEvent *cdcpb.Res
 			state.region.subscribedSpan.resolvedTs.Store(resolvedTsEvent.Ts)
 			s.client.ds.Push(SubscriptionID(resolvedTsEvent.RequestId), regionEvent{
 				state:      state,
+				worker:     s,
 				resolvedTs: resolvedTsEvent.Ts,
 			})
 		}
-	}
-}
-
-func (s *regionRequestWorker) handleRegionError(state *regionFeedState) {
-	stepsToRemoved := state.markRemoved()
-	err := state.takeError()
-	if err != nil {
-		log.Debug("region change event processor get a region error",
-			zap.Uint64("workerID", s.workerID),
-			zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
-			zap.Uint64("regionID", state.region.verID.GetID()),
-			zap.Bool("reschedule", stepsToRemoved),
-			zap.Error(err))
-	}
-	if stepsToRemoved {
-		s.takeRegionState(SubscriptionID(state.requestID), state.getRegionID())
-		s.client.onRegionFail(newRegionErrorInfo(state.getRegionInfo(), err))
 	}
 }
 
