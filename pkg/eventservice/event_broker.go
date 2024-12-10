@@ -516,18 +516,22 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			c.metricScanEventDuration.Observe(time.Since(start).Seconds())
 			return
 		}
-		if e.CRTs < task.watermark.Load() {
-			// If the commitTs of the event is less than the watermark of the dispatcher,
+		if e.CRTs < dataRange.StartTs {
+			// If the commitTs of the event is less than the startTs of the data range,
 			// there are some bugs in the eventStore.
-			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("watermark", task.watermark.Load()))
+			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("dataRangeStartTs", dataRange.StartTs))
 		}
+
 		if isNewTxn {
 			sendDML(dml)
 			tableID := task.info.GetTableSpan().TableID
 			tableInfo, err := c.schemaStore.GetTableInfo(tableID, e.CRTs-1)
 			if err != nil {
-				// FIXME handle the error
-				log.Panic("get table info failed", zap.Error(err))
+				if task.isRemoved.Load() {
+					log.Warn("get table info failed, since the dispatcher is removed", zap.Error(err))
+					return
+				}
+				log.Panic("get table info failed, unknown reason", zap.Error(err))
 			}
 			dml = pevent.NewDMLEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 		}
@@ -744,7 +748,7 @@ func (c *eventBroker) close() {
 
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommitTs uint64) {
 	if d.onResolvedTs(resolvedTs) {
-		metricEventServiceSendResolvedTsCount.Inc()
+		metricEventStoreOutputResolved.Inc()
 		d.onLatestCommitTs(latestCommitTs)
 		needScan, _ := c.checkNeedScan(d, false)
 		if needScan {
@@ -828,10 +832,12 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 	defer c.metricDispatcherCount.Dec()
 	id := dispatcherInfo.GetID()
-	if _, ok := c.dispatchers.Load(id); !ok {
+	stat, ok := c.dispatchers.Load(id)
+	if !ok {
 		c.tableTriggerDispatchers.Delete(id)
 		return
 	}
+	stat.(*dispatcherStat).isRemoved.Store(true)
 	c.eventStore.UnregisterDispatcher(id)
 	c.schemaStore.UnregisterTable(dispatcherInfo.GetTableSpan().TableID)
 	c.dispatchers.Delete(id)
