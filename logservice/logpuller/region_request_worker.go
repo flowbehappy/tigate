@@ -165,22 +165,22 @@ func (s *regionRequestWorker) run(ctx context.Context, credential *security.Cred
 	}()
 
 	g.Go(func() error {
-		return s.receiveAndDispatchChangeEventsToProcessor(gctx, cc)
+		return s.receiveAndDispatchChangeEvents(gctx, cc)
 	})
 	g.Go(func() error { return s.processRegionSendTask(gctx, cc) })
 	_ = g.Wait()
 	return isCanceled()
 }
 
-// receiveAndDispatchChangeEventsToProcessor receives events from the grpc stream and dispatches them to the processor.
-func (s *regionRequestWorker) receiveAndDispatchChangeEventsToProcessor(
+// receiveAndDispatchChangeEventsToProcessor receives events from the grpc stream and dispatches them to ds.
+func (s *regionRequestWorker) receiveAndDispatchChangeEvents(
 	ctx context.Context,
 	conn *ConnAndClient,
 ) error {
 	for {
 		changeEvent, err := conn.Client.Recv()
 		if err != nil {
-			log.Debug("region request worker receive from grpc stream failed",
+			log.Info("region request worker receive from grpc stream failed",
 				zap.Uint64("workerID", s.workerID),
 				zap.Uint64("storeID", s.store.storeID),
 				zap.String("addr", s.store.storeAddr),
@@ -217,7 +217,7 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 			case *cdcpb.Event_Admin_:
 				// ignore
 			case *cdcpb.Event_Error:
-				log.Debug("region request worker receives a region error",
+				log.Info("region request worker receives a region error",
 					zap.Uint64("workerID", s.workerID),
 					zap.Uint64("subscriptionID", uint64(subscriptionID)),
 					zap.Uint64("regionID", event.RegionId),

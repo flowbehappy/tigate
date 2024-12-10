@@ -460,6 +460,10 @@ func (s *SubscriptionClient) handleRegions(ctx context.Context, eg *errgroup.Gro
 				continue
 			}
 
+			log.Info("subscription client try request a region",
+				zap.Uint64("subscriptionID", uint64(region.subscribedSpan.subID)),
+				zap.Uint64("regionID", region.verID.GetID()))
+
 			region, ok := s.attachRPCContextForRegion(ctx, region)
 			// If attachRPCContextForRegion fails, the region will be re-scheduled.
 			if !ok {
@@ -470,7 +474,7 @@ func (s *SubscriptionClient) handleRegions(ctx context.Context, eg *errgroup.Gro
 			worker := store.getRequestWorker()
 			worker.requestsCh <- region
 
-			log.Debug("subscription client will request a region",
+			log.Info("subscription client will request a region",
 				zap.Uint64("workID", worker.workerID),
 				zap.Uint64("subscriptionID", uint64(region.subscribedSpan.subID)),
 				zap.Uint64("regionID", region.verID.GetID()),

@@ -60,8 +60,13 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 			zap.Uint64("subID", uint64(span.subID)))
 	}
 
+	for _, e := range events {
+		log.Info("handle region events", zap.Uint64("resolvedTs", e.resolvedTs))
+	}
+
 	for _, event := range events {
 		if event.state.isStale() {
+			log.Info("meet stale event")
 			// TODO: do we need handle it here?
 			continue
 		}
@@ -219,6 +224,10 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 }
 
 func handleResolvedTs(span *subscribedSpan, state *regionFeedState, resolvedTs uint64) {
+	log.Info("resolvedTs updated",
+		zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
+		zap.Uint64("regionID", state.getRegionID()),
+		zap.Uint64("resolvedTs", resolvedTs))
 	if state.isStale() || !state.isInitialized() {
 		return
 	}
