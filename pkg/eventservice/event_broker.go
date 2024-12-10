@@ -527,8 +527,11 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			tableID := task.info.GetTableSpan().TableID
 			tableInfo, err := c.schemaStore.GetTableInfo(tableID, e.CRTs-1)
 			if err != nil {
-				// FIXME handle the error
-				log.Panic("get table info failed", zap.Error(err))
+				if task.isRemoved.Load() {
+					log.Warn("get table info failed, since the dispatcher is removed", zap.Error(err))
+					return
+				}
+				log.Panic("get table info failed, unknown reason", zap.Error(err))
 			}
 			dml = pevent.NewDMLEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 		}
@@ -829,10 +832,12 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 	defer c.metricDispatcherCount.Dec()
 	id := dispatcherInfo.GetID()
-	if _, ok := c.dispatchers.Load(id); !ok {
+	stat, ok := c.dispatchers.Load(id)
+	if !ok {
 		c.tableTriggerDispatchers.Delete(id)
 		return
 	}
+	stat.(*dispatcherStat).isRemoved.Store(true)
 	c.eventStore.UnregisterDispatcher(id)
 	c.schemaStore.UnregisterTable(dispatcherInfo.GetTableSpan().TableID)
 	c.dispatchers.Delete(id)
