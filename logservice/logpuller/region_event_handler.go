@@ -68,6 +68,9 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 		}
 	}
 	if len(span.kvEventsCache) > 0 {
+		log.Info("consumeKVEvents",
+			zap.Uint64("subID", uint64(span.subID)),
+			zap.Int("kvEventsCacheLen", len(span.kvEventsCache)))
 		return span.consumeKVEvents(span.kvEventsCache, func() {
 			if cap(span.kvEventsCache) > kvEventsCacheMaxSize {
 				span.kvEventsCache = nil
@@ -75,7 +78,9 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 				span.kvEventsCache = span.kvEventsCache[:0]
 			}
 			h.subClient.wakeSubscription(span.subID)
-			log.Info("wakeSubscription", zap.Uint64("subID", uint64(span.subID)))
+			log.Info("wakeSubscription",
+				zap.Uint64("subID", uint64(span.subID)),
+				zap.Int("kvEventsCacheLen", len(span.kvEventsCache)))
 		})
 	}
 	return false
