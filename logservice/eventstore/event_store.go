@@ -116,7 +116,7 @@ type subscriptionStat struct {
 
 	dbIndex int
 
-	eventCh *chann.UnlimitedChannel[kvEventsAndCallback, uint64]
+	eventCh *chann.UnlimitedChannel[eventWithCallback, uint64]
 	// data <= checkpointTs can be deleted
 	checkpointTs atomic.Uint64
 	// the resolveTs persisted in the store
@@ -125,21 +125,27 @@ type subscriptionStat struct {
 	maxEventCommitTs atomic.Uint64
 }
 
-type kvEventsAndCallback struct {
+type eventWithCallback struct {
 	subID    logpuller.SubscriptionID
 	tableID  int64
 	kvs      []common.RawKVEntry
 	callback func()
 }
 
-func kvEventsAndCallbackSizer(_ kvEventsAndCallback) int { return 0 }
+func eventWithCallbackSizer(e eventWithCallback) int {
+	size := 0
+	for _, e := range e.kvs {
+		size += int(e.KeyLen + e.ValueLen + e.OldValueLen)
+	}
+	return size
+}
 
 type eventStore struct {
 	pdClock   pdutil.Clock
 	subClient *logpuller.SubscriptionClient
 
 	dbs            []*pebble.DB
-	chs            []*chann.UnlimitedChannel[kvEventsAndCallback, uint64]
+	chs            []*chann.UnlimitedChannel[eventWithCallback, uint64]
 	writeTaskPools []*writeTaskPool
 
 	gcManager *gcManager
@@ -207,7 +213,7 @@ func New(
 		subClient: subClient,
 
 		dbs:            make([]*pebble.DB, 0, dbCount),
-		chs:            make([]*chann.UnlimitedChannel[kvEventsAndCallback, uint64], 0, dbCount),
+		chs:            make([]*chann.UnlimitedChannel[eventWithCallback, uint64], 0, dbCount),
 		writeTaskPools: make([]*writeTaskPool, 0, dbCount),
 
 		gcManager: newGCManager(),
@@ -223,7 +229,7 @@ func New(
 			log.Fatal("open db failed", zap.Error(err))
 		}
 		store.dbs = append(store.dbs, db)
-		store.chs = append(store.chs, chann.NewUnlimitedChannel[kvEventsAndCallback, uint64](nil, kvEventsAndCallbackSizer))
+		store.chs = append(store.chs, chann.NewUnlimitedChannel[eventWithCallback, uint64](nil, eventWithCallbackSizer))
 		store.writeTaskPools = append(store.writeTaskPools, newWriteTaskPool(store, store.dbs[i], store.chs[i], writeWorkerNumPerDB))
 	}
 	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]*dispatcherStat)
@@ -282,11 +288,11 @@ func newPebbleOptions() *pebble.Options {
 type writeTaskPool struct {
 	store     *eventStore
 	db        *pebble.DB
-	dataCh    *chann.UnlimitedChannel[kvEventsAndCallback, uint64]
+	dataCh    *chann.UnlimitedChannel[eventWithCallback, uint64]
 	workerNum int
 }
 
-func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[kvEventsAndCallback, uint64], workerNum int) *writeTaskPool {
+func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[eventWithCallback, uint64], workerNum int) *writeTaskPool {
 	return &writeTaskPool{
 		store:     store,
 		db:        db,
@@ -300,7 +306,7 @@ func (p *writeTaskPool) run(_ context.Context) {
 	for i := 0; i < p.workerNum; i++ {
 		go func() {
 			defer p.store.wg.Done()
-			buffer := make([]kvEventsAndCallback, 0, 64)
+			buffer := make([]eventWithCallback, 0, 64)
 			for {
 				events, ok := p.dataCh.GetMultipleNoGroup(buffer)
 				if !ok {
@@ -458,7 +464,7 @@ func (e *eventStore) RegisterDispatcher(
 
 	consumeKVEvents := func(kvs []common.RawKVEntry, finishCallback func()) bool {
 		subStat.maxEventCommitTs.Store(kvs[len(kvs)-1].CRTs)
-		subStat.eventCh.Push(kvEventsAndCallback{
+		subStat.eventCh.Push(eventWithCallback{
 			subID:    subStat.subID,
 			tableID:  subStat.tableID,
 			kvs:      kvs,
@@ -674,7 +680,7 @@ func (e *eventStore) updateMetricsOnce() {
 	metrics.EventStoreResolvedTsLagGauge.Set(eventStoreResolvedTsLag)
 }
 
-func (e *eventStore) writeEvents(db *pebble.DB, events []kvEventsAndCallback) error {
+func (e *eventStore) writeEvents(db *pebble.DB, events []eventWithCallback) error {
 	metrics.EventStoreWriteRequestsCount.Inc()
 	batch := db.NewBatch()
 	kvCount := 0

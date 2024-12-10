@@ -35,7 +35,7 @@ import (
 type ddlJobFetcher struct {
 	puller *logpuller.LogPullerMultiSpan
 
-	writeDDLEvent func(ddlEvent DDLJobWithCommitTs)
+	cacheDDLEvent func(ddlEvent DDLJobWithCommitTs)
 
 	advanceResolvedTs func(resolvedTS uint64)
 
@@ -51,11 +51,11 @@ func newDDLJobFetcher(
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 	startTs uint64,
-	writeDDLEvent func(ddlEvent DDLJobWithCommitTs),
+	cacheDDLEvent func(ddlEvent DDLJobWithCommitTs),
 	advanceResolvedTs func(resolvedTS uint64),
 ) *ddlJobFetcher {
 	ddlJobFetcher := &ddlJobFetcher{
-		writeDDLEvent:     writeDDLEvent,
+		cacheDDLEvent:     cacheDDLEvent,
 		advanceResolvedTs: advanceResolvedTs,
 		kvStorage:         kvStorage,
 	}
@@ -73,7 +73,7 @@ func (p *ddlJobFetcher) close(ctx context.Context) error {
 	return p.puller.Close(ctx)
 }
 
-func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, finishCallback func()) bool {
+func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, _ func()) bool {
 	for _, kv := range kvs {
 		job, err := p.unmarshalDDL(&kv)
 		if err != nil {
@@ -84,7 +84,8 @@ func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, finishCallback func()) bo
 			continue
 		}
 
-		p.writeDDLEvent(DDLJobWithCommitTs{
+		// cache ddl job in memory until the resolve ts pass its commit ts
+		p.cacheDDLEvent(DDLJobWithCommitTs{
 			Job:      job,
 			CommitTs: kv.CRTs,
 		})
