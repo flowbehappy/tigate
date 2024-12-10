@@ -516,11 +516,12 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			c.metricScanEventDuration.Observe(time.Since(start).Seconds())
 			return
 		}
-		if e.CRTs < task.watermark.Load() {
-			// If the commitTs of the event is less than the watermark of the dispatcher,
+		if e.CRTs < dataRange.EndTs {
+			// If the commitTs of the event is less than the endTs of the data range,
 			// there are some bugs in the eventStore.
-			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("watermark", task.watermark.Load()))
+			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("dataRangeEndTs", dataRange.EndTs))
 		}
+
 		if isNewTxn {
 			sendDML(dml)
 			tableID := task.info.GetTableSpan().TableID
