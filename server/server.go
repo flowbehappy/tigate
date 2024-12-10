@@ -131,13 +131,8 @@ func (c *server) initialize(ctx context.Context) error {
 	subscriptionClient := logpuller.NewSubscriptionClient(
 		&logpuller.SubscriptionClientConfig{
 			RegionRequestWorkerPerStore: 16,
-			StreamCount:                 4,
-		},
-		c.pdClient,
-		c.RegionCache,
-		c.PDClock,
-		txnutil.NewLockerResolver(c.KVStorage.(tikv.Storage)),
-		&security.Credential{},
+		}, c.pdClient, c.RegionCache, c.PDClock,
+		txnutil.NewLockerResolver(c.KVStorage.(tikv.Storage)), &security.Credential{},
 	)
 	conf := config.GetGlobalServerConfig()
 	schemaStore := schemastore.New(ctx, conf.DataDir, subscriptionClient, c.pdClient, c.PDClock, c.KVStorage)
