@@ -143,7 +143,7 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 	}
 
 	if len(span.kvEventsCache) != 0 {
-		log.Fatal("kvEventsCache is not empty",
+		log.Panic("kvEventsCache is not empty",
 			zap.Int("kvEventsCacheLen", len(span.kvEventsCache)),
 			zap.Uint64("subID", uint64(state.region.subscribedSpan.subID)))
 	}
