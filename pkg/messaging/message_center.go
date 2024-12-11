@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pingcap/ticdc/pkg/node"
 
@@ -107,6 +108,9 @@ func NewMessageCenter(ctx context.Context, id node.ID, epoch uint64, cfg *config
 	mc.remoteTargets.m = make(map[node.ID]*remoteMessageTarget)
 	mc.router.runDispatch(ctx, mc.wg, mc.receiveEventCh)
 	mc.router.runDispatch(ctx, mc.wg, mc.receiveCmdCh)
+
+	go mc.updateMetrics(ctx)
+
 	log.Info("create message center success, message router is running.",
 		zap.Stringer("id", id), zap.Any("epoch", epoch))
 	return mc
@@ -289,6 +293,22 @@ func (mc *messageCenter) touchRemoteTarget(id node.ID, epoch uint64, addr string
 	mc.remoteTargets.m[id] = newTarget
 	return newTarget
 
+}
+
+func (mc *messageCenter) updateMetrics(ctx context.Context) {
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+	commandChLen := metrics.MessagingReceiveChannelLength.WithLabelValues("command")
+	eventChLen := metrics.MessagingReceiveChannelLength.WithLabelValues("event")
+	for {
+		select {
+		case <-ticker.C:
+			commandChLen.Set(float64(len(mc.receiveCmdCh)))
+			eventChLen.Set(float64(len(mc.receiveEventCh)))
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // grpcServer implements the gRPC `service MessageCenter` defined in the proto file

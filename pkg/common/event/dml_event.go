@@ -326,6 +326,7 @@ func (t *DMLEvent) decodeV0(data []byte) error {
 // AssembleRows assembles the Rows from the RawRows.
 // It also sets the TableInfo and clears the RawRows.
 func (t *DMLEvent) AssembleRows(tableInfo *common.TableInfo) error {
+	defer t.TableInfo.InitPrivateFields()
 	// t.Rows is already set, no need to assemble again
 	if t.Rows != nil {
 		return nil
