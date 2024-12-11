@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -287,17 +288,18 @@ type TableInfo struct {
 	preSQLs [4]string `json:"-"`
 }
 
-// initPrivateFields initializes the private fields of TableInfo
-// We do it to reduce the memory allocation and GC overhead
-// It must be called after TableName and columnSchema are initialized
+var tableInfoOnce sync.Once
+
 func (ti *TableInfo) InitPrivateFields() {
-	if ti == nil {
-		return
-	}
-	ti.TableName.quotedName = ti.TableName.QuoteString()
-	ti.preSQLs[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
-	ti.preSQLs[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
-	ti.preSQLs[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
+	tableInfoOnce.Do(func() {
+		if ti == nil {
+			return
+		}
+		ti.TableName.quotedName = ti.TableName.QuoteString()
+		ti.preSQLs[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
+		ti.preSQLs[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
+		ti.preSQLs[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
+	})
 }
 
 func (ti *TableInfo) MarshalJSON() ([]byte, error) {
@@ -376,6 +378,7 @@ func (ti *TableInfo) GetColumnsFlag() map[int64]*ColumnFlagType {
 }
 
 func (ti *TableInfo) GetPreInsertSQL() string {
+	ti.InitPrivateFields()
 	if ti.preSQLs[preSQLInsert] == "" {
 		log.Panic("preSQLs[preSQLInsert] is not initialized")
 	}
@@ -383,6 +386,7 @@ func (ti *TableInfo) GetPreInsertSQL() string {
 }
 
 func (ti *TableInfo) GetPreReplaceSQL() string {
+	ti.InitPrivateFields()
 	if ti.preSQLs[preSQLReplace] == "" {
 		log.Panic("preSQLs[preSQLReplace] is not initialized")
 	}
@@ -390,6 +394,7 @@ func (ti *TableInfo) GetPreReplaceSQL() string {
 }
 
 func (ti *TableInfo) GetPreUpdateSQL() string {
+	ti.InitPrivateFields()
 	if ti.preSQLs[preSQLUpdate] == "" {
 		log.Panic("preSQLs[preSQLUpdate] is not initialized")
 	}
