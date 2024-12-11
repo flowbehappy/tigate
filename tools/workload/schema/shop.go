@@ -18,6 +18,8 @@ import (
 	"math/rand"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const createShopItemTable = `
@@ -103,9 +105,7 @@ func (s *ShopItemWorkload) BuildUpdateSql(opt UpdateOption) string {
 }
 
 func (s *ShopItemWorkload) generateRow(suffix int) string {
-	jetter := rand.Int31n(100000) // in case for duplicate primary key
-	id := uint64(rand.Int63()) + uint64(jetter)
-	primaryKey := fmt.Sprintf("%d-%d", id, suffix)
+	primaryKey := uuid.New().String()                 // UUID for item_primary_key
 	itemID := "fixed_item_id"                         // Fixed value for item_id
 	itemSetID := "fixed_item_set_id"                  // Fixed value for item_set_id
 	productID := "fixed_product_id"                   // Fixed value for product_id
@@ -116,8 +116,8 @@ func (s *ShopItemWorkload) generateRow(suffix int) string {
 	merchantItemSetID := "fixed_merchant_item_set_id" // Fixed value for merchant_item_set_id
 	jsonField := randomJSONString(s.r, s.jsonFieldSize)
 
-	return fmt.Sprintf("'%s','%s','%s','%s','%s','%s',%d,'%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s',%d,%d,%d,'%s'",
-		primaryKey, itemID, itemSetID, productID, productSetID, country,
+	return fmt.Sprintf("'%s-%d','%s','%s','%s','%s','%s',%d,'%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s',%d,%d,%d,'%s'",
+		primaryKey, suffix, itemID, itemSetID, productID, productSetID, country,
 		merchantID, merchantItemID, merchantItemSetID,
 		jsonField, jsonField, jsonField, jsonField, jsonField, jsonField,
 		jsonField, jsonField, jsonField, jsonField, jsonField, jsonField,
