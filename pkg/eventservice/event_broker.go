@@ -546,12 +546,12 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 
 func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int) {
 	c.wg.Add(1)
-	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 50)
+	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 25)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	messageCh := c.messageCh[workerIndex]
 	tickCh := flushResolvedTsTicker.C
 
-	maxBatchSize := 1024
+	maxBatchSize := 512
 	batchM := make([]*wrapEvent, 0, maxBatchSize)
 
 	go func() {
