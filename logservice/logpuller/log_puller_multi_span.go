@@ -31,9 +31,7 @@ import (
 // LogPullerMultiSpan is a simple wrapper around LogPuller.
 // It just maintain the minimum resolve ts of all spans.
 type LogPullerMultiSpan struct {
-	innerPuller *LogPuller
-
-	consume func(context.Context, *common.RawKVEntry) error
+	advanceResolvedTs func(ts uint64)
 
 	// used to notify the min resolved ts of all spans is updated
 	notifyCh chan interface{}
@@ -53,17 +51,18 @@ type LogPullerMultiSpan struct {
 }
 
 func NewLogPullerMultiSpan(
-	client *SubscriptionClient,
+	subClient *SubscriptionClient,
 	pdClock pdutil.Clock,
 	spans []heartbeatpb.TableSpan,
 	startTs uint64,
-	consume func(context.Context, *common.RawKVEntry) error,
+	consume func([]common.RawKVEntry, func()) bool,
+	advanceResolvedTs func(ts uint64),
 ) *LogPullerMultiSpan {
 	if len(spans) <= 1 {
 		log.Panic("spans should have more than 1 element")
 	}
 	pullerWrapper := &LogPullerMultiSpan{
-		consume:           consume,
+		advanceResolvedTs: advanceResolvedTs,
 		notifyCh:          make(chan interface{}, 4),
 		resolvedTsMap:     make(map[SubscriptionID]*resolvedTsItem),
 		resolvedTsHeap:    heap.NewHeap[*resolvedTsItem](),
@@ -71,23 +70,17 @@ func NewLogPullerMultiSpan(
 		pendingResolvedTs: 0,
 	}
 
-	// consumeWrapper may be called concurrently
-	consumeWrapper := func(ctx context.Context, entry *common.RawKVEntry, subID SubscriptionID) error {
-		if entry.IsResolved() {
-			pullerWrapper.tryUpdatePendingResolvedTs(subID, entry.CRTs)
-			return nil
-		}
-		return consume(ctx, entry)
-	}
-
-	pullerWrapper.innerPuller = NewLogPuller(client, pdClock, consumeWrapper)
 	for _, span := range spans {
-		subID := pullerWrapper.innerPuller.Subscribe(span, startTs)
+		subID := subClient.AllocSubscriptionID()
 		item := &resolvedTsItem{
 			resolvedTs: 0,
 		}
 		pullerWrapper.resolvedTsMap[subID] = item
 		pullerWrapper.resolvedTsHeap.AddOrUpdate(item)
+		advanceSubSpanResolvedTs := func(ts uint64) {
+			pullerWrapper.tryUpdatePendingResolvedTs(subID, ts)
+		}
+		subClient.Subscribe(subID, span, startTs, consume, advanceSubSpanResolvedTs, 0)
 	}
 	return pullerWrapper
 }
@@ -97,14 +90,11 @@ func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
 	eg.Go(func() error {
 		return p.sendResolvedTsPeriodically(ctx)
 	})
-	eg.Go(func() error {
-		return p.innerPuller.Run(ctx)
-	})
 	return eg.Wait()
 }
 
 func (p *LogPullerMultiSpan) Close(ctx context.Context) error {
-	return p.innerPuller.Close(ctx)
+	return nil
 }
 
 // return whether the global resolved ts of all spans is updated
@@ -143,14 +133,11 @@ func (p *LogPullerMultiSpan) sendResolvedTsPeriodically(ctx context.Context) err
 		defer p.mu.Unlock()
 		// Note: pendingResolvedTs may be 0(which means not all spans have received resolved ts) and it won't be send here
 		if p.pendingResolvedTs > p.prevResolvedTs {
-			p.consume(ctx, &common.RawKVEntry{
-				OpType: common.OpTypeResolved,
-				CRTs:   p.pendingResolvedTs,
-			})
+			p.advanceResolvedTs(p.pendingResolvedTs)
 			p.prevResolvedTs = p.pendingResolvedTs
 		}
 	}
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():

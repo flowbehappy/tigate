@@ -24,6 +24,14 @@ var (
 			Name:      "resolved_ts_lag",
 			Help:      "The lag of resolved ts",
 		})
+
+	SubscriptionClientResolvedTsLagGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "subscription_client",
+			Name:      "resolved_ts_lag",
+			Help:      "The resolved ts lag of subscription client.",
+		})
 )
 
 func InitLogPullerMetrics(registry *prometheus.Registry) {
