@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	resolvedTsCacheSize = 8192
+	resolvedTsCacheSize = 512
 	streamCount         = 4
 	basicChannelSize    = 2048
 	// TODO: need to adjust the worker count
