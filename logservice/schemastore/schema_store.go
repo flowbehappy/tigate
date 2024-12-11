@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
@@ -14,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -79,8 +79,8 @@ type schemaStore struct {
 func New(
 	ctx context.Context,
 	root string,
+	subClient *logpuller.SubscriptionClient,
 	pdCli pd.Client,
-	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 ) SchemaStore {
@@ -103,8 +103,8 @@ func New(
 		zap.Uint64("finishedDDLTS", s.finishedDDLTs),
 		zap.Int64("schemaVersion", s.schemaVersion))
 	s.ddlJobFetcher = newDDLJobFetcher(
+		subClient,
 		pdCli,
-		regionCache,
 		pdClock,
 		kvStorage,
 		upperBound.ResolvedTs,
@@ -142,6 +142,9 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 			resolvedPhyTs := oracle.ExtractPhysical(pendingTs)
 			resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
 			metrics.SchemaStoreResolvedTsLagGauge.Set(float64(resolvedLag))
+			// log.Info("advance resolved ts",
+			// 	zap.Uint64("resolveTs", pendingTs),
+			// 	zap.Float64("lag(s)", resolvedLag))
 		}()
 
 		if pendingTs <= s.resolvedTs.Load() {

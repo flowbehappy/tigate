@@ -209,10 +209,10 @@
             },
             {
               "exemplar": true,
-              "expr": "tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", scope=~\"general\"}",
+              "expr": "avg_over_time(sum(rate(tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", scope=~\"general\"}[30s]))[1m:])",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{instance}}-sum",
+              "legendFormat": "TOTAL-AVG",
               "refId": "B"
             },
             {
@@ -320,6 +320,14 @@
               "legendFormat": "{{instance}}-{{type}}",
               "queryType": "randomWalk",
               "refId": "A"
+            },
+            {
+              "expr": "avg_over_time(sum(rate(ticdc_sink_write_bytes_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (instance, type)[1m:])",
+              "legendFormat": "{{instance}}-AVG",
+              "interval": "",
+              "exemplar": true,
+              "refId": "B",
+              "hide": false
             }
           ],
           "thresholds": [],
