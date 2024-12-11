@@ -165,7 +165,12 @@ var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 func randomBytes(r *rand.Rand, buffer []byte) {
 	for i := range buffer {
-		idx := r.Intn(52)
+		idx := 1
+		if r == nil {
+			idx = rand.Intn(len(letters))
+		} else {
+			idx = r.Intn(len(letters))
+		}
 		buffer[i] = letters[idx]
 	}
 }

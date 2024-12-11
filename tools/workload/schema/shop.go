@@ -78,7 +78,7 @@ func (s *ShopItemWorkload) BuildInsertSql(tableN int, rowCount int) string {
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		row := s.generateRow()
+		row := s.generateRow(i)
 		sb.WriteString(fmt.Sprintf("(%s)", row))
 	}
 
@@ -94,7 +94,7 @@ func (s *ShopItemWorkload) BuildUpdateSql(opt UpdateOption) string {
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		row := s.generateRow()
+		row := s.generateRow(i)
 		sb.WriteString(fmt.Sprintf("(%s)", row))
 	}
 
@@ -102,10 +102,10 @@ func (s *ShopItemWorkload) BuildUpdateSql(opt UpdateOption) string {
 	return sb.String()
 }
 
-func (s *ShopItemWorkload) generateRow() string {
-	jetter := rand.Int31n(1000) // in case for duplicate primary key
-	id := uint64(s.r.Int63()) + uint64(jetter)
-	primaryKey := fmt.Sprintf("0x%x", id)
+func (s *ShopItemWorkload) generateRow(suffix int) string {
+	jetter := rand.Int31n(100000) // in case for duplicate primary key
+	id := uint64(rand.Int63()) + uint64(jetter)
+	primaryKey := fmt.Sprintf("%d-%d", id, suffix)
 	itemID := "fixed_item_id"                         // Fixed value for item_id
 	itemSetID := "fixed_item_set_id"                  // Fixed value for item_set_id
 	productID := "fixed_product_id"                   // Fixed value for product_id
@@ -125,6 +125,8 @@ func (s *ShopItemWorkload) generateRow() string {
 }
 
 func randomJSONString(r *rand.Rand, size int) string {
+	keyBuf := make([]byte, 5)
+	valueBuf := make([]byte, 10)
 	var sb strings.Builder
 	sb.WriteString("{")
 	remaining := size - 2 // account for braces
@@ -134,7 +136,9 @@ func randomJSONString(r *rand.Rand, size int) string {
 			sb.WriteString(",")
 			remaining-- // account for comma
 		}
-		entry := fmt.Sprintf("\"%s-%d\":\"%s-%d\"", "key", idx, "value", idx)
+		randomBytes(nil, keyBuf)
+		randomBytes(nil, valueBuf)
+		entry := fmt.Sprintf("\"%s-%d-%s\":\"%s-%d-%s\"", "key", idx, keyBuf, "value", idx, valueBuf)
 		sb.WriteString(entry)
 		remaining -= len(entry)
 		idx++
