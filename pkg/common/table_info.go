@@ -285,7 +285,10 @@ type TableInfo struct {
 	Version      uint16        `json:"version"`
 	columnSchema *columnSchema `json:"-"`
 
-	preSQLs [4]string `json:"-"`
+	preSQLs struct {
+		sync.RWMutex
+		m [4]string `json:"-"`
+	}
 }
 
 var tableInfoOnce sync.Once
@@ -296,9 +299,11 @@ func (ti *TableInfo) InitPrivateFields() {
 			return
 		}
 		ti.TableName.quotedName = ti.TableName.QuoteString()
-		ti.preSQLs[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
-		ti.preSQLs[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
-		ti.preSQLs[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
+		ti.preSQLs.Lock()
+		ti.preSQLs.m[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
+		ti.preSQLs.m[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
+		ti.preSQLs.m[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
+		ti.preSQLs.Unlock()
 	})
 }
 
@@ -379,26 +384,34 @@ func (ti *TableInfo) GetColumnsFlag() map[int64]*ColumnFlagType {
 
 func (ti *TableInfo) GetPreInsertSQL() string {
 	ti.InitPrivateFields()
-	if ti.preSQLs[preSQLInsert] == "" {
+
+	ti.preSQLs.RLock()
+	defer ti.preSQLs.RUnlock()
+	if ti.preSQLs.m[preSQLInsert] == "" {
 		log.Panic("preSQLs[preSQLInsert] is not initialized")
 	}
-	return ti.preSQLs[preSQLInsert]
+	return ti.preSQLs.m[preSQLInsert]
 }
 
 func (ti *TableInfo) GetPreReplaceSQL() string {
 	ti.InitPrivateFields()
-	if ti.preSQLs[preSQLReplace] == "" {
+
+	ti.preSQLs.RLock()
+	defer ti.preSQLs.RUnlock()
+	if ti.preSQLs.m[preSQLReplace] == "" {
 		log.Panic("preSQLs[preSQLReplace] is not initialized")
 	}
-	return ti.preSQLs[preSQLReplace]
+	return ti.preSQLs.m[preSQLReplace]
 }
 
 func (ti *TableInfo) GetPreUpdateSQL() string {
 	ti.InitPrivateFields()
-	if ti.preSQLs[preSQLUpdate] == "" {
+	ti.preSQLs.RLock()
+	defer ti.preSQLs.RUnlock()
+	if ti.preSQLs.m[preSQLUpdate] == "" {
 		log.Panic("preSQLs[preSQLUpdate] is not initialized")
 	}
-	return ti.preSQLs[preSQLUpdate]
+	return ti.preSQLs.m[preSQLUpdate]
 }
 
 // GetColumnInfo returns the column info by ID
