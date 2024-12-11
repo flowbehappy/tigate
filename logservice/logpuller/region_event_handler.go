@@ -64,10 +64,6 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 			zap.Uint64("subID", uint64(span.subID)))
 	}
 
-	for _, e := range events {
-		log.Info("handle region events", zap.Uint64("resolvedTs", e.resolvedTs))
-	}
-
 	for _, event := range events {
 		if event.state.isStale() {
 			h.handleRegionError(event.state, event.worker)
@@ -125,14 +121,12 @@ func (h *regionEventHandler) GetType(event regionEvent) dynstream.EventType {
 		return dynstream.EventType{DataGroup: DataGroupEntries, Property: dynstream.BatchableData}
 	} else if event.resolvedTs != 0 {
 		return dynstream.EventType{DataGroup: DataGroupResolvedTs, Property: dynstream.PeriodicSignal}
-	} else {
-		// We consider all other kinds of event as error
+	} else if event.err != nil || event.state.isStale() {
 		return dynstream.EventType{DataGroup: DataGroupError, Property: dynstream.BatchableData}
+	} else {
+		log.Panic("should not reach", zap.Any("event", event))
 	}
-	// else {
-	// 	log.Panic("should not reach", zap.Any("event", event))
-	// }
-	// return dynstream.DefaultEventType
+	return dynstream.DefaultEventType
 }
 
 func (h *regionEventHandler) OnDrop(event regionEvent) {}
@@ -250,10 +244,6 @@ func handleEventEntries(span *subscribedSpan, state *regionFeedState, entries *c
 }
 
 func handleResolvedTs(span *subscribedSpan, state *regionFeedState, resolvedTs uint64) {
-	log.Info("resolvedTs updated",
-		zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
-		zap.Uint64("regionID", state.getRegionID()),
-		zap.Uint64("resolvedTs", resolvedTs))
 	if state.isStale() || !state.isInitialized() {
 		return
 	}
