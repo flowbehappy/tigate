@@ -71,6 +71,7 @@ const (
 	bank     = "bank"
 	sysbench = "sysbench"
 	largeRow = "large_row"
+	shopItem = "shop_item"
 )
 
 func init() {
@@ -84,7 +85,7 @@ func init() {
 	flag.IntVar(&percentageForUpdate, "percentage-for-update", 0, "percentage for update: [0, 100]")
 	flag.BoolVar(&skipCreateTable, "skip-create-table", false, "do not create tables")
 	flag.StringVar(&action, "action", "prepare", "action of the workload: [prepare, insert, update, delete, write, cleanup]")
-	flag.StringVar(&workloadType, "workload-type", "sysbench", "workload type: [bank, sysbench, express, common, one, bigtable, large_row, wallet]")
+	flag.StringVar(&workloadType, "workload-type", "sysbench", "workload type: [bank, sysbench, express, common, one, bigtable, large_row, wallet, shop_item]")
 	flag.StringVar(&dbHost, "database-host", "127.0.0.1", "database host")
 	flag.StringVar(&dbUser, "database-user", "root", "database user")
 	flag.StringVar(&dbPassword, "database-password", "", "database password")
@@ -152,6 +153,9 @@ func main() {
 	case largeRow:
 		fmt.Println("use large_row workload")
 		workload = schema.NewLargeRowWorkload(rowSize, largeRowSize, largeRowRatio)
+	case shopItem:
+		fmt.Println("use shop_item workload")
+		workload = schema.NewShopItemWorkload(totalCount, rowSize)
 	default:
 		log.Panic("unsupported workload type", zap.String("workload", workloadType))
 	}
@@ -190,8 +194,12 @@ func main() {
 	if action == "insert" || action == "write" {
 		group.Add(qpsForInsert)
 		for i := 0; i < qpsForInsert; i++ {
+			fmt.Println("insert goroutine", i, "started")
 			go func() {
-				defer group.Done()
+				defer func() {
+					fmt.Println("insert goroutine", i, "exited")
+					group.Done()
+				}()
 				doInsert(dbs, workload)
 			}()
 		}
@@ -201,8 +209,12 @@ func main() {
 		updateTaskCh := make(chan updateTask, rps)
 		group.Add(qpsForUpdate)
 		for i := 0; i < qpsForUpdate; i++ {
+			fmt.Println("update goroutine", i, "started")
 			go func() {
-				defer group.Done()
+				defer func() {
+					fmt.Println("update goroutine", i, "exited")
+					group.Done()
+				}()
 				doUpdate(dbs[0], workload, updateTaskCh)
 			}()
 		}
@@ -293,8 +305,7 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 }
 
 func doInsert(dbs []*sql.DB, workload schema.Workload) {
-	t := time.Tick(time.Second)
-	for range t {
+	for {
 		i := rand.Intn(dbNum)
 		j := rand.Intn(tableCount) + tableStartIndex
 		insertSql := workload.BuildInsertSql(j, rps)
@@ -304,7 +315,7 @@ func doInsert(dbs []*sql.DB, workload schema.Workload) {
 			atomic.AddUint64(&totalError, 1)
 			continue
 		}
-		atomic.AddUint64(&total, 1)
+		atomic.AddUint64(&total, uint64(rps))
 		if total*uint64(rps) >= totalCount {
 			return
 		}
@@ -314,16 +325,18 @@ func doInsert(dbs []*sql.DB, workload schema.Workload) {
 func exceInsert(db *sql.DB, sql string, workload schema.Workload, n int) error {
 	_, err := db.Exec(sql)
 	if err != nil {
-		// if table not exists, we create it
-		if strings.Contains(err.Error(), "Error 1146") {
-			_, err := db.Exec(workload.BuildCreateTableStatement(n))
-			if err != nil {
-				log.Info("create table error: ", zap.Error(err))
-				return err
-			}
-			_, err = db.Exec(sql)
+		if !strings.Contains(err.Error(), "Error 1146") {
+			log.Info("insert error", zap.Error(err))
 			return err
 		}
+		// if table not exists, we create it
+		_, err := db.Exec(workload.BuildCreateTableStatement(n))
+		if err != nil {
+			log.Info("create table error: ", zap.Error(err))
+			return err
+		}
+		_, err = db.Exec(sql)
+		return err
 	}
 	return nil
 }
