@@ -286,7 +286,6 @@ type TableInfo struct {
 	columnSchema *columnSchema `json:"-"`
 
 	preSQLs struct {
-		sync.RWMutex
 		m [4]string `json:"-"`
 	}
 }
@@ -299,11 +298,9 @@ func (ti *TableInfo) InitPrivateFields() {
 	}
 	tableInfoOnce.Do(func() {
 		ti.TableName.quotedName = ti.TableName.QuoteString()
-		ti.preSQLs.Lock()
 		ti.preSQLs.m[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
 		ti.preSQLs.m[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
 		ti.preSQLs.m[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
-		ti.preSQLs.Unlock()
 	})
 }
 
@@ -383,10 +380,6 @@ func (ti *TableInfo) GetColumnsFlag() map[int64]*ColumnFlagType {
 }
 
 func (ti *TableInfo) GetPreInsertSQL() string {
-	ti.InitPrivateFields()
-
-	ti.preSQLs.RLock()
-	defer ti.preSQLs.RUnlock()
 	if ti.preSQLs.m[preSQLInsert] == "" {
 		log.Panic("preSQLs[preSQLInsert] is not initialized")
 	}
@@ -394,10 +387,6 @@ func (ti *TableInfo) GetPreInsertSQL() string {
 }
 
 func (ti *TableInfo) GetPreReplaceSQL() string {
-	ti.InitPrivateFields()
-
-	ti.preSQLs.RLock()
-	defer ti.preSQLs.RUnlock()
 	if ti.preSQLs.m[preSQLReplace] == "" {
 		log.Panic("preSQLs[preSQLReplace] is not initialized")
 	}
@@ -405,9 +394,6 @@ func (ti *TableInfo) GetPreReplaceSQL() string {
 }
 
 func (ti *TableInfo) GetPreUpdateSQL() string {
-	ti.InitPrivateFields()
-	ti.preSQLs.RLock()
-	defer ti.preSQLs.RUnlock()
 	if ti.preSQLs.m[preSQLUpdate] == "" {
 		log.Panic("preSQLs[preSQLUpdate] is not initialized")
 	}
