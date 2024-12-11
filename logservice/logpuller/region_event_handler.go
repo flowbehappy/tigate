@@ -28,8 +28,6 @@ const (
 	DataGroupResolvedTs = 1
 	DataGroupEntries    = 2
 	DataGroupError      = 3
-
-	kvEventsCacheMaxSize = 32
 )
 
 type regionEvent struct {
@@ -81,17 +79,15 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 		}
 	}
 	if len(span.kvEventsCache) > 0 {
-		log.Info("consume kv events", zap.Uint64("subID", uint64(span.subID)), zap.Int("kvEventsCacheLen", len(span.kvEventsCache)))
-		return span.consumeKVEvents(span.kvEventsCache, func() {
-			log.Info("try wake subscription", zap.Uint64("subID", uint64(span.subID)), zap.Int("kvEventsCacheLen", len(span.kvEventsCache)))
-			if cap(span.kvEventsCache) > kvEventsCacheMaxSize {
-				span.kvEventsCache = nil
-			} else {
-				span.kvEventsCache = span.kvEventsCache[:0]
-			}
-			log.Info("after wake subscription", zap.Uint64("subID", uint64(span.subID)), zap.Int("kvEventsCacheLen", len(span.kvEventsCache)))
+		await := span.consumeKVEvents(span.kvEventsCache, func() {
+			span.clearKVEventsCache()
 			h.subClient.wakeSubscription(span.subID)
 		})
+		// if not await, the wake callback will not be called, we need clear the cache manually.
+		if !await {
+			span.clearKVEventsCache()
+		}
+		return await
 	}
 	return false
 }
