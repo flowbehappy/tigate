@@ -251,7 +251,7 @@ func (s *SubscriptionClient) updateMetrics(ctx context.Context) error {
 		case <-ticker1.C:
 			resolvedTsLag := s.GetResolvedTsLag()
 			if resolvedTsLag > 0 {
-				metrics.SubscriptionClientResolvedTsLagGauge.Set(resolvedTsLag)
+				metrics.LogPullerResolvedTsLag.Set(resolvedTsLag)
 			}
 		case <-ticker2.C:
 			dsMetrics := s.ds.GetMetrics()
