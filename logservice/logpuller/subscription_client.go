@@ -96,6 +96,8 @@ type rangeTask struct {
 	subscribedSpan *subscribedSpan
 }
 
+const kvEventsCacheMaxSize = 32
+
 // subscribedSpan represents a span to subscribe.
 // It contains a sub span of a table(or the total span of a table),
 // the startTs of the table, and the output event channel.
@@ -128,6 +130,14 @@ type subscribedSpan struct {
 	lastAdvanceTime atomic.Int64
 	// This is used to calculate the resolvedTs lag for metrics.
 	resolvedTs atomic.Uint64
+}
+
+func (span *subscribedSpan) clearKVEventsCache() {
+	if cap(span.kvEventsCache) > kvEventsCacheMaxSize {
+		span.kvEventsCache = nil
+	} else {
+		span.kvEventsCache = span.kvEventsCache[:0]
+	}
 }
 
 type SubscriptionClientConfig struct {
