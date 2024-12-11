@@ -103,7 +103,9 @@ func (s *ShopItemWorkload) BuildUpdateSql(opt UpdateOption) string {
 }
 
 func (s *ShopItemWorkload) generateRow() string {
-	primaryKey := fmt.Sprintf("0x%x", s.r.Int63())
+	jetter := rand.Int31n(1000) // in case for duplicate primary key
+	id := uint64(s.r.Int63()) + uint64(jetter)
+	primaryKey := fmt.Sprintf("0x%x", id)
 	itemID := "fixed_item_id"                         // Fixed value for item_id
 	itemSetID := "fixed_item_set_id"                  // Fixed value for item_set_id
 	productID := "fixed_product_id"                   // Fixed value for product_id
@@ -113,9 +115,6 @@ func (s *ShopItemWorkload) generateRow() string {
 	merchantItemID := "fixed_merchant_item_id"        // Fixed value for merchant_item_id
 	merchantItemSetID := "fixed_merchant_item_set_id" // Fixed value for merchant_item_set_id
 	jsonField := randomJSONString(s.r, s.jsonFieldSize)
-	// timestamps := randomJSONString(s.r, s.jsonFieldSize)
-	// jsonFieldB, _ := json.Marshal(map[string]string{"key1": "value"})
-	// jsonField := strings.ReplaceAll(string(jsonFieldB), "\\", "")
 
 	return fmt.Sprintf("'%s','%s','%s','%s','%s','%s',%d,'%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s',%d,%d,%d,'%s'",
 		primaryKey, itemID, itemSetID, productID, productSetID, country,
