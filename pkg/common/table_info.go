@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -286,22 +286,26 @@ type TableInfo struct {
 	columnSchema *columnSchema `json:"-"`
 
 	preSQLs struct {
-		m [4]string `json:"-"`
+		isInitialized atomic.Bool
+		m             [4]string `json:"-"`
 	}
 }
-
-var tableInfoOnce sync.Once
 
 func (ti *TableInfo) InitPrivateFields() {
 	if ti == nil {
 		return
 	}
-	tableInfoOnce.Do(func() {
-		ti.TableName.quotedName = ti.TableName.QuoteString()
-		ti.preSQLs.m[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
-		ti.preSQLs.m[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
-		ti.preSQLs.m[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
-	})
+	if ti.preSQLs.isInitialized.Load() {
+		return
+	}
+
+	ti.TableName.quotedName = ti.TableName.QuoteString()
+	ti.preSQLs.m[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
+	ti.preSQLs.m[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
+	ti.preSQLs.m[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
+	ti.preSQLs.isInitialized.Store(true)
+
+	log.Info("fizz: wakawaka", zap.String("tableName", ti.TableName.Table))
 }
 
 func (ti *TableInfo) MarshalJSON() ([]byte, error) {
