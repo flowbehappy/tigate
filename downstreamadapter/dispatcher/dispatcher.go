@@ -304,6 +304,9 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 			event := event.(*commonEvent.DDLEvent)
 			// Update the table info of the dispatcher, when it receive ddl event.
 			d.tableInfo = event.TableInfo
+			if d.sink.SinkType() == common.MysqlSinkType {
+				d.tableInfo.InitPrivateFields()
+			}
 			log.Info("dispatcher receive ddl event",
 				zap.Stringer("dispatcher", d.id),
 				zap.String("query", event.Query),
@@ -341,6 +344,9 @@ func (d *Dispatcher) SetInitialTableInfo(tableInfo *common.TableInfo) {
 		return
 	}
 	d.tableInfo = tableInfo
+	if d.sink.SinkType() == common.MysqlSinkType {
+		d.tableInfo.InitPrivateFields()
+	}
 }
 
 func isCompleteSpan(tableSpan *heartbeatpb.TableSpan) bool {

@@ -294,10 +294,10 @@ type TableInfo struct {
 var tableInfoOnce sync.Once
 
 func (ti *TableInfo) InitPrivateFields() {
+	if ti == nil {
+		return
+	}
 	tableInfoOnce.Do(func() {
-		if ti == nil {
-			return
-		}
 		ti.TableName.quotedName = ti.TableName.QuoteString()
 		ti.preSQLs.Lock()
 		ti.preSQLs.m[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
