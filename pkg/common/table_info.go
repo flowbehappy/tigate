@@ -293,8 +293,10 @@ type TableInfo struct {
 
 func (ti *TableInfo) InitPrivateFields() {
 	if ti == nil {
+		log.Info("fizz nil")
 		return
 	}
+
 	if ti.preSQLs.isInitialized.Load() {
 		return
 	}
