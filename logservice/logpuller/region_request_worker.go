@@ -221,6 +221,7 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 			case *cdcpb.Event_Admin_:
 				// ignore
 			case *cdcpb.Event_Error:
+				// TODO: change to debug level
 				log.Info("region request worker receives a region error",
 					zap.Uint64("workerID", s.workerID),
 					zap.Uint64("subscriptionID", uint64(subscriptionID)),

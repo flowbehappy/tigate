@@ -74,6 +74,7 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 		} else if event.resolvedTs != 0 {
 			handleResolvedTs(span, event.state, event.resolvedTs)
 		} else if event.err != nil {
+			event.state.markStopped(&eventError{err: event.err.Error})
 			h.handleRegionError(event.state, event.worker)
 		} else {
 			log.Panic("should not reach", zap.Any("event", event), zap.Any("events", events))
