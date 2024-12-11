@@ -30,7 +30,7 @@ const (
 	streamCount         = 4
 	basicChannelSize    = 2048
 	// TODO: need to adjust the worker count
-	defaultScanWorkerCount = 512
+	defaultScanWorkerCount = 128
 )
 
 var (
@@ -113,6 +113,11 @@ func newEventBroker(
 		messageWorkerCount = streamCount
 	}
 
+	scanWorkerCount := defaultScanWorkerCount
+	if scanWorkerCount < messageWorkerCount {
+		scanWorkerCount = messageWorkerCount
+	}
+
 	conf := config.GetGlobalServerConfig().Debug.EventService
 
 	c := &eventBroker{
@@ -124,7 +129,7 @@ func newEventBroker(
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
 		taskQueue:               make(chan scanTask, conf.ScanTaskQueueSize),
-		scanWorkerCount:         defaultScanWorkerCount,
+		scanWorkerCount:         scanWorkerCount,
 		messageCh:               make([]chan *wrapEvent, messageWorkerCount),
 		cancel:                  cancel,
 		wg:                      wg,
