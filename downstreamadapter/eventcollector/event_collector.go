@@ -330,10 +330,11 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 			event := msg.(commonEvent.Event)
 			switch event.GetType() {
 			case commonEvent.TypeBatchResolvedEvent:
-				for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
-					c.metricDispatcherReceivedResolvedTsEventCount.Inc()
+				batchResolvedEvent := event.(*commonEvent.BatchResolvedEvent)
+				for _, e := range batchResolvedEvent.Events {
 					c.ds.Push(e.DispatcherID, dispatcher.NewDispatcherEvent(&targetMessage.From, e))
 				}
+				c.metricDispatcherReceivedResolvedTsEventCount.Add(float64(len(batchResolvedEvent.Events)))
 			default:
 				c.metricDispatcherReceivedKVEventCount.Inc()
 				c.ds.Push(event.GetDispatcherID(), dispatcher.NewDispatcherEvent(&targetMessage.From, event))

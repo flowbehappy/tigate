@@ -845,13 +845,8 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 					paused:    d.handler.IsPaused(e),
 					eventType: eventType,
 					eventSize: d.eventExtraSize + d.handler.GetSize(e),
-					timestamp: d.handler.GetTimestamp(e),
-					queueTime: time.Now(),
 				}
-				if e.timestamp == 0 {
-					e.timestamp = (Timestamp)(e.queueTime.Sub(d.startTime))
-				}
-				pi.stream.in() <- e
+				pi.stream.in().Push(e)
 			} else {
 				// Otherwise, drop the event and notify the handler
 				d.handler.OnDrop(e)
@@ -861,7 +856,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				return
 			}
 			if pi, ok := pathMap[p]; ok {
-				pi.stream.in() <- eventWrap[A, P, T, D, H]{wake: true, pathInfo: pi}
+				pi.stream.in().Push(eventWrap[A, P, T, D, H]{wake: true, pathInfo: pi})
 			}
 			// Otherwise, drop the wake signal
 		case cmd, ok := <-d.cmdToDist:
@@ -883,7 +878,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 					if d.memControl != nil {
 						d.memControl.addPathToArea(pi, add.settings, d.feedbackChan)
 					}
-					pi.stream.in() <- eventWrap[A, P, T, D, H]{pathInfo: pi, newPath: true}
+					pi.stream.in().Push(eventWrap[A, P, T, D, H]{pathInfo: pi, newPath: true})
 				}
 				cmd.wg.Done()
 				d._statAddPathCount.Add(1)
@@ -900,7 +895,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 						// The removal of the path from the memory control is done in the stream where the path belongs to.
 						// We cannot remove the path from the memory control here, because the stream is updating the memory control with the path.
 						// Send an empty event to the stream to notify the stream to remove the path
-						pi.stream.in() <- eventWrap[A, P, T, D, H]{pathInfo: pi}
+						pi.stream.in().Push(eventWrap[A, P, T, D, H]{pathInfo: pi})
 						// Don't close the stream here. The stream is processing other paths.
 					} else {
 						panic(fmt.Sprintf("Path %v doesn't exist in distributor", path))

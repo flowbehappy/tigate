@@ -128,11 +128,11 @@ func TestStreamBasic(t *testing.T) {
 	event3 := eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(3, "p1", 10*time.Millisecond /*sleep*/, &Inc{num: 3, inc: incr}, nil, eventDone), pathInfo: p1}
 	event4 := eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(4, "p2", 10*time.Millisecond /*sleep*/, &Inc{num: 4, inc: incr}, nil, eventDone), pathInfo: p2}
 
-	s1.in() <- event1
-	s1.in() <- event3
+	s1.in().Push(event1)
+	s1.in().Push(event3)
 
-	s2.in() <- event2
-	s2.in() <- event4
+	s2.in().Push(event2)
+	s2.in().Push(event4)
 
 	eventDone.Wait()
 
@@ -180,12 +180,12 @@ Loop:
 	event9 := eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(9, "p3", 0 /*sleep*/, &Inc{num: 9, inc: incr}, nil, eventDone), pathInfo: p3}
 	event10 := eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(10, "p2", 0 /*sleep*/, &Inc{num: 10, inc: incr}, nil, eventDone), pathInfo: p2}
 
-	s3.in() <- event5
-	s3.in() <- event6
-	s3.in() <- event7
-	s3.in() <- event8
-	s3.in() <- event9
-	s3.in() <- event10
+	s3.in().Push(event5)
+	s3.in().Push(event6)
+	s3.in().Push(event7)
+	s3.in().Push(event8)
+	s3.in().Push(event9)
+	s3.in().Push(event10)
 
 	eventDone.Wait()
 	s3.close(true)
@@ -233,11 +233,11 @@ func TestStreamMerge(t *testing.T) {
 
 	wg := &sync.WaitGroup{}
 
-	s1.in() <- eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(1, "p1", 0*time.Millisecond /*sleep*/, &Inc{num: 1, inc: incr}, nil, nil), pathInfo: p1}
-	s1.in() <- eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(3, "p1", 50*time.Millisecond /*sleep*/, &Inc{num: 3, inc: incr}, wg, nil), pathInfo: p1}
+	s1.in().Push(eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(1, "p1", 0*time.Millisecond /*sleep*/, &Inc{num: 1, inc: incr}, nil, nil), pathInfo: p1})
+	s1.in().Push(eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(3, "p1", 50*time.Millisecond /*sleep*/, &Inc{num: 3, inc: incr}, wg, nil), pathInfo: p1})
 
-	s2.in() <- eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(2, "p2", 0*time.Millisecond /*sleep*/, &Inc{num: 2, inc: incr}, nil, nil), pathInfo: p2}
-	s2.in() <- eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(4, "p2", 50*time.Millisecond /*sleep*/, &Inc{num: 4, inc: incr}, wg, nil), pathInfo: p2}
+	s2.in().Push(eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(2, "p2", 0*time.Millisecond /*sleep*/, &Inc{num: 2, inc: incr}, nil, nil), pathInfo: p2})
+	s2.in().Push(eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(4, "p2", 50*time.Millisecond /*sleep*/, &Inc{num: 4, inc: incr}, wg, nil), pathInfo: p2})
 
 	wg.Wait()
 
@@ -245,9 +245,9 @@ func TestStreamMerge(t *testing.T) {
 	s3.start([]*pathInfo[int, string, *mockEvent, any, *mockHandler]{p1, p2}, s1, s2)
 
 	wg = &sync.WaitGroup{}
-	s3.in() <- eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(5, "p2", 50*time.Millisecond /*sleep*/, &Inc{num: 5, inc: incr}, wg, nil), pathInfo: p2}
-	s3.in() <- eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(6, "p2", 50*time.Millisecond /*sleep*/, &Inc{num: 6, inc: incr}, wg, nil), pathInfo: p2}
-	s3.in() <- eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(7, "p2", 50*time.Millisecond /*sleep*/, &Inc{num: 7, inc: incr}, wg, nil), pathInfo: p2}
+	s3.in().Push(eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(5, "p2", 50*time.Millisecond /*sleep*/, &Inc{num: 5, inc: incr}, wg, nil), pathInfo: p2})
+	s3.in().Push(eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(6, "p2", 50*time.Millisecond /*sleep*/, &Inc{num: 6, inc: incr}, wg, nil), pathInfo: p2})
+	s3.in().Push(eventWrap[int, string, *mockEvent, any, *mockHandler]{event: newMockEvent(7, "p2", 50*time.Millisecond /*sleep*/, &Inc{num: 7, inc: incr}, wg, nil), pathInfo: p2})
 
 	wg.Wait()
 	s3.close()
@@ -286,8 +286,8 @@ func TestStreamManyEvents(t *testing.T) {
 	wg := &sync.WaitGroup{}
 	total := 100000
 	for i := 0; i < total; i++ {
-		s1.in() <- eventWrap[int, string, *mockEvent, any, *mockHandler]{
-			event: newMockEvent(i, "p1", 0 /*sleep*/, &Inc{num: 1, inc: incr}, nil, wg), pathInfo: p1}
+		s1.in().Push(eventWrap[int, string, *mockEvent, any, *mockHandler]{
+			event: newMockEvent(i, "p1", 0 /*sleep*/, &Inc{num: 1, inc: incr}, nil, wg), pathInfo: p1})
 	}
 	wg.Wait()
 	s1.close()

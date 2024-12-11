@@ -57,155 +57,155 @@ func TestAreaMemStatAppendEvent(t *testing.T) {
 	// TODO: fix this test
 	t.Skip("Skipping TestAreaMemStatAppendEvent because we don't merge periodic signals when append any more")
 
-	mc, path1 := setupTestComponents()
-	settings := AreaSettings{
-		MaxPendingSize:   15,
-		FeedbackInterval: time.Millisecond * 10,
-	}
-	feedbackChan := make(chan Feedback[int, string, any], 10)
-	mc.addPathToArea(path1, settings, feedbackChan)
+	// mc, path1 := setupTestComponents()
+	// settings := AreaSettings{
+	// 	MaxPendingSize:   15,
+	// 	FeedbackInterval: time.Millisecond * 10,
+	// }
+	// feedbackChan := make(chan Feedback[int, string, any], 10)
+	// mc.addPathToArea(path1, settings, feedbackChan)
 
-	handler := &mockHandler{}
-	option := NewOption()
-	option.EnableMemoryControl = true
-	eventQueue := newEventQueue(option, handler)
-	eventQueue.initPath(path1)
+	// handler := &mockHandler{}
+	// option := NewOption()
+	// option.EnableMemoryControl = true
+	// eventQueue := newEventQueue(option, handler)
+	// eventQueue.initPath(path1)
 
-	// 1. Append normal event, it should be accepted
-	normalEvent1 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
-		event:     &mockEvent{id: 1, path: "test-path"},
-		timestamp: 1,
-		eventSize: 10,
-		queueTime: time.Now(),
-	}
-	path1.areaMemStat.appendEvent(path1, normalEvent1, handler, &eventQueue)
-	require.Equal(t, int64(10), path1.areaMemStat.totalPendingSize.Load())
+	// // 1. Append normal event, it should be accepted
+	// normalEvent1 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
+	// 	event:     &mockEvent{id: 1, path: "test-path"},
+	// 	timestamp: 1,
+	// 	eventSize: 10,
+	// 	queueTime: time.Now(),
+	// }
+	// path1.areaMemStat.appendEvent(path1, normalEvent1, handler, &eventQueue)
+	// require.Equal(t, int64(10), path1.areaMemStat.totalPendingSize.Load())
 
-	// Append 2 periodic signals, and the second one will replace the first one
-	periodicEvent := eventWrap[int, string, *mockEvent, any, *mockHandler]{
-		event:     &mockEvent{id: 2, path: "test-path"},
-		eventSize: 5,
-		timestamp: 2,
-		queueTime: time.Now(),
-		eventType: EventType{Property: PeriodicSignal},
-	}
-	path1.areaMemStat.appendEvent(path1, periodicEvent, handler, &eventQueue)
-	require.Equal(t, int64(15), path1.areaMemStat.totalPendingSize.Load())
-	require.Equal(t, 2, path1.pendingQueue.Length())
-	back, _ := path1.pendingQueue.BackRef()
-	require.Equal(t, periodicEvent.timestamp, back.timestamp)
-	periodicEvent2 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
-		event:     &mockEvent{id: 3, path: "test-path"},
-		timestamp: 3,
-		eventSize: 5,
-		queueTime: time.Now(),
-		eventType: EventType{Property: PeriodicSignal},
-	}
-	path1.areaMemStat.appendEvent(path1, periodicEvent2, handler, &eventQueue)
-	// Size should remain the same as the signal was replaced
-	require.Equal(t, int64(15), path1.areaMemStat.totalPendingSize.Load())
-	// The pending queue should only have 2 events
-	require.Equal(t, 2, path1.pendingQueue.Length())
-	// The last event timestamp should be the latest
-	back, _ = path1.pendingQueue.BackRef()
-	require.Equal(t, periodicEvent2.timestamp, back.timestamp)
+	// // Append 2 periodic signals, and the second one will replace the first one
+	// periodicEvent := eventWrap[int, string, *mockEvent, any, *mockHandler]{
+	// 	event:     &mockEvent{id: 2, path: "test-path"},
+	// 	eventSize: 5,
+	// 	timestamp: 2,
+	// 	queueTime: time.Now(),
+	// 	eventType: EventType{Property: PeriodicSignal},
+	// }
+	// path1.areaMemStat.appendEvent(path1, periodicEvent, handler, &eventQueue)
+	// require.Equal(t, int64(15), path1.areaMemStat.totalPendingSize.Load())
+	// require.Equal(t, 2, path1.pendingQueue.Length())
+	// back, _ := path1.pendingQueue.BackRef()
+	// require.Equal(t, periodicEvent.timestamp, back.timestamp)
+	// periodicEvent2 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
+	// 	event:     &mockEvent{id: 3, path: "test-path"},
+	// 	timestamp: 3,
+	// 	eventSize: 5,
+	// 	queueTime: time.Now(),
+	// 	eventType: EventType{Property: PeriodicSignal},
+	// }
+	// path1.areaMemStat.appendEvent(path1, periodicEvent2, handler, &eventQueue)
+	// // Size should remain the same as the signal was replaced
+	// require.Equal(t, int64(15), path1.areaMemStat.totalPendingSize.Load())
+	// // The pending queue should only have 2 events
+	// require.Equal(t, 2, path1.pendingQueue.Length())
+	// // The last event timestamp should be the latest
+	// back, _ = path1.pendingQueue.BackRef()
+	// require.Equal(t, periodicEvent2.timestamp, back.timestamp)
 
-	// 3. Add a normal event, and it should be dropped, because the total pending size is exceed the max pending size
-	normalEvent2 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
-		event:     &mockEvent{id: 4, path: "test-path"},
-		eventSize: 20,
-		queueTime: time.Now(),
-		timestamp: 4,
-	}
-	path1.areaMemStat.appendEvent(path1, normalEvent2, handler, &eventQueue)
-	require.Equal(t, int64(15), path1.areaMemStat.totalPendingSize.Load())
-	require.Equal(t, 2, path1.pendingQueue.Length())
-	back, _ = path1.pendingQueue.BackRef()
-	// The last event should be the periodic event
-	require.Equal(t, periodicEvent2.timestamp, back.timestamp)
-	events := handler.drainDroppedEvents()
-	require.Equal(t, 1, len(events))
-	require.Equal(t, normalEvent2.event, events[0])
+	// // 3. Add a normal event, and it should be dropped, because the total pending size is exceed the max pending size
+	// normalEvent2 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
+	// 	event:     &mockEvent{id: 4, path: "test-path"},
+	// 	eventSize: 20,
+	// 	queueTime: time.Now(),
+	// 	timestamp: 4,
+	// }
+	// path1.areaMemStat.appendEvent(path1, normalEvent2, handler, &eventQueue)
+	// require.Equal(t, int64(15), path1.areaMemStat.totalPendingSize.Load())
+	// require.Equal(t, 2, path1.pendingQueue.Length())
+	// back, _ = path1.pendingQueue.BackRef()
+	// // The last event should be the periodic event
+	// require.Equal(t, periodicEvent2.timestamp, back.timestamp)
+	// events := handler.drainDroppedEvents()
+	// require.Equal(t, 1, len(events))
+	// require.Equal(t, normalEvent2.event, events[0])
 
-	// 4. Change the settings, enlarge the max pending size
-	newSettings := AreaSettings{
-		MaxPendingSize:   100,
-		FeedbackInterval: time.Millisecond * 10,
-	}
-	mc.setAreaSettings(path1.area, newSettings)
-	require.Equal(t, 100, path1.areaMemStat.settings.Load().MaxPendingSize)
-	require.Equal(t, newSettings, *path1.areaMemStat.settings.Load())
-	addr1 := fmt.Sprintf("%p", path1.areaMemStat.settings.Load())
-	addr2 := fmt.Sprintf("%p", &newSettings)
-	require.NotEqual(t, addr1, addr2)
-	// 5. Add a normal event, and it should be accepted,
-	//  because the total pending size is less than the max pending size
-	normalEvent3 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
-		event:     &mockEvent{id: 5, path: "test-path"},
-		eventSize: 20,
-		queueTime: time.Now(),
-		timestamp: 5,
-	}
-	path1.areaMemStat.appendEvent(path1, normalEvent3, handler, &eventQueue)
-	require.Equal(t, int64(35), path1.areaMemStat.totalPendingSize.Load())
-	require.Equal(t, 3, path1.pendingQueue.Length())
-	back, _ = path1.pendingQueue.BackRef()
-	require.Equal(t, normalEvent3.timestamp, back.timestamp)
+	// // 4. Change the settings, enlarge the max pending size
+	// newSettings := AreaSettings{
+	// 	MaxPendingSize:   100,
+	// 	FeedbackInterval: time.Millisecond * 10,
+	// }
+	// mc.setAreaSettings(path1.area, newSettings)
+	// require.Equal(t, 100, path1.areaMemStat.settings.Load().MaxPendingSize)
+	// require.Equal(t, newSettings, *path1.areaMemStat.settings.Load())
+	// addr1 := fmt.Sprintf("%p", path1.areaMemStat.settings.Load())
+	// addr2 := fmt.Sprintf("%p", &newSettings)
+	// require.NotEqual(t, addr1, addr2)
+	// // 5. Add a normal event, and it should be accepted,
+	// //  because the total pending size is less than the max pending size
+	// normalEvent3 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
+	// 	event:     &mockEvent{id: 5, path: "test-path"},
+	// 	eventSize: 20,
+	// 	queueTime: time.Now(),
+	// 	timestamp: 5,
+	// }
+	// path1.areaMemStat.appendEvent(path1, normalEvent3, handler, &eventQueue)
+	// require.Equal(t, int64(35), path1.areaMemStat.totalPendingSize.Load())
+	// require.Equal(t, 3, path1.pendingQueue.Length())
+	// back, _ = path1.pendingQueue.BackRef()
+	// require.Equal(t, normalEvent3.timestamp, back.timestamp)
 
-	// 6. Add a new path, and append a large event to it, it will consume the remaining memory
-	path2 := &pathInfo[int, string, *mockEvent, any, *mockHandler]{
-		area:           1,
-		path:           "test-path-2",
-		streamAreaInfo: path1.streamAreaInfo,
-		pendingQueue:   deque.NewDeque[eventWrap[int, string, *mockEvent, any, *mockHandler]](32),
-	}
-	mc.addPathToArea(path2, newSettings, feedbackChan)
-	eventQueue.initPath(path2)
-	largeEvent := eventWrap[int, string, *mockEvent, any, *mockHandler]{
-		event:     &mockEvent{id: 6, path: "test-path-2"},
-		timestamp: 6,
-		eventSize: int(newSettings.MaxPendingSize - int(path1.areaMemStat.totalPendingSize.Load())),
-		queueTime: time.Now(),
-	}
-	path2.areaMemStat.appendEvent(path2, largeEvent, handler, &eventQueue)
-	require.Equal(t, newSettings.MaxPendingSize, int(path2.areaMemStat.totalPendingSize.Load()))
-	require.Equal(t, 2, path2.areaMemStat.pathCount)
-	// There are 4 events in the eventQueue, [normalEvent1, periodicEvent2, normalEvent3, largeEvent]
-	require.Equal(t, int64(4), eventQueue.totalPendingLength.Load())
-	// The new path should be paused, because the pending size is reach the max pending size
-	require.True(t, path2.paused)
+	// // 6. Add a new path, and append a large event to it, it will consume the remaining memory
+	// path2 := &pathInfo[int, string, *mockEvent, any, *mockHandler]{
+	// 	area:           1,
+	// 	path:           "test-path-2",
+	// 	streamAreaInfo: path1.streamAreaInfo,
+	// 	pendingQueue:   deque.NewDeque[eventWrap[int, string, *mockEvent, any, *mockHandler]](32),
+	// }
+	// mc.addPathToArea(path2, newSettings, feedbackChan)
+	// eventQueue.initPath(path2)
+	// largeEvent := eventWrap[int, string, *mockEvent, any, *mockHandler]{
+	// 	event:     &mockEvent{id: 6, path: "test-path-2"},
+	// 	timestamp: 6,
+	// 	eventSize: int(newSettings.MaxPendingSize - int(path1.areaMemStat.totalPendingSize.Load())),
+	// 	queueTime: time.Now(),
+	// }
+	// path2.areaMemStat.appendEvent(path2, largeEvent, handler, &eventQueue)
+	// require.Equal(t, newSettings.MaxPendingSize, int(path2.areaMemStat.totalPendingSize.Load()))
+	// require.Equal(t, 2, path2.areaMemStat.pathCount)
+	// // There are 4 events in the eventQueue, [normalEvent1, periodicEvent2, normalEvent3, largeEvent]
+	// require.Equal(t, int64(4), eventQueue.totalPendingLength.Load())
+	// // The new path should be paused, because the pending size is reach the max pending size
+	// require.True(t, path2.paused)
 
-	time.Sleep(2 * newSettings.FeedbackInterval)
-	// 7. Add a normal event to path1, and the large event of path2 should be dropped
-	// Because we will find the path with the largest pending size, and it's path2
-	// So the large event of path2 will be dropped
-	normalEvent4 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
-		event: &mockEvent{id: 7, path: "test-path"},
-		// Make it the smallest timestamp,
-		//so it will cause the large event of path2 to be dropped
-		timestamp: 0,
-		eventSize: 10,
-		queueTime: time.Now(),
-	}
-	path1.areaMemStat.appendEvent(path1, normalEvent4, handler, &eventQueue)
-	require.Equal(t, 45, int(path1.areaMemStat.totalPendingSize.Load()))
-	require.Equal(t, 0, path2.pendingQueue.Length())
-	droppedEvents := handler.drainDroppedEvents()
-	require.Equal(t, 1, len(droppedEvents))
-	require.Equal(t, largeEvent.event, droppedEvents[0])
-	require.Equal(t, int64(4), eventQueue.totalPendingLength.Load())
+	// time.Sleep(2 * newSettings.FeedbackInterval)
+	// // 7. Add a normal event to path1, and the large event of path2 should be dropped
+	// // Because we will find the path with the largest pending size, and it's path2
+	// // So the large event of path2 will be dropped
+	// normalEvent4 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
+	// 	event: &mockEvent{id: 7, path: "test-path"},
+	// 	// Make it the smallest timestamp,
+	// 	//so it will cause the large event of path2 to be dropped
+	// 	timestamp: 0,
+	// 	eventSize: 10,
+	// 	queueTime: time.Now(),
+	// }
+	// path1.areaMemStat.appendEvent(path1, normalEvent4, handler, &eventQueue)
+	// require.Equal(t, 45, int(path1.areaMemStat.totalPendingSize.Load()))
+	// require.Equal(t, 0, path2.pendingQueue.Length())
+	// droppedEvents := handler.drainDroppedEvents()
+	// require.Equal(t, 1, len(droppedEvents))
+	// require.Equal(t, largeEvent.event, droppedEvents[0])
+	// require.Equal(t, int64(4), eventQueue.totalPendingLength.Load())
 
-	// 8. Add a signal event to path2, and it should be accepted, and its state should be resumed
-	periodicEvent3 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
-		event:     &mockEvent{id: 8, path: "test-path-2"},
-		timestamp: 7,
-		eventSize: 5,
-		queueTime: time.Now(),
-	}
-	path2.areaMemStat.appendEvent(path2, periodicEvent3, handler, &eventQueue)
-	require.Equal(t, 1, path2.pendingQueue.Length())
-	require.Equal(t, int64(5), eventQueue.totalPendingLength.Load())
-	require.False(t, path2.paused)
+	// // 8. Add a signal event to path2, and it should be accepted, and its state should be resumed
+	// periodicEvent3 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
+	// 	event:     &mockEvent{id: 8, path: "test-path-2"},
+	// 	timestamp: 7,
+	// 	eventSize: 5,
+	// 	queueTime: time.Now(),
+	// }
+	// path2.areaMemStat.appendEvent(path2, periodicEvent3, handler, &eventQueue)
+	// require.Equal(t, 1, path2.pendingQueue.Length())
+	// require.Equal(t, int64(5), eventQueue.totalPendingLength.Load())
+	// require.False(t, path2.paused)
 }
 
 func TestShouldPausePath(t *testing.T) {

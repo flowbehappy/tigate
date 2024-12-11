@@ -90,7 +90,7 @@ func (s *parallelDynamicStream[A, P, T, D, H]) Push(path P, e T) {
 		eventType: s.handler.GetType(e),
 		eventSize: s.eventExtraSize + s.handler.GetSize(e),
 	}
-	pi.stream.in() <- ew
+	pi.stream.in().Push(ew)
 }
 
 func (s *parallelDynamicStream[A, P, T, D, H]) Wake(path P) {
@@ -104,7 +104,7 @@ func (s *parallelDynamicStream[A, P, T, D, H]) Wake(path P) {
 		}
 	}
 
-	pi.stream.in() <- eventWrap[A, P, T, D, H]{wake: true, pathInfo: pi}
+	pi.stream.in().Push(eventWrap[A, P, T, D, H]{wake: true, pathInfo: pi})
 }
 
 func (s *parallelDynamicStream[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
@@ -131,7 +131,7 @@ func (s *parallelDynamicStream[A, P, T, D, H]) AddPath(path P, dest D, as ...Are
 		}
 		s.memControl.addPathToArea(pi, setting, s.feedbackChan)
 	}
-	pi.stream.in() <- eventWrap[A, P, T, D, H]{pathInfo: pi, newPath: true}
+	pi.stream.in().Push(eventWrap[A, P, T, D, H]{pathInfo: pi, newPath: true})
 
 	s._statAddPathCount++
 	return nil
@@ -151,7 +151,7 @@ func (s *parallelDynamicStream[A, P, T, D, H]) RemovePath(path P) error {
 	if s.memControl != nil {
 		s.memControl.removePathFromArea(pi)
 	}
-	pi.stream.in() <- eventWrap[A, P, T, D, H]{pathInfo: pi}
+	pi.stream.in().Push(eventWrap[A, P, T, D, H]{pathInfo: pi})
 	delete(s.pathMap, path)
 
 	s._statRemovePathCount++
