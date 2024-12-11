@@ -551,7 +551,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 	messageCh := c.messageCh[workerIndex]
 	tickCh := flushResolvedTsTicker.C
 
-	maxBatchSize := 512
+	maxBatchSize := 128
 	batchM := make([]*wrapEvent, 0, maxBatchSize)
 
 	go func() {
