@@ -73,4 +73,5 @@ func InitMessagingMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(MessagingDropMsgCounter)
 	registry.MustRegister(MessagingErrorCounter)
 	registry.MustRegister(MessagingStreamGauge)
+	registry.Register(MessagingReceiveChannelLength)
 }
