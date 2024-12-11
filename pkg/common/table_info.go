@@ -291,6 +291,8 @@ type TableInfo struct {
 	}
 }
 
+var count atomic.Int64
+
 func (ti *TableInfo) InitPrivateFields() {
 	if ti == nil {
 		log.Info("fizz nil")
@@ -307,7 +309,7 @@ func (ti *TableInfo) InitPrivateFields() {
 	ti.preSQLs.m[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
 	ti.preSQLs.isInitialized.Store(true)
 
-	log.Info("fizz: wakawaka", zap.String("tableName", ti.TableName.Table))
+	log.Info("fizz: init private fields", zap.String("tableName", ti.TableName.Table), zap.Int64("count", count.Add(1)))
 }
 
 func (ti *TableInfo) MarshalJSON() ([]byte, error) {

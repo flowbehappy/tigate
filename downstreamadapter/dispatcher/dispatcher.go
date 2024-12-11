@@ -283,7 +283,6 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 		case commonEvent.TypeResolvedEvent:
 			atomic.StoreUint64(&d.resolvedTs, event.(commonEvent.ResolvedEvent).ResolvedTs)
 		case commonEvent.TypeDMLEvent:
-			log.Info("fizz handle dml")
 			block = true
 			dml := event.(*commonEvent.DMLEvent)
 			dml.ReplicatingTs = d.creatationPDTs
