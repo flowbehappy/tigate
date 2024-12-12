@@ -433,7 +433,7 @@ func (s *localMessageTarget) Epoch() uint64 {
 }
 
 func (s *localMessageTarget) sendEvent(msg *TargetMessage) error {
-	err := s.sendMsgToChan(s.recvEventCh, msg)
+	err := s.sendMsgToChan(s.recvEventCh, true, msg)
 	if err != nil {
 		s.recordCongestedMessageError(msgTypeEvent)
 	} else {
@@ -443,7 +443,7 @@ func (s *localMessageTarget) sendEvent(msg *TargetMessage) error {
 }
 
 func (s *localMessageTarget) sendCommand(msg *TargetMessage) error {
-	err := s.sendMsgToChan(s.recvCmdCh, msg)
+	err := s.sendMsgToChan(s.recvCmdCh, false, msg)
 	if err != nil {
 		s.recordCongestedMessageError(msgTypeCommand)
 	} else {
@@ -469,13 +469,21 @@ func (s *localMessageTarget) recordCongestedMessageError(typeE string) {
 	metrics.MessagingErrorCounter.WithLabelValues("local", typeE, "message_congested").Inc()
 }
 
-func (s *localMessageTarget) sendMsgToChan(ch chan *TargetMessage, msg ...*TargetMessage) error {
+func (s *localMessageTarget) sendMsgToChan(ch chan *TargetMessage, force bool, msg ...*TargetMessage) error {
 	for _, m := range msg {
 		m.To = s.localId
 		m.From = s.localId
 		m.Epoch = s.epoch
 		m.Sequence = s.sequence.Add(1)
-		ch <- m
+		if force {
+			ch <- m
+		} else {
+			select {
+			case ch <- m:
+			default:
+				return AppError{Type: ErrorTypeMessageCongested, Reason: "Send message is congested"}
+			}
+		}
 	}
 	return nil
 }
