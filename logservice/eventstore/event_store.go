@@ -487,7 +487,6 @@ func (e *eventStore) RegisterDispatcher(
 				notifier(ts, subStat.maxEventCommitTs.Load())
 			}
 			CounterResolved.Inc()
-			return
 		}
 	}
 	// Note: don't hold any lock when call Subscribe

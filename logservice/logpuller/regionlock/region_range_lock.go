@@ -247,9 +247,6 @@ func (l *RangeLock) ResolvedTs() uint64 {
 
 	var minTs uint64 = math.MaxUint64
 	l.lockedRanges.Ascend(func(item *rangeLockEntry) bool {
-		log.Info("range lock get resolved ts",
-			zap.Uint64("region id", item.regionID),
-			zap.Uint64("resolved ts", item.lockedRangeState.ResolvedTs.Load()))
 		ts := item.lockedRangeState.ResolvedTs.Load()
 		if ts < minTs {
 			minTs = ts

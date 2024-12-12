@@ -63,9 +63,6 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 	}
 
 	for _, event := range events {
-		log.Info("handle region events",
-			zap.Uint64("subID", uint64(span.subID)),
-			zap.Uint64("regionID", event.state.getRegionID()))
 		if event.state.isStale() {
 			h.handleRegionError(event.state, event.worker)
 			continue
@@ -74,10 +71,6 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 			handleEventEntries(span, event.state, event.entries)
 		} else if event.resolvedTs != 0 {
 			handleResolvedTs(span, event.state, event.resolvedTs)
-			log.Info("handle region resolved ts",
-				zap.Uint64("subID", uint64(span.subID)),
-				zap.Uint64("regionID", event.state.getRegionID()),
-				zap.Uint64("resolvedTs", event.resolvedTs))
 		} else if event.err != nil {
 			event.state.markStopped(&eventError{err: event.err.Error})
 			h.handleRegionError(event.state, event.worker)
@@ -86,12 +79,7 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 		}
 	}
 	if len(span.kvEventsCache) > 0 {
-		log.Info("consume events",
-			zap.Uint64("subID", uint64(span.subID)),
-			zap.Int("kvEventsCacheLen", len(span.kvEventsCache)))
 		await := span.consumeKVEvents(span.kvEventsCache, func() {
-			log.Info("wake subscription ",
-				zap.Uint64("subID", uint64(span.subID)))
 			span.clearKVEventsCache()
 			h.subClient.wakeSubscription(span.subID)
 		})
