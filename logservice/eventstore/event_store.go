@@ -473,13 +473,20 @@ func (e *eventStore) RegisterDispatcher(
 		return true
 	}
 	advanceResolvedTs := func(ts uint64) {
-		subStat.resolvedTs.Store(ts)
-		subStat.dispatchers.RLock()
-		defer subStat.dispatchers.RUnlock()
-		for _, notifier := range subStat.dispatchers.notifiers {
-			notifier(ts, subStat.maxEventCommitTs.Load())
+		// filter out identical resolved ts
+		currentResolvedTs := subStat.resolvedTs.Load()
+		if ts <= currentResolvedTs {
+			return
 		}
-		CounterResolved.Inc()
+		// just do CompareAndSwap once, if failed, it means another goroutine has updated resolvedTs
+		if subStat.resolvedTs.CompareAndSwap(currentResolvedTs, ts) {
+			subStat.dispatchers.RLock()
+			defer subStat.dispatchers.RUnlock()
+			for _, notifier := range subStat.dispatchers.notifiers {
+				notifier(ts, subStat.maxEventCommitTs.Load())
+			}
+			CounterResolved.Inc()
+		}
 	}
 	// Note: don't hold any lock when call Subscribe
 	e.subClient.Subscribe(stat.subID, *tableSpan, startTs, consumeKVEvents, advanceResolvedTs, 600)
