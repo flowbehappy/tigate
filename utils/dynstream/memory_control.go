@@ -158,7 +158,7 @@ LOOP:
 				zap.Any("area", as.area), zap.Any("path", path.path))
 			return true
 		}
-		if front.Timestamp() <= event.Timestamp() {
+		if front.timestamp <= event.timestamp {
 			// By default, drop the event.
 			// And only NOT drop the event when the event's timestamp is smaller than the smallest event of about-to-drop path.
 			return true
@@ -188,7 +188,7 @@ LOOP:
 // Note: Our gaol is to fast pause, and lazy resume.
 func (as *areaMemStat[A, P, T, D, H]) updatePathPauseState(path *pathInfo[A, P, T, D, H], event eventWrap[A, P, T, D, H]) {
 	shouldPause := as.shouldPausePath(path)
-	currentTime := event.QueueTime()
+	currentTime := event.queueTime
 
 	sendFeedback := func(pause bool) {
 		select {

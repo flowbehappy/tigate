@@ -53,7 +53,7 @@ func TestUnlimitedChannel(t *testing.T) {
 			} else {
 				for {
 					buffer := make([]int, 0, 3)
-					buffer, ok := ch.GetMultipleNoGroupWait(buffer)
+					buffer, ok := ch.GetMultipleNoGroup(buffer)
 					if !ok {
 						break
 					}
@@ -129,7 +129,7 @@ func TestUnlimitedChannelGroup(t *testing.T) {
 				for {
 					buffer := make([]int, 0, 5)
 					beforeCap := cap(buffer)
-					buffer, ok := ch.GetMultipleNoGroupWait(buffer)
+					buffer, ok := ch.GetMultipleNoGroup(buffer)
 					afterCap := cap(buffer)
 					if !ok {
 						break

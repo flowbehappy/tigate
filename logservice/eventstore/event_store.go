@@ -116,7 +116,7 @@ type subscriptionStat struct {
 
 	dbIndex int
 
-	eventCh *chann.UnlimitedChannel[eventWithCallback]
+	eventCh *chann.UnlimitedChannel[eventWithCallback, uint64]
 	// data <= checkpointTs can be deleted
 	checkpointTs atomic.Uint64
 	// the resolveTs persisted in the store
@@ -145,7 +145,7 @@ type eventStore struct {
 	subClient *logpuller.SubscriptionClient
 
 	dbs            []*pebble.DB
-	chs            []*chann.UnlimitedChannel[eventWithCallback]
+	chs            []*chann.UnlimitedChannel[eventWithCallback, uint64]
 	writeTaskPools []*writeTaskPool
 
 	gcManager *gcManager
@@ -213,7 +213,7 @@ func New(
 		subClient: subClient,
 
 		dbs:            make([]*pebble.DB, 0, dbCount),
-		chs:            make([]*chann.UnlimitedChannel[eventWithCallback], 0, dbCount),
+		chs:            make([]*chann.UnlimitedChannel[eventWithCallback, uint64], 0, dbCount),
 		writeTaskPools: make([]*writeTaskPool, 0, dbCount),
 
 		gcManager: newGCManager(),
@@ -229,7 +229,7 @@ func New(
 			log.Fatal("open db failed", zap.Error(err))
 		}
 		store.dbs = append(store.dbs, db)
-		store.chs = append(store.chs, chann.NewUnlimitedChannel[eventWithCallback](nil, eventWithCallbackSizer, nil))
+		store.chs = append(store.chs, chann.NewUnlimitedChannel[eventWithCallback, uint64](nil, eventWithCallbackSizer))
 		store.writeTaskPools = append(store.writeTaskPools, newWriteTaskPool(store, store.dbs[i], store.chs[i], writeWorkerNumPerDB))
 	}
 	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]*dispatcherStat)
@@ -288,11 +288,11 @@ func newPebbleOptions() *pebble.Options {
 type writeTaskPool struct {
 	store     *eventStore
 	db        *pebble.DB
-	dataCh    *chann.UnlimitedChannel[eventWithCallback]
+	dataCh    *chann.UnlimitedChannel[eventWithCallback, uint64]
 	workerNum int
 }
 
-func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[eventWithCallback], workerNum int) *writeTaskPool {
+func newWriteTaskPool(store *eventStore, db *pebble.DB, ch *chann.UnlimitedChannel[eventWithCallback, uint64], workerNum int) *writeTaskPool {
 	return &writeTaskPool{
 		store:     store,
 		db:        db,
@@ -308,13 +308,13 @@ func (p *writeTaskPool) run(_ context.Context) {
 			defer p.store.wg.Done()
 			buffer := make([]eventWithCallback, 0, 128)
 			for {
-				buffer, ok := p.dataCh.GetMultipleNoGroupWait(buffer)
+				events, ok := p.dataCh.GetMultipleNoGroup(buffer)
 				if !ok {
 					return
 				}
-				p.store.writeEvents(p.db, buffer)
-				for i := range buffer {
-					buffer[i].callback()
+				p.store.writeEvents(p.db, events)
+				for i := range events {
+					events[i].callback()
 				}
 				buffer = buffer[:0]
 			}

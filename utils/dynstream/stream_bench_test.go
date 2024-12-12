@@ -55,7 +55,7 @@ func runStream(eventCount int, times int) {
 
 	done.Add(eventCount)
 	for i := 0; i < eventCount; i++ {
-		stream.in().Push(eventWrap[int, string, *inc, D, *incHandler]{event: &inc{times: times, n: total, done: done}, pathInfo: pi})
+		stream.in() <- eventWrap[int, string, *inc, D, *incHandler]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
 	}
 
 	done.Wait()

@@ -2,6 +2,7 @@ package dynstream
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -19,8 +20,6 @@ var repeatedEventType = EventType{
 }
 
 func TestPopEvents(t *testing.T) {
-	t.Skip("This test is not relevant to the current implementation.")
-
 	handler := &simpleHandler{}
 	option := NewOption()
 	batchSize := 3
@@ -46,6 +45,8 @@ func TestPopEvents(t *testing.T) {
 		pathInfo:  pathInfo1,
 		event:     event1,
 		eventType: singleEventType,
+		timestamp: 1,
+		queueTime: time.Now(),
 	})
 
 	// 2. The second pop events in batch.
@@ -53,28 +54,38 @@ func TestPopEvents(t *testing.T) {
 		pathInfo:  pathInfo2,
 		event:     event2,
 		eventType: repeatedEventType,
+		timestamp: 2,
+		queueTime: time.Now(),
 	})
 	q.appendEvent(eventWrap[int, string, *simpleEvent, mockDest, *simpleHandler]{
 		pathInfo:  pathInfo2,
 		event:     event2,
 		eventType: repeatedEventType,
+		timestamp: 3,
+		queueTime: time.Now(),
 	})
 	q.appendEvent(eventWrap[int, string, *simpleEvent, mockDest, *simpleHandler]{
 		pathInfo:  pathInfo2,
 		event:     event2,
 		eventType: repeatedEventType,
+		timestamp: 4,
+		queueTime: time.Now(),
 	})
 	// 3. The third pop event.
 	q.appendEvent(eventWrap[int, string, *simpleEvent, mockDest, *simpleHandler]{
 		pathInfo:  pathInfo2,
 		event:     event2,
 		eventType: repeatedEventType,
+		timestamp: 5,
+		queueTime: time.Now(),
 	})
 	// 4. The fourth pop event.
 	q.appendEvent(eventWrap[int, string, *simpleEvent, mockDest, *simpleHandler]{
 		pathInfo:  pathInfo1,
 		event:     event1,
 		eventType: singleEventType,
+		timestamp: 6,
+		queueTime: time.Now(),
 	})
 
 	require.Equal(t, int64(6), q.totalPendingLength.Load())

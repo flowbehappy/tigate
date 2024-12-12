@@ -16,7 +16,7 @@ func (n *timestampPathNode[A, P, T, D, H]) updateFrontTimestamp() {
 	if !ok {
 		n.frontTimestamp = 0
 	} else {
-		n.frontTimestamp = f.Timestamp()
+		n.frontTimestamp = f.timestamp
 	}
 }
 
@@ -40,7 +40,7 @@ func (n *queuePathNode[A, P, T, D, H]) updateFrontQueueTime() {
 	if !ok {
 		n.frontQueueTime = time.Time{}
 	} else {
-		n.frontQueueTime = f.QueueTime()
+		n.frontQueueTime = f.queueTime
 	}
 }
 
@@ -90,7 +90,7 @@ type streamAreaInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] stru
 func (a *streamAreaInfo[A, P, T, D, H]) minQueueTime() time.Time {
 	top, _ := a.queueTimeHeap.PeekTop()
 	front, _ := top.pendingQueue.FrontRef()
-	return front.QueueTime()
+	return front.queueTime
 }
 
 func (a *streamAreaInfo[A, P, T, D, H]) SetHeapIndex(index int) {
