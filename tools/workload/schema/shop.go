@@ -115,17 +115,19 @@ func (s *ShopItemWorkload) generateRow(suffix int) string {
 	merchantID := 123456                              // Fixed value for merchant_id
 	merchantItemID := "fixed_merchant_item_id"        // Fixed value for merchant_item_id
 	merchantItemSetID := "fixed_merchant_item_set_id" // Fixed value for merchant_item_set_id
-	jsonField := randomJSONString(s.r, s.jsonFieldSize)
+	jsonField := randomJSONString(s.jsonFieldSize)
+	randTime := rand.Int63()
+	updateTime := 0
 
 	return fmt.Sprintf("'%s-%d','%s','%s','%s','%s','%s',%d,'%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s',%d,%d,%d,'%s'",
 		primaryKey, suffix, itemID, itemSetID, productID, productSetID, country,
 		merchantID, merchantItemID, merchantItemSetID,
 		jsonField, jsonField, jsonField, jsonField, jsonField, jsonField,
 		jsonField, jsonField, jsonField, jsonField, jsonField, jsonField,
-		s.r.Int63(), s.r.Int63(), 0, jsonField)
+		randTime, randTime, updateTime, jsonField)
 }
 
-func randomJSONString(r *rand.Rand, size int) string {
+func randomJSONString(size int) string {
 	keyBuf := make([]byte, 5)
 	valueBuf := make([]byte, 10)
 	var sb strings.Builder
