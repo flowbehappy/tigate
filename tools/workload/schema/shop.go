@@ -50,10 +50,9 @@ CREATE TABLE if not exists shop_item_%d (
   updated_time bigint(20) DEFAULT NULL,
   timestamp_data json DEFAULT NULL,
   PRIMARY KEY (item_primary_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin SHARD_ROW_ID_BITS = 16     
+  /*T![clustered_index] CLUSTERED */ 
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin       
 `
-
-/*T![clustered_index] CLUSTERED */
 
 type ShopItemWorkload struct {
 	r             *rand.Rand
