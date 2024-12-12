@@ -309,7 +309,7 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 
 // RecvEventsMessage is the handler for the events message from EventService.
 func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *messaging.TargetMessage) error {
-	inflightDuration := time.Since(time.UnixMilli(targetMessage.CreateAt)).Seconds()
+	inflightDuration := time.Since(targetMessage.CreateAt).Seconds()
 	c.metricReceiveEventLagDuration.Observe(inflightDuration)
 
 	start := time.Now()
