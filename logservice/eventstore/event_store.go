@@ -473,14 +473,22 @@ func (e *eventStore) RegisterDispatcher(
 		return true
 	}
 	advanceResolvedTs := func(ts uint64) {
-		subStat.resolvedTs.Store(ts)
-		subStat.dispatchers.RLock()
-		defer subStat.dispatchers.RUnlock()
-		log.Info("event store receive resolved ts", zap.Uint64("subID", uint64(subStat.subID)), zap.Uint64("resolvedTs", ts))
-		for _, notifier := range subStat.dispatchers.notifiers {
-			notifier(ts, subStat.maxEventCommitTs.Load())
+		for {
+			currentResolvedTs := subStat.resolvedTs.Load()
+			if ts <= currentResolvedTs {
+				return
+			}
+			if subStat.resolvedTs.CompareAndSwap(currentResolvedTs, ts) {
+				subStat.dispatchers.RLock()
+				defer subStat.dispatchers.RUnlock()
+				log.Info("event store receive resolved ts", zap.Uint64("subID", uint64(subStat.subID)), zap.Uint64("resolvedTs", ts))
+				for _, notifier := range subStat.dispatchers.notifiers {
+					notifier(ts, subStat.maxEventCommitTs.Load())
+				}
+				CounterResolved.Inc()
+				return
+			}
 		}
-		CounterResolved.Inc()
 	}
 	// Note: don't hold any lock when call Subscribe
 	e.subClient.Subscribe(stat.subID, *tableSpan, startTs, consumeKVEvents, advanceResolvedTs, 600)
