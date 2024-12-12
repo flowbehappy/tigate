@@ -316,39 +316,39 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 	defer func() {
 		handleEventDuration.Observe(time.Since(start).Seconds())
 	}()
+
+	for _, msg := range targetMessage.Message {
+		switch msg.(type) {
+		case *common.LogCoordinatorBroadcastRequest:
+			c.coordinatorInfo.Lock()
+			c.coordinatorInfo.id = targetMessage.From
+			c.coordinatorInfo.Unlock()
+		case *logservicepb.ReusableEventServiceResponse:
+			// TODO: can we handle it here?
+			value, ok := c.dispatcherMap.Load(msg.(*logservicepb.ReusableEventServiceResponse).ID)
+			if !ok {
+				continue
+			}
+			value.(*DispatcherStat).setRemoteCandidates(msg.(*logservicepb.ReusableEventServiceResponse).Nodes, c)
+		case commonEvent.Event:
+			event := msg.(commonEvent.Event)
+			switch event.GetType() {
+			case commonEvent.TypeBatchResolvedEvent:
+				return nil
+				for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
+					c.metricDispatcherReceivedResolvedTsEventCount.Inc()
+					c.ds.Push(e.DispatcherID, dispatcher.NewDispatcherEvent(&targetMessage.From, e))
+				}
+			default:
+				c.metricDispatcherReceivedKVEventCount.Inc()
+				c.ds.Push(event.GetDispatcherID(), dispatcher.NewDispatcherEvent(&targetMessage.From, event))
+			}
+		default:
+			log.Panic("invalid message type", zap.Any("msg", msg))
+		}
+	}
+
 	return nil
-
-	// for _, msg := range targetMessage.Message {
-	// 	switch msg.(type) {
-	// 	case *common.LogCoordinatorBroadcastRequest:
-	// 		c.coordinatorInfo.Lock()
-	// 		c.coordinatorInfo.id = targetMessage.From
-	// 		c.coordinatorInfo.Unlock()
-	// 	case *logservicepb.ReusableEventServiceResponse:
-	// 		// TODO: can we handle it here?
-	// 		value, ok := c.dispatcherMap.Load(msg.(*logservicepb.ReusableEventServiceResponse).ID)
-	// 		if !ok {
-	// 			continue
-	// 		}
-	// 		value.(*DispatcherStat).setRemoteCandidates(msg.(*logservicepb.ReusableEventServiceResponse).Nodes, c)
-	// 	case commonEvent.Event:
-	// 		event := msg.(commonEvent.Event)
-	// 		switch event.GetType() {
-	// 		case commonEvent.TypeBatchResolvedEvent:
-	// 			for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
-	// 				c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-	// 				c.ds.Push(e.DispatcherID, dispatcher.NewDispatcherEvent(&targetMessage.From, e))
-	// 			}
-	// 		default:
-	// 			c.metricDispatcherReceivedKVEventCount.Inc()
-	// 			c.ds.Push(event.GetDispatcherID(), dispatcher.NewDispatcherEvent(&targetMessage.From, event))
-	// 		}
-	// 	default:
-	// 		log.Panic("invalid message type", zap.Any("msg", msg))
-	// 	}
-	// }
-
-	// return nil
 }
 
 func (c *EventCollector) updateMetrics(ctx context.Context) {
