@@ -15,6 +15,7 @@ package schemastore
 
 import (
 	"context"
+	"math"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/utils/heap"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -37,13 +39,17 @@ var once sync.Once
 var ddlTableInfo *event.DDLTableInfo
 
 type ddlJobFetcher struct {
-	puller *logpuller.LogPullerMultiSpan
+	resolvedTsTracker struct {
+		sync.Mutex
+		resolvedTsItemMap map[logpuller.SubscriptionID]*resolvedTsItem
+		resolvedTsHeap    *heap.Heap[*resolvedTsItem]
+	}
 
-	cacheDDLEvent func(ddlEvent DDLJobWithCommitTs)
-
+	// cacheDDLEvent and advanceResolvedTs may be called concurrently
+	// the only gurantee is that when call advanceResolvedTs with ts, all ddl job with commit ts <= ts has been passed to cacheDDLEvent
+	cacheDDLEvent     func(ddlEvent DDLJobWithCommitTs)
 	advanceResolvedTs func(resolvedTS uint64)
 
-	// kvStorage is used to init `ddlTableInfo`
 	kvStorage kv.Storage
 }
 
@@ -61,18 +67,56 @@ func newDDLJobFetcher(
 		advanceResolvedTs: advanceResolvedTs,
 		kvStorage:         kvStorage,
 	}
-	ddlSpans := getAllDDLSpan()
-	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(subClient, pdClock, ddlSpans, startTs, ddlJobFetcher.input, advanceResolvedTs)
+	ddlJobFetcher.resolvedTsTracker.resolvedTsItemMap = make(map[logpuller.SubscriptionID]*resolvedTsItem)
+	ddlJobFetcher.resolvedTsTracker.resolvedTsHeap = heap.NewHeap[*resolvedTsItem]()
+
+	for _, span := range getAllDDLSpan() {
+		subID := subClient.AllocSubscriptionID()
+		item := &resolvedTsItem{
+			resolvedTs: 0,
+		}
+		ddlJobFetcher.resolvedTsTracker.resolvedTsItemMap[subID] = item
+		ddlJobFetcher.resolvedTsTracker.resolvedTsHeap.AddOrUpdate(item)
+		advanceSubSpanResolvedTs := func(ts uint64) {
+			ddlJobFetcher.tryAdvanceResolvedTs(subID, ts)
+		}
+		subClient.Subscribe(subID, span, startTs, ddlJobFetcher.input, advanceSubSpanResolvedTs, 0)
+	}
 
 	return ddlJobFetcher
 }
 
 func (p *ddlJobFetcher) run(ctx context.Context) error {
-	return p.puller.Run(ctx)
+	return nil
 }
 
 func (p *ddlJobFetcher) close(ctx context.Context) error {
-	return p.puller.Close(ctx)
+	return nil
+}
+
+func (p *ddlJobFetcher) tryAdvanceResolvedTs(subID logpuller.SubscriptionID, newResolvedTs uint64) {
+	p.resolvedTsTracker.Lock()
+	defer p.resolvedTsTracker.Unlock()
+	item, ok := p.resolvedTsTracker.resolvedTsItemMap[subID]
+	if !ok {
+		log.Panic("unknown zubscriptionID, should not happen",
+			zap.Uint64("subID", uint64(subID)))
+	}
+	if newResolvedTs < item.resolvedTs {
+		log.Panic("resolved ts should not fallback",
+			zap.Uint64("newResolvedTs", newResolvedTs),
+			zap.Uint64("oldResolvedTs", item.resolvedTs))
+	}
+	item.resolvedTs = newResolvedTs
+	p.resolvedTsTracker.resolvedTsHeap.AddOrUpdate(item)
+
+	minResolvedTsItem, ok := p.resolvedTsTracker.resolvedTsHeap.PeekTop()
+	if !ok || minResolvedTsItem.resolvedTs == math.MaxUint64 {
+		log.Panic("should not happen")
+	}
+	// minResolvedTsItem may be 0, it it ok to send it because it will be filtered later.
+	// it is ok to send redundant resolved ts to advanceResolvedTs.
+	p.advanceResolvedTs(minResolvedTsItem.resolvedTs)
 }
 
 func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, _ func()) bool {
@@ -221,4 +265,17 @@ func getAllDDLSpan() []heartbeatpb.TableSpan {
 		EndKey:   common.ToComparableKey(end),
 	})
 	return spans
+}
+
+type resolvedTsItem struct {
+	resolvedTs uint64
+	heapIndex  int
+}
+
+func (m *resolvedTsItem) SetHeapIndex(index int) { m.heapIndex = index }
+
+func (m *resolvedTsItem) GetHeapIndex() int { return m.heapIndex }
+
+func (m *resolvedTsItem) LessThan(other *resolvedTsItem) bool {
+	return m.resolvedTs < other.resolvedTs
 }
