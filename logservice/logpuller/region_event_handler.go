@@ -63,6 +63,10 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 	}
 
 	for _, event := range events {
+		log.Info("handle region events",
+			zap.Uint64("subID", uint64(span.subID)),
+			zap.Uint64("regionID", event.state.getRegionID()),
+			zap.Any("event", event))
 		if event.state.isStale() {
 			h.handleRegionError(event.state, event.worker)
 			continue
