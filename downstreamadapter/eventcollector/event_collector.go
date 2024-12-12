@@ -309,10 +309,14 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 
 // RecvEventsMessage is the handler for the events message from EventService.
 func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *messaging.TargetMessage) error {
-	inflightDuration := time.Since(time.UnixMilli(targetMessage.CreateAt)).Seconds()
+	inflightDuration := time.Since(targetMessage.CreateAt).Seconds()
 	c.metricReceiveEventLagDuration.Observe(inflightDuration)
 
 	start := time.Now()
+	defer func() {
+		handleEventDuration.Observe(time.Since(start).Seconds())
+	}()
+
 	for _, msg := range targetMessage.Message {
 		switch msg.(type) {
 		case *common.LogCoordinatorBroadcastRequest:
@@ -330,6 +334,7 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 			event := msg.(commonEvent.Event)
 			switch event.GetType() {
 			case commonEvent.TypeBatchResolvedEvent:
+				//return nil
 				for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 					c.metricDispatcherReceivedResolvedTsEventCount.Inc()
 					c.ds.Push(e.DispatcherID, dispatcher.NewDispatcherEvent(&targetMessage.From, e))
@@ -343,7 +348,6 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 		}
 	}
 
-	handleEventDuration.Observe(time.Since(start).Seconds())
 	return nil
 }
 

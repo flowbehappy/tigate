@@ -41,6 +41,7 @@ type EventDispatcher interface {
 	EnableSyncPoint() bool
 	GetSyncPointInterval() time.Duration
 	GetResolvedTs() uint64
+	SetResolvedTs(ts uint64)
 	SetInitialTableInfo(tableInfo *common.TableInfo)
 	HandleEvents(events []DispatcherEvent, wakeCallback func()) (block bool)
 }
@@ -498,6 +499,10 @@ func (d *Dispatcher) GetStartTs() uint64 {
 
 func (d *Dispatcher) GetResolvedTs() uint64 {
 	return atomic.LoadUint64(&d.resolvedTs)
+}
+
+func (d *Dispatcher) SetResolvedTs(ts uint64) {
+	atomic.StoreUint64(&d.resolvedTs, ts)
 }
 
 func (d *Dispatcher) GetCheckpointTs() uint64 {

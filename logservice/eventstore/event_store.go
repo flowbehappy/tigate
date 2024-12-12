@@ -828,7 +828,7 @@ func (e *eventStore) uploadStatePeriodically(ctx context.Context) error {
 
 			message := messaging.NewSingleTargetMessage(e.coordinatorInfo.id, messaging.LogCoordinatorTopic, state)
 			e.dispatcherMeta.RUnlock()
-			// just ignore messagees fail to send
+			// just ignore messages fail to send
 			if err := e.messageCenter.SendEvent(message); err != nil {
 				log.Debug("send broadcast message to node failed", zap.Error(err))
 			}
