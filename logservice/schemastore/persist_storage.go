@@ -1845,6 +1845,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			log.Fatal("should not happen")
 		}
 	case model.ActionCreateTables:
+
 		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{heartbeatpb.DDLSpan.TableID},
@@ -1866,6 +1867,11 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		ddlEvent.NeedAddedTables = make([]commonEvent.Table, 0, physicalTableCount)
 		addName := make([]commonEvent.SchemaTableName, 0, logicalTableCount)
 		resultQuerys := make([]string, 0, logicalTableCount)
+		log.Info("create tables",
+			zap.String("DDL", rawEvent.Query),
+			zap.Int("logicalTableCount", logicalTableCount),
+			zap.Int("physicalTableCount", physicalTableCount),
+			zap.Int("multipleTableInfosCount", len(rawEvent.MultipleTableInfos)))
 		for i, info := range rawEvent.MultipleTableInfos {
 			if tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, info.Name.O) {
 				continue
