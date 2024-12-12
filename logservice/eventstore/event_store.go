@@ -482,7 +482,6 @@ func (e *eventStore) RegisterDispatcher(
 		if subStat.resolvedTs.CompareAndSwap(currentResolvedTs, ts) {
 			subStat.dispatchers.RLock()
 			defer subStat.dispatchers.RUnlock()
-			log.Info("event store receive resolved ts", zap.Uint64("subID", uint64(subStat.subID)), zap.Uint64("resolvedTs", ts))
 			for _, notifier := range subStat.dispatchers.notifiers {
 				notifier(ts, subStat.maxEventCommitTs.Load())
 			}
