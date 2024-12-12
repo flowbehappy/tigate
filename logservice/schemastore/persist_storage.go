@@ -874,6 +874,8 @@ func buildPersistedDDLEventFromJob(
 	case model.ActionCreateTables:
 		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
 		event.MultipleTableInfos = job.BinlogInfo.MultipleTableInfos
+		log.Info("buildPersistedDDLEvent for create tables",
+			zap.String("query", event.Query))
 	case model.ActionReorganizePartition:
 		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
 		event.CurrentTableName = getTableName(event.CurrentTableID)
@@ -1845,7 +1847,6 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			log.Fatal("should not happen")
 		}
 	case model.ActionCreateTables:
-
 		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{heartbeatpb.DDLSpan.TableID},
