@@ -935,6 +935,18 @@ func shouldSkipDDL(
 		model.ActionAlterTablePartitionAttributes:
 		// Note: these ddls seems not useful to sync to downstream?
 		return true
+	case model.ActionCreateTables:
+		// For duplicate create tables ddl job, the tables in the job should be same, check the first table is enough
+		if _, ok := tableMap[event.MultipleTableInfos[0].ID]; ok {
+			log.Warn("table already exists. ignore DDL ",
+				zap.String("DDL", event.Query),
+				zap.Int64("jobID", event.ID),
+				zap.Int64("schemaID", event.CurrentSchemaID),
+				zap.Int64("tableID", event.CurrentTableID),
+				zap.Uint64("finishTs", event.FinishedTs),
+				zap.Int64("jobSchemaVersion", event.SchemaVersion))
+			return true
+		}
 	}
 	// Note: create tables don't need to be ignore, because we won't receive it twice
 	return false
