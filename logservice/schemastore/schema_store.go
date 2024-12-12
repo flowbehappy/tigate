@@ -157,15 +157,16 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 				zap.Int("resolvedEventsLen", len(resolvedEvents)))
 
 			for _, event := range resolvedEvents {
-				if event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
-					// log.Info("skip already applied ddl job",
-					// 	zap.Any("type", event.Job.Type),
-					// 	zap.String("job", event.Job.Query),
-					// 	zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-					// 	zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
-					// 	zap.Uint64("jobCommitTs", event.CommitTs),
-					// 	zap.Any("storeSchemaVersion", s.schemaVersion),
-					// 	zap.Uint64("storeFinishedDDLTS", s.finishedDDLTs))
+				if event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs ||
+					event.Job.BinlogInfo.SchemaVersion == 0 /* means the ddl is ignored in upstream */ {
+					log.Info("skip already applied ddl job",
+						zap.Any("type", event.Job.Type),
+						zap.String("job", event.Job.Query),
+						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+						zap.Uint64("jobCommitTs", event.CommitTs),
+						zap.Any("storeSchemaVersion", s.schemaVersion),
+						zap.Uint64("storeFinishedDDLTS", s.finishedDDLTs))
 					continue
 				}
 				log.Info("handle ddl job",
