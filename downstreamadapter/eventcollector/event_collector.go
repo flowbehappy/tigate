@@ -332,7 +332,12 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 			case commonEvent.TypeBatchResolvedEvent:
 				for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 					c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-					c.ds.Push(e.DispatcherID, dispatcher.NewDispatcherEvent(&targetMessage.From, e))
+					d, ok := c.dispatcherMap.Load(e.DispatcherID)
+					if !ok {
+						continue
+					}
+					d.(*DispatcherStat).target.SetResolvedTs(e.ResolvedTs)
+					//c.ds.Push(e.DispatcherID, dispatcher.NewDispatcherEvent(&targetMessage.From, e))
 				}
 			default:
 				c.metricDispatcherReceivedKVEventCount.Inc()
