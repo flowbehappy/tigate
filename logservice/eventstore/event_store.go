@@ -483,7 +483,7 @@ func (e *eventStore) RegisterDispatcher(
 		CounterResolved.Inc()
 	}
 	// Note: don't hold any lock when call Subscribe
-	e.subClient.Subscribe(stat.subID, *tableSpan, startTs, consumeKVEvents, advanceResolvedTs, 600)
+	e.subClient.Subscribe(stat.subID, *tableSpan, startTs, consumeKVEvents, advanceResolvedTs, 0)
 	metrics.EventStoreSubscriptionGauge.Inc()
 	return true, nil
 }
