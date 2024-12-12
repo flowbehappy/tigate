@@ -193,6 +193,7 @@ func (m *DispatcherOrchestrator) handleRemoveDispatcherManager(from node.ID, req
 		}
 	}
 
+	log.Info("try close dispatcher manager", zap.String("changefeed", cfId.Name()), zap.Bool("success", response.Success))
 	return m.sendResponse(from, messaging.MaintainerTopic, response)
 }
 
