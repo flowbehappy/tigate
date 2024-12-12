@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/utils/heap"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -39,8 +40,13 @@ var ddlTableInfo *event.DDLTableInfo
 type ddlJobFetcher struct {
 	puller *logpuller.LogPullerMultiSpan
 
-	cacheDDLEvent func(ddlEvent DDLJobWithCommitTs)
+	// used to calculate resolved ts for multi span
+	resolvedTsMap  map[logpuller.SubscriptionID]*resolvedTsItem
+	resolvedTsHeap *heap.Heap[*resolvedTsItem]
 
+	// cacheDDLEvent and advanceResolvedTs may be called concurrently,
+	// the only guarantee is that when call advanceResolvedTs with ts, all ddl job with commit ts <= ts have been passed to cacheDDLEvent
+	cacheDDLEvent     func(ddlEvent DDLJobWithCommitTs)
 	advanceResolvedTs func(resolvedTS uint64)
 
 	// kvStorage is used to init `ddlTableInfo`
@@ -57,6 +63,9 @@ func newDDLJobFetcher(
 	advanceResolvedTs func(resolvedTS uint64),
 ) *ddlJobFetcher {
 	ddlJobFetcher := &ddlJobFetcher{
+		resolvedTsMap:  make(map[SubscriptionID]*resolvedTsItem),
+		resolvedTsHeap: heap.NewHeap[*resolvedTsItem](),
+
 		cacheDDLEvent:     cacheDDLEvent,
 		advanceResolvedTs: advanceResolvedTs,
 		kvStorage:         kvStorage,
@@ -221,4 +230,17 @@ func getAllDDLSpan() []heartbeatpb.TableSpan {
 		EndKey:   common.ToComparableKey(end),
 	})
 	return spans
+}
+
+type resolvedTsItem struct {
+	resolvedTs uint64
+	heapIndex  int
+}
+
+func (m *resolvedTsItem) SetHeapIndex(index int) { m.heapIndex = index }
+
+func (m *resolvedTsItem) GetHeapIndex() int { return m.heapIndex }
+
+func (m *resolvedTsItem) LessThan(other *resolvedTsItem) bool {
+	return m.resolvedTs < other.resolvedTs
 }

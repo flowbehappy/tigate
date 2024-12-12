@@ -309,17 +309,21 @@ func (s *schemaStore) writeDDLEvent(ddlEvent DDLJobWithCommitTs) {
 	}
 }
 
+// advanceResolvedTs may be called concurrently, we need ignore smaller resolvedTs
 func (s *schemaStore) advanceResolvedTs(resolvedTs uint64) {
-	// log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
-	if resolvedTs < s.pendingResolvedTs.Load() {
-		log.Panic("resolved ts should not fallback",
-			zap.Uint64("pendingResolveTs", s.pendingResolvedTs.Load()),
-			zap.Uint64("newResolvedTs", resolvedTs))
-	}
-	s.pendingResolvedTs.Store(resolvedTs)
-	select {
-	case s.notifyCh <- struct{}{}:
-	default:
+	for {
+		currentTs := s.pendingResolvedTs.Load()
+		if resolvedTs <= currentTs {
+			return
+		}
+
+		if s.pendingResolvedTs.CompareAndSwap(currentTs, resolvedTs) {
+			select {
+			case s.notifyCh <- struct{}{}:
+			default:
+			}
+			return
+		}
 	}
 }
 
