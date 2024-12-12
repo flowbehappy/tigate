@@ -231,6 +231,11 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 				regionEvent.err = eventData
 			case *cdcpb.Event_ResolvedTs:
 				regionEvent.resolvedTs = eventData.ResolvedTs
+				log.Info("region request worker receives a region resolved ts",
+					zap.Uint64("workerID", s.workerID),
+					zap.Uint64("subscriptionID", uint64(subscriptionID)),
+					zap.Uint64("regionID", event.RegionId),
+					zap.Uint64("resolvedTs", eventData.ResolvedTs))
 			case *cdcpb.Event_LongTxn_:
 				// ignore
 			default:
@@ -250,9 +255,19 @@ func (s *regionRequestWorker) dispatchResolvedTsEvent(resolvedTsEvent *cdcpb.Res
 	subscriptionID := SubscriptionID(resolvedTsEvent.RequestId)
 	s.client.metrics.batchResolvedSize.Observe(float64(len(resolvedTsEvent.Regions)))
 	for _, regionID := range resolvedTsEvent.Regions {
+		log.Info("region request worker receives batch region resolved ts",
+			zap.Uint64("workerID", s.workerID),
+			zap.Uint64("subscriptionID", uint64(subscriptionID)),
+			zap.Uint64("regionID", regionID),
+			zap.Uint64("resolvedTs", resolvedTsEvent.Ts))
 		if state := s.getRegionState(subscriptionID, regionID); state != nil {
 			// Update the resolvedTs of the region here for metrics.
 			state.region.subscribedSpan.resolvedTs.Store(resolvedTsEvent.Ts)
+			log.Info("region request worker send batch region resolved ts",
+				zap.Uint64("workerID", s.workerID),
+				zap.Uint64("subscriptionID", uint64(subscriptionID)),
+				zap.Uint64("regionID", regionID),
+				zap.Uint64("resolvedTs", resolvedTsEvent.Ts))
 			s.client.ds.Push(SubscriptionID(resolvedTsEvent.RequestId), regionEvent{
 				state:      state,
 				worker:     s,
