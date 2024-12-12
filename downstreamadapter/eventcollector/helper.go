@@ -26,7 +26,6 @@ func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[co
 	option := dynstream.NewOption()
 	option.BatchCount = 128
 	option.UseBuffer = true
-	option.StreamCount = 32
 	// Enable memory control for dispatcher events dynamic stream.
 	option.EnableMemoryControl = false
 	if option.EnableMemoryControl {
