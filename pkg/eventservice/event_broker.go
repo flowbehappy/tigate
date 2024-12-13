@@ -110,8 +110,8 @@ func newEventBroker(
 	// We noted that:
 	// 1. When the number of send message workers is too small, the lag of the resolvedTs keep in a high level.
 	// 2. When the number of send message workers is too large, the lag of the resolvedTs has spikes.
-	// And when the number of send message workers is 4 or 8, the lag of the resolvedTs is stable.
-	sendMessageWorkerCount := config.DefaultBasicEventHandlerConcurrency / 4
+	// And when the number of send message workers is 4, the lag of the resolvedTs is stable.
+	sendMessageWorkerCount := config.DefaultBasicEventHandlerConcurrency / 8
 	scanWorkerCount := config.DefaultBasicEventHandlerConcurrency * 4
 
 	conf := config.GetGlobalServerConfig().Debug.EventService
