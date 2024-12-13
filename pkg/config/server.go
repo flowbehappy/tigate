@@ -56,7 +56,7 @@ const (
 	// DefaultEventHandlerConcurrency is the default number of worker for event service.
 	// This is used to define how many workers to send message in event service and
 	// how many workers to receive message in eventCollector.
-	DefaultEventHandlerConcurrency = 128
+	DefaultEventHandlerConcurrency = 32
 )
 
 var (

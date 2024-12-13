@@ -64,8 +64,10 @@ type eventBroker struct {
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskQueue chan scanTask
 
-	// workerCount is the number of the scan workers and send message workers to spawn.
-	workerCount int
+	// sendMessageWorkerCount is the number of the send message workers to spawn.
+	sendMessageWorkerCount int
+	// scanWorkerCount is the number of the scan workers to spawn.
+	scanWorkerCount int
 
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
@@ -104,7 +106,8 @@ func newEventBroker(
 	option := dynstream.NewOption()
 	option.UseBuffer = true
 
-	workerCount := config.DefaultEventHandlerConcurrency
+	sendMessageWorkerCount := config.DefaultEventHandlerConcurrency
+	scanWorkerCount := 128
 
 	conf := config.GetGlobalServerConfig().Debug.EventService
 
@@ -117,8 +120,9 @@ func newEventBroker(
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
 		taskQueue:               make(chan scanTask, conf.ScanTaskQueueSize),
-		workerCount:             workerCount,
-		messageCh:               make([]chan *wrapEvent, workerCount),
+		sendMessageWorkerCount:  sendMessageWorkerCount,
+		messageCh:               make([]chan *wrapEvent, sendMessageWorkerCount),
+		scanWorkerCount:         scanWorkerCount,
 		cancel:                  cancel,
 		wg:                      wg,
 
@@ -141,7 +145,7 @@ func newEventBroker(
 		},
 	}
 
-	for i := 0; i < workerCount; i++ {
+	for i := 0; i < c.sendMessageWorkerCount; i++ {
 		c.messageCh[i] = make(chan *wrapEvent, basicChannelSize*4)
 	}
 
@@ -150,7 +154,7 @@ func newEventBroker(
 	c.logUnresetDispatchers(ctx)
 	c.reportDispatcherStatToStore(ctx)
 
-	for i := 0; i < workerCount; i++ {
+	for i := 0; i < c.sendMessageWorkerCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
@@ -200,8 +204,8 @@ func (c *eventBroker) getMessageCh(workerIndex int) chan *wrapEvent {
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
-	c.wg.Add(c.workerCount)
-	for i := 0; i < c.workerCount; i++ {
+	c.wg.Add(c.scanWorkerCount)
+	for i := 0; i < c.scanWorkerCount; i++ {
 		go func() {
 			defer c.wg.Done()
 			for {
@@ -763,7 +767,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	id := info.GetID()
 	span := info.GetTableSpan()
 	startTs := info.GetStartTs()
-	workerIndex := int((common.GID)(id).Hash(uint64(c.workerCount)))
+	workerIndex := int((common.GID)(id).Hash(uint64(c.sendMessageWorkerCount)))
 	dispatcher := newDispatcherStat(startTs, info, filter, workerIndex)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)
