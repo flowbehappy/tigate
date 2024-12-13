@@ -579,7 +579,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 
 				for _, m := range batchM {
 					if m.msgType == pevent.TypeResolvedEvent {
-						c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
+						c.handleResolvedTs(ctx, resolvedTsCacheMap, m, workerIndex)
 						continue
 					}
 					// Check if the dispatcher is initialized, if so, ignore the handshake event.
@@ -597,10 +597,12 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 					tMsg := messaging.NewSingleTargetMessage(
 						m.serverID,
 						messaging.EventCollectorTopic,
-						m.e)
+						m.e,
+						uint64(workerIndex),
+					)
 					// Note: we need to flush the resolvedTs cache before sending the message
 					// to keep the order of the resolvedTs and the message.
-					c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
+					c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID, workerIndex)
 					c.sendMsg(ctx, tMsg, m.postSendFunc)
 					m.reset()
 				}
@@ -608,14 +610,14 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 
 			case <-tickCh:
 				for serverID, cache := range resolvedTsCacheMap {
-					c.flushResolvedTs(ctx, cache, serverID)
+					c.flushResolvedTs(ctx, cache, serverID, workerIndex)
 				}
 			}
 		}
 	}()
 }
 
-func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID]*resolvedTsCache, m *wrapEvent) {
+func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID]*resolvedTsCache, m *wrapEvent, workerIndex int) {
 	defer m.reset()
 	cache, ok := cacheMap[m.serverID]
 	if !ok {
@@ -624,11 +626,11 @@ func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID
 	}
 	cache.add(m.resolvedTsEvent)
 	if cache.isFull() {
-		c.flushResolvedTs(ctx, cache, m.serverID)
+		c.flushResolvedTs(ctx, cache, m.serverID, workerIndex)
 	}
 }
 
-func (c *eventBroker) flushResolvedTs(ctx context.Context, cache *resolvedTsCache, serverID node.ID) {
+func (c *eventBroker) flushResolvedTs(ctx context.Context, cache *resolvedTsCache, serverID node.ID, workerIndex int) {
 	if cache == nil || cache.len == 0 {
 		return
 	}
@@ -637,7 +639,9 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, cache *resolvedTsCach
 	tMsg := messaging.NewSingleTargetMessage(
 		serverID,
 		messaging.EventCollectorTopic,
-		msg)
+		msg,
+		uint64(workerIndex),
+	)
 	c.sendMsg(ctx, tMsg, nil)
 }
 

@@ -19,6 +19,16 @@ import (
 
 type IOType int32
 
+var LogServiceEventTypes = []IOType{
+	TypeDMLEvent,
+	TypeDDLEvent,
+	TypeBatchResolvedTs,
+	TypeSyncPointEvent,
+	TypeHandshakeEvent,
+	TypeReadyEvent,
+	TypeNotReusableEvent,
+}
+
 const (
 	TypeInvalid IOType = iota
 	// LogService related
@@ -275,10 +285,17 @@ type TargetMessage struct {
 	Type     IOType
 	Message  []IOTypeT
 	CreateAt int64
+
+	// Group is used to group messages into a same group.
+	// Different groups can be processed in different goroutines.
+	Group uint64
 }
 
 // NewSingleTargetMessage creates a new TargetMessage to be sent to a target server, with a single message.
-func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMessage {
+// Group is used to group messages into a same group.
+// Different groups can be processed in different goroutines by the target server.
+// The Group is optional, if not specified, the Group will be 0.
+func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT, Group ...uint64) *TargetMessage {
 	var ioType IOType
 	switch Message.(type) {
 	case *commonEvent.DMLEvent:
@@ -343,29 +360,27 @@ func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMe
 		panic("unknown io type")
 	}
 
+	var group uint64
+	if len(Group) > 0 {
+		group = Group[0]
+	}
+
 	return &TargetMessage{
 		To:       To,
 		Type:     ioType,
 		Topic:    Topic,
 		Message:  []IOTypeT{Message},
 		CreateAt: time.Now().UnixMilli(),
-	}
-}
-
-// NewBatchTargetMessage creates a new TargetMessage to be sent to a target server, with multiple messages.
-// All messages in the batch should have the same type and topic.
-func NewBatchTargetMessage(To node.ID, Topic string, Type IOType, Messages []IOTypeT) *TargetMessage {
-	return &TargetMessage{
-		To:       To,
-		Type:     Type,
-		Topic:    Topic,
-		Message:  Messages,
-		CreateAt: time.Now().UnixMilli(),
+		Group:    group,
 	}
 }
 
 func (m *TargetMessage) String() string {
 	return fmt.Sprintf("From: %s, To: %s, Type: %s, Message: %v", m.From, m.To, m.Type, m.Message)
+}
+
+func (m *TargetMessage) GetGroup() uint64 {
+	return m.Group
 }
 
 type MessageError struct {

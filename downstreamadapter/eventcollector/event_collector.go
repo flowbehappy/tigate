@@ -15,6 +15,7 @@ package eventcollector
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,6 +37,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+)
+
+const (
+	receiveChanNum  = 32
+	receiveChanSize = 1024 * 8
 )
 
 var (
@@ -82,6 +88,7 @@ type EventCollector struct {
 
 	logCoordinatorRequestChan *chann.DrainableChann[*logservicepb.ReusableEventServiceRequest]
 
+	receiveChannels []chan *messaging.TargetMessage
 	// ds is the dynamicStream for dispatcher events.
 	// All the events from event service will be sent to ds to handle.
 	// ds will dispatch the events to different dispatchers according to the dispatcherID.
@@ -104,12 +111,23 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequestWithTarget](),
 		logCoordinatorRequestChan:            chann.NewAutoDrainChann[*logservicepb.ReusableEventServiceRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
+		receiveChannels:                      make([]chan *messaging.TargetMessage, receiveChanNum),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("Msg"),
 	}
 	eventCollector.ds = NewEventDynamicStream(&eventCollector)
 	eventCollector.mc.RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
+
+	for i := 0; i < receiveChanNum; i++ {
+		ch := make(chan *messaging.TargetMessage, receiveChanSize)
+		eventCollector.receiveChannels[i] = ch
+		eventCollector.wg.Add(1)
+		go func() {
+			defer eventCollector.wg.Done()
+			eventCollector.runProcessMessage(ctx, ch)
+		}()
+	}
 
 	eventCollector.wg.Add(1)
 	go func() {
@@ -311,8 +329,16 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *messaging.TargetMessage) error {
 	inflightDuration := time.Since(time.UnixMilli(targetMessage.CreateAt)).Seconds()
 	c.metricReceiveEventLagDuration.Observe(inflightDuration)
-
 	start := time.Now()
+	defer func() {
+		handleEventDuration.Observe(time.Since(start).Seconds())
+	}()
+	// 先确定 message 类型，如果是 even 类型，转发到 channel 中多线程处理
+	if slices.Contains(messaging.LogServiceEventTypes, targetMessage.Type) {
+		c.receiveChannels[targetMessage.Group%uint64(len(c.receiveChannels))] <- targetMessage
+		return nil
+	}
+
 	for _, msg := range targetMessage.Message {
 		switch msg.(type) {
 		case *common.LogCoordinatorBroadcastRequest:
@@ -326,30 +352,44 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 				continue
 			}
 			value.(*DispatcherStat).setRemoteCandidates(msg.(*logservicepb.ReusableEventServiceResponse).Nodes, c)
-		case commonEvent.Event:
-			event := msg.(commonEvent.Event)
-			switch event.GetType() {
-			case commonEvent.TypeBatchResolvedEvent:
-				events := event.(*commonEvent.BatchResolvedEvent).Events
-				from := &targetMessage.From
-				event := dispatcher.DispatcherEvent{}
-				for _, e := range events {
-					event.From = from
-					event.Event = e
-					c.ds.Push(e.DispatcherID, event)
-				}
-				c.metricDispatcherReceivedResolvedTsEventCount.Add(float64(len(events)))
-			default:
-				c.metricDispatcherReceivedKVEventCount.Inc()
-				c.ds.Push(event.GetDispatcherID(), dispatcher.NewDispatcherEvent(&targetMessage.From, event))
-			}
 		default:
 			log.Panic("invalid message type", zap.Any("msg", msg))
 		}
 	}
-
-	handleEventDuration.Observe(time.Since(start).Seconds())
 	return nil
+}
+
+func (c *EventCollector) runProcessMessage(ctx context.Context, inCh <-chan *messaging.TargetMessage) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case targetMessage := <-inCh:
+			for _, msg := range targetMessage.Message {
+				switch msg.(type) {
+				case commonEvent.Event:
+					event := msg.(commonEvent.Event)
+					switch event.GetType() {
+					case commonEvent.TypeBatchResolvedEvent:
+						events := event.(*commonEvent.BatchResolvedEvent).Events
+						from := &targetMessage.From
+						event := dispatcher.DispatcherEvent{}
+						for _, e := range events {
+							event.From = from
+							event.Event = e
+							c.ds.Push(e.DispatcherID, event)
+						}
+						c.metricDispatcherReceivedResolvedTsEventCount.Add(float64(len(events)))
+					default:
+						c.metricDispatcherReceivedKVEventCount.Inc()
+						c.ds.Push(event.GetDispatcherID(), dispatcher.NewDispatcherEvent(&targetMessage.From, event))
+					}
+				default:
+					log.Panic("invalid message type", zap.Any("msg", msg))
+				}
+			}
+		}
+	}
 }
 
 func (c *EventCollector) updateMetrics(ctx context.Context) {
