@@ -2,7 +2,6 @@ package eventservice
 
 import (
 	"context"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -27,10 +26,7 @@ import (
 
 const (
 	resolvedTsCacheSize = 512
-	streamCount         = 4
 	basicChannelSize    = 2048
-	// TODO: need to adjust the worker count
-	defaultScanWorkerCount = 128
 )
 
 var (
@@ -68,8 +64,8 @@ type eventBroker struct {
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskQueue chan scanTask
 
-	// scanWorkerCount is the number of the scan workers to spawn.
-	scanWorkerCount int
+	// workerCount is the number of the scan workers and send message workers to spawn.
+	workerCount int
 
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
@@ -108,15 +104,7 @@ func newEventBroker(
 	option := dynstream.NewOption()
 	option.UseBuffer = true
 
-	messageWorkerCount := runtime.NumCPU()
-	if messageWorkerCount < streamCount {
-		messageWorkerCount = streamCount
-	}
-
-	scanWorkerCount := defaultScanWorkerCount
-	if scanWorkerCount < messageWorkerCount {
-		scanWorkerCount = messageWorkerCount
-	}
+	workerCount := config.DefaultEventHandlerConcurrency
 
 	conf := config.GetGlobalServerConfig().Debug.EventService
 
@@ -129,8 +117,8 @@ func newEventBroker(
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
 		taskQueue:               make(chan scanTask, conf.ScanTaskQueueSize),
-		scanWorkerCount:         scanWorkerCount,
-		messageCh:               make([]chan *wrapEvent, messageWorkerCount),
+		workerCount:             workerCount,
+		messageCh:               make([]chan *wrapEvent, workerCount),
 		cancel:                  cancel,
 		wg:                      wg,
 
@@ -153,7 +141,7 @@ func newEventBroker(
 		},
 	}
 
-	for i := 0; i < messageWorkerCount; i++ {
+	for i := 0; i < workerCount; i++ {
 		c.messageCh[i] = make(chan *wrapEvent, basicChannelSize*4)
 	}
 
@@ -162,7 +150,7 @@ func newEventBroker(
 	c.logUnresetDispatchers(ctx)
 	c.reportDispatcherStatToStore(ctx)
 
-	for i := 0; i < messageWorkerCount; i++ {
+	for i := 0; i < workerCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
@@ -183,17 +171,6 @@ func (c *eventBroker) sendWatermark(
 		d.getEventSenderState())
 	c.getMessageCh(d.workerIndex) <- resolvedEvent
 	metricEventServiceSendResolvedTsCount.Inc()
-
-	// We comment out the following code is because we found when some resolvedTs are dropped,
-	// the lag of the resolvedTs will increase.
-	// select {
-	// case c.getMessageCh(d.workerIndex) <- resolvedEvent:
-	// 	if counter != nil {
-	// 		counter.Inc()
-	// 	}
-	// default:
-	// 	metricEventBrokerDropResolvedTsCount.Inc()
-	// }
 }
 
 func (c *eventBroker) sendReadyEvent(
@@ -223,8 +200,8 @@ func (c *eventBroker) getMessageCh(workerIndex int) chan *wrapEvent {
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
-	c.wg.Add(c.scanWorkerCount)
-	for i := 0; i < c.scanWorkerCount; i++ {
+	c.wg.Add(c.workerCount)
+	for i := 0; i < c.workerCount; i++ {
 		go func() {
 			defer c.wg.Done()
 			for {
@@ -786,7 +763,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	id := info.GetID()
 	span := info.GetTableSpan()
 	startTs := info.GetStartTs()
-	workerIndex := int((common.GID)(id).Hash(uint64(streamCount)))
+	workerIndex := int((common.GID)(id).Hash(uint64(c.workerCount)))
 	dispatcher := newDispatcherStat(startTs, info, filter, workerIndex)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)

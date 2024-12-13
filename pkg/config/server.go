@@ -52,6 +52,11 @@ const (
 	// The PD client will forward the requests throughthe follower
 	// If there is a network partition problem between TiCDC and PD leader.
 	EnablePDForwarding = true
+
+	// DefaultEventHandlerConcurrency is the default number of worker for event service.
+	// This is used to define how many workers to send message in event service and
+	// how many workers to receive message in eventCollector.
+	DefaultEventHandlerConcurrency = 128
 )
 
 var (

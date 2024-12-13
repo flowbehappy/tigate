@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
 	"github.com/pingcap/ticdc/downstreamadapter/syncpoint"
 	"github.com/pingcap/ticdc/logservice/logservicepb"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/node"
 
 	"github.com/pingcap/log"
@@ -40,7 +41,6 @@ import (
 )
 
 const (
-	receiveChanNum  = 32
 	receiveChanSize = 1024 * 8
 )
 
@@ -111,7 +111,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequestWithTarget](),
 		logCoordinatorRequestChan:            chann.NewAutoDrainChann[*logservicepb.ReusableEventServiceRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
-		receiveChannels:                      make([]chan *messaging.TargetMessage, receiveChanNum),
+		receiveChannels:                      make([]chan *messaging.TargetMessage, config.DefaultEventHandlerConcurrency),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("Msg"),
@@ -119,7 +119,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 	eventCollector.ds = NewEventDynamicStream(&eventCollector)
 	eventCollector.mc.RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
-	for i := 0; i < receiveChanNum; i++ {
+	for i := 0; i < config.DefaultEventHandlerConcurrency; i++ {
 		ch := make(chan *messaging.TargetMessage, receiveChanSize)
 		eventCollector.receiveChannels[i] = ch
 		eventCollector.wg.Add(1)
