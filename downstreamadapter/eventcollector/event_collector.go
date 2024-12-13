@@ -333,7 +333,9 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 	defer func() {
 		handleEventDuration.Observe(time.Since(start).Seconds())
 	}()
-	// 先确定 message 类型，如果是 even 类型，转发到 channel 中多线程处理
+
+	// If the message is a log service event, we need to forward it to the
+	// corresponding channel to handle it in multi-thread.
 	if slices.Contains(messaging.LogServiceEventTypes, targetMessage.Type) {
 		c.receiveChannels[targetMessage.Group%uint64(len(c.receiveChannels))] <- targetMessage
 		return nil
