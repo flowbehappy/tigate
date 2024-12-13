@@ -111,7 +111,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequestWithTarget](),
 		logCoordinatorRequestChan:            chann.NewAutoDrainChann[*logservicepb.ReusableEventServiceRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
-		receiveChannels:                      make([]chan *messaging.TargetMessage, config.DefaultEventHandlerConcurrency),
+		receiveChannels:                      make([]chan *messaging.TargetMessage, config.DefaultBasicEventHandlerConcurrency),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("Msg"),
@@ -119,7 +119,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 	eventCollector.ds = NewEventDynamicStream(&eventCollector)
 	eventCollector.mc.RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
-	for i := 0; i < config.DefaultEventHandlerConcurrency; i++ {
+	for i := 0; i < config.DefaultBasicEventHandlerConcurrency; i++ {
 		ch := make(chan *messaging.TargetMessage, receiveChanSize)
 		eventCollector.receiveChannels[i] = ch
 		eventCollector.wg.Add(1)
