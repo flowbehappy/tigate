@@ -56,6 +56,14 @@ var (
 			Name:      "stream_gauge",
 			Help:      "The gauge of streams in a message center",
 		}, []string{"from"}) // target: its addr
+
+	MessagingReceiveChannelLength = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "messaging",
+			Name:      "receive_channel_length",
+			Help:      "The length of the receive channel in a message center",
+		}, []string{"type"}) // type: event, command
 )
 
 // InitMetrics registers all metrics used in owner
@@ -65,4 +73,5 @@ func InitMessagingMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(MessagingDropMsgCounter)
 	registry.MustRegister(MessagingErrorCounter)
 	registry.MustRegister(MessagingStreamGauge)
+	registry.Register(MessagingReceiveChannelLength)
 }

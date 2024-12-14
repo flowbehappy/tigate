@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -284,20 +285,31 @@ type TableInfo struct {
 	Version      uint16        `json:"version"`
 	columnSchema *columnSchema `json:"-"`
 
-	preSQLs [4]string `json:"-"`
+	preSQLs struct {
+		isInitialized atomic.Bool
+		m             [4]string `json:"-"`
+	}
 }
 
-// initPrivateFields initializes the private fields of TableInfo
-// We do it to reduce the memory allocation and GC overhead
-// It must be called after TableName and columnSchema are initialized
+var count atomic.Int64
+
 func (ti *TableInfo) InitPrivateFields() {
 	if ti == nil {
+		log.Info("fizz nil")
 		return
 	}
+
+	if ti.preSQLs.isInitialized.Load() {
+		return
+	}
+
 	ti.TableName.quotedName = ti.TableName.QuoteString()
-	ti.preSQLs[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
-	ti.preSQLs[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
-	ti.preSQLs[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
+	ti.preSQLs.m[preSQLInsert] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLInsert], ti.TableName.QuoteString())
+	ti.preSQLs.m[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
+	ti.preSQLs.m[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
+	ti.preSQLs.isInitialized.Store(true)
+
+	log.Info("fizz: init private fields", zap.String("tableName", ti.TableName.Table), zap.Int64("count", count.Add(1)))
 }
 
 func (ti *TableInfo) MarshalJSON() ([]byte, error) {
@@ -376,24 +388,24 @@ func (ti *TableInfo) GetColumnsFlag() map[int64]*ColumnFlagType {
 }
 
 func (ti *TableInfo) GetPreInsertSQL() string {
-	if ti.preSQLs[preSQLInsert] == "" {
+	if ti.preSQLs.m[preSQLInsert] == "" {
 		log.Panic("preSQLs[preSQLInsert] is not initialized")
 	}
-	return ti.preSQLs[preSQLInsert]
+	return ti.preSQLs.m[preSQLInsert]
 }
 
 func (ti *TableInfo) GetPreReplaceSQL() string {
-	if ti.preSQLs[preSQLReplace] == "" {
+	if ti.preSQLs.m[preSQLReplace] == "" {
 		log.Panic("preSQLs[preSQLReplace] is not initialized")
 	}
-	return ti.preSQLs[preSQLReplace]
+	return ti.preSQLs.m[preSQLReplace]
 }
 
 func (ti *TableInfo) GetPreUpdateSQL() string {
-	if ti.preSQLs[preSQLUpdate] == "" {
+	if ti.preSQLs.m[preSQLUpdate] == "" {
 		log.Panic("preSQLs[preSQLUpdate] is not initialized")
 	}
-	return ti.preSQLs[preSQLUpdate]
+	return ti.preSQLs.m[preSQLUpdate]
 }
 
 // GetColumnInfo returns the column info by ID

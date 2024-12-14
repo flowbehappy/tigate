@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
@@ -14,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -79,8 +79,8 @@ type schemaStore struct {
 func New(
 	ctx context.Context,
 	root string,
+	subClient *logpuller.SubscriptionClient,
 	pdCli pd.Client,
-	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 ) SchemaStore {
@@ -103,8 +103,8 @@ func New(
 		zap.Uint64("finishedDDLTS", s.finishedDDLTs),
 		zap.Int64("schemaVersion", s.schemaVersion))
 	s.ddlJobFetcher = newDDLJobFetcher(
+		subClient,
 		pdCli,
-		regionCache,
 		pdClock,
 		kvStorage,
 		upperBound.ResolvedTs,
@@ -142,6 +142,9 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 			resolvedPhyTs := oracle.ExtractPhysical(pendingTs)
 			resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
 			metrics.SchemaStoreResolvedTsLagGauge.Set(float64(resolvedLag))
+			// log.Info("advance resolved ts",
+			// 	zap.Uint64("resolveTs", pendingTs),
+			// 	zap.Float64("lag(s)", resolvedLag))
 		}()
 
 		if pendingTs <= s.resolvedTs.Load() {
@@ -154,15 +157,16 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 				zap.Int("resolvedEventsLen", len(resolvedEvents)))
 
 			for _, event := range resolvedEvents {
-				if event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
-					// log.Info("skip already applied ddl job",
-					// 	zap.Any("type", event.Job.Type),
-					// 	zap.String("job", event.Job.Query),
-					// 	zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-					// 	zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
-					// 	zap.Uint64("jobCommitTs", event.CommitTs),
-					// 	zap.Any("storeSchemaVersion", s.schemaVersion),
-					// 	zap.Uint64("storeFinishedDDLTS", s.finishedDDLTs))
+				if event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs ||
+					event.Job.BinlogInfo.SchemaVersion == 0 /* means the ddl is ignored in upstream */ {
+					log.Info("skip already applied ddl job",
+						zap.Any("type", event.Job.Type),
+						zap.String("job", event.Job.Query),
+						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+						zap.Uint64("jobCommitTs", event.CommitTs),
+						zap.Any("storeSchemaVersion", s.schemaVersion),
+						zap.Uint64("storeFinishedDDLTS", s.finishedDDLTs))
 					continue
 				}
 				log.Info("handle ddl job",
@@ -307,16 +311,18 @@ func (s *schemaStore) writeDDLEvent(ddlEvent DDLJobWithCommitTs) {
 }
 
 func (s *schemaStore) advanceResolvedTs(resolvedTs uint64) {
-	// log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
-	if resolvedTs < s.pendingResolvedTs.Load() {
-		log.Panic("resolved ts should not fallback",
-			zap.Uint64("pendingResolveTs", s.pendingResolvedTs.Load()),
-			zap.Uint64("newResolvedTs", resolvedTs))
-	}
-	s.pendingResolvedTs.Store(resolvedTs)
-	select {
-	case s.notifyCh <- struct{}{}:
-	default:
+	for {
+		currentTs := s.pendingResolvedTs.Load()
+		if resolvedTs <= currentTs {
+			return
+		}
+		if s.pendingResolvedTs.CompareAndSwap(currentTs, resolvedTs) {
+			select {
+			case s.notifyCh <- struct{}{}:
+			default:
+			}
+			return
+		}
 	}
 }
 
