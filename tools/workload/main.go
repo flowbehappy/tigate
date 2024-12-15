@@ -285,14 +285,14 @@ func genUpdateTask(output chan updateTask) {
 func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 	for task := range input {
 		updateSql := workload.BuildUpdateSql(task.UpdateOption)
-		res, err := db.Exec(updateSql)
+		res, err := exceSQL(db, updateSql, workload, task.Table)
 		if err != nil {
 			log.Info("update error", zap.Error(err), zap.String("sql", updateSql[:20]))
 			atomic.AddUint64(&totalError, 1)
 		}
 		if res != nil {
 			cnt, err := res.RowsAffected()
-			if err != nil || cnt != int64(task.Batch) {
+			if err != nil || cnt < int64(task.Batch) {
 				log.Info("get rows affected error", zap.Error(err), zap.Int64("affectedRows", cnt), zap.Int("rowCount", task.Batch), zap.String("sql", updateSql))
 				atomic.AddUint64(&totalError, 1)
 			}
@@ -314,7 +314,7 @@ func doInsert(dbs []*sql.DB, workload schema.Workload) {
 		i := rand.Intn(dbNum)
 		j := rand.Intn(tableCount) + tableStartIndex
 		insertSql := workload.BuildInsertSql(j, batchSize)
-		err := exceInsert(dbs[i], insertSql, workload, j)
+		_, err := exceSQL(dbs[i], insertSql, workload, j)
 		if err != nil {
 			log.Info("insert error", zap.Error(err))
 			atomic.AddUint64(&totalError, 1)
@@ -327,23 +327,23 @@ func doInsert(dbs []*sql.DB, workload schema.Workload) {
 	}
 }
 
-func exceInsert(db *sql.DB, sql string, workload schema.Workload, n int) error {
-	_, err := db.Exec(sql)
+func exceSQL(db *sql.DB, sql string, workload schema.Workload, n int) (sql.Result, error) {
+	res, err := db.Exec(sql)
 	if err != nil {
 		if !strings.Contains(err.Error(), "Error 1146") {
 			log.Info("insert error", zap.Error(err))
-			return err
+			return res, err
 		}
 		// if table not exists, we create it
 		_, err := db.Exec(workload.BuildCreateTableStatement(n))
 		if err != nil {
 			log.Info("create table error: ", zap.Error(err))
-			return err
+			return res, err
 		}
 		_, err = db.Exec(sql)
-		return err
+		return res, err
 	}
-	return nil
+	return res, nil
 }
 
 func printTPS() {

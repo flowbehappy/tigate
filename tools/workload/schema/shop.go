@@ -50,7 +50,7 @@ CREATE TABLE if not exists shop_item_%d (
   timestamp_data json DEFAULT NULL,
   PRIMARY KEY (item_primary_key)
   /*T![clustered_index] CLUSTERED */ 
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PRE_SPLIT_REGIONS = 8   
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 `
 
 type ShopItemWorkload struct {
