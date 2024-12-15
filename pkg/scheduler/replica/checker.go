@@ -22,12 +22,15 @@ const (
 )
 
 type CheckResult[R Replication] struct {
-	OpType      OpType
-	SourceTasks []R
-	TargetTasks []R
+	OpType       OpType
+	Replications []R
 }
 
 type Checker[R Replication, S any] interface {
 	UpdateStatus(replication R, status S)
 	Check() []CheckResult[R]
 }
+
+// define the check strategy
+// soft/hard threadhold
+// split/merge/mergeAndSplit result

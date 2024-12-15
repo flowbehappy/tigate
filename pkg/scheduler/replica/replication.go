@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/ticdc/pkg/node"
 )
 
+var NilReplication = (Replication)(nil)
+
 // Replication is the interface for the replication task, it should implement the GetNodeID method
 type Replication interface {
 	GetNodeID() node.ID
@@ -28,12 +30,12 @@ type Replication interface {
 type ReplicationDB[R Replication] interface {
 	// global scheduler interface
 	ScheduleGroup[R]
+	GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info) (groups map[GroupID]map[node.ID]R, valid bool)
 	// group scheduler interface
 	GetGroups() []GroupID
 	GetAbsentByGroup(groupID GroupID, batch int) []R
 	GetSchedulingByGroup(groupID GroupID) []R
 	GetReplicatingByGroup(groupID GroupID) []R
-
 	GetTaskSizePerNodeByGroup(groupID GroupID) map[node.ID]int
 }
 
