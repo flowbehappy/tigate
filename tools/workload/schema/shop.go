@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -51,19 +50,19 @@ CREATE TABLE if not exists shop_item_%d (
   timestamp_data json DEFAULT NULL,
   PRIMARY KEY (item_primary_key)
   /*T![clustered_index] CLUSTERED */ 
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin       
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PRE_SPLIT_REGIONS = 8   
 `
 
 type ShopItemWorkload struct {
-	r             *rand.Rand
 	jsonFieldSize int
+	totalRow      uint64
 }
 
 func NewShopItemWorkload(totalCount uint64, rowSize int) Workload {
 	jsonFieldSize := rowSize / 13
 	return &ShopItemWorkload{
-		r:             rand.New(rand.NewSource(time.Now().UnixNano())),
 		jsonFieldSize: jsonFieldSize,
+		totalRow:      totalCount,
 	}
 }
 
@@ -80,7 +79,7 @@ func (s *ShopItemWorkload) BuildInsertSql(tableN int, rowCount int) string {
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		row := s.generateRow(i)
+		row := s.generateRow(i, false)
 		sb.WriteString(fmt.Sprintf("(%s)", row))
 	}
 
@@ -88,6 +87,11 @@ func (s *ShopItemWorkload) BuildInsertSql(tableN int, rowCount int) string {
 }
 
 func (s *ShopItemWorkload) BuildUpdateSql(opt UpdateOption) string {
+	// return s.buildUpsertSql(opt)
+	return s.buildUpdateSql(opt)
+}
+
+func (s *ShopItemWorkload) buildUpsertSql(opt UpdateOption) string {
 	tableName := fmt.Sprintf("shop_item_%d", opt.Table)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("INSERT INTO %s VALUES ", tableName))
@@ -96,16 +100,36 @@ func (s *ShopItemWorkload) BuildUpdateSql(opt UpdateOption) string {
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		row := s.generateRow(i)
+		row := s.generateRow(i, true)
 		sb.WriteString(fmt.Sprintf("(%s)", row))
 	}
 
-	sb.WriteString(" ON DUPLICATE KEY UPDATE updated_time=updated_time+1")
+	sb.WriteString(" ON DUPLICATE KEY UPDATE item_id=VALUES(item_id)")
 	return sb.String()
 }
 
-func (s *ShopItemWorkload) generateRow(suffix int) string {
-	primaryKey := uuid.New().String()                 // UUID for item_primary_key
+func (s *ShopItemWorkload) buildUpdateSql(opt UpdateOption) string {
+	tableName := fmt.Sprintf("shop_item_%d", opt.Table)
+	var sb strings.Builder
+
+	for i := 0; i < opt.RowCount; i++ {
+		if i > 0 {
+			sb.WriteString(";")
+		}
+		primaryKey := "0xdeadbeef" // Fixed value for item_primary_key
+		sb.WriteString(fmt.Sprintf("UPDATE %s SET updated_time = updated_time + 1 WHERE item_primary_key = '%s'", tableName, primaryKey))
+	}
+
+	return sb.String()
+}
+
+func (s *ShopItemWorkload) generateRow(suffix int, forUpdate bool) string {
+	var primaryKey string
+	if forUpdate {
+		primaryKey = fmt.Sprintf("0x%x", uint64(rand.Int63())%s.totalRow)
+	} else {
+		primaryKey = uuid.New().String() // UUID for item_primary_key
+	}
 	itemID := "fixed_item_id"                         // Fixed value for item_id
 	itemSetID := "fixed_item_set_id"                  // Fixed value for item_set_id
 	productID := "fixed_product_id"                   // Fixed value for product_id
