@@ -14,21 +14,25 @@
 package replica
 
 import (
-	"fmt"
-	"strconv"
-
 	"github.com/pingcap/ticdc/pkg/node"
 )
 
-// Replication is the interface for the replication task, it should implement the GetNodeID method
-type Replication interface {
+type ReplicationID interface {
 	comparable
-	GetNodeID() node.ID
+	String() string
 }
 
-type ReplicationDB[R Replication] interface {
+// Replication is the interface for the replication task, it should implement the GetNodeID method
+type Replication[T ReplicationID] interface {
+	comparable
+	GetID() T
+	GetNodeID() node.ID
+	GetGroupID() GroupID
+}
+
+type ReplicationDB[T ReplicationID, R Replication[T]] interface {
 	// global scheduler interface
-	ScheduleGroup[R]
+	ScheduleGroup[T, R]
 	GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info) (groups map[GroupID]map[node.ID]R, valid bool)
 	// group scheduler interface
 	GetGroups() []GroupID
@@ -38,7 +42,7 @@ type ReplicationDB[R Replication] interface {
 	GetTaskSizePerNodeByGroup(groupID GroupID) map[node.ID]int
 }
 
-type ScheduleGroup[R Replication] interface {
+type ScheduleGroup[T ReplicationID, R Replication[T]] interface {
 	GetAbsentSize() int
 	GetAbsent() []R
 	GetSchedulingSize() int
@@ -47,52 +51,4 @@ type ScheduleGroup[R Replication] interface {
 	GetReplicating() []R
 
 	GetTaskSizePerNode() map[node.ID]int
-}
-
-type groupTpye int8
-
-const (
-	groupDefault groupTpye = iota
-	groupTable
-	groupHotLevel1
-)
-
-func (gt groupTpye) Less(other groupTpye) bool {
-	return gt < other
-}
-
-func (gt groupTpye) String() string {
-	switch gt {
-	case groupDefault:
-		return "default"
-	case groupTable:
-		return "table"
-	default:
-		return "HotLevel" + strconv.Itoa(int(gt-groupHotLevel1))
-	}
-}
-
-type GroupID = int64
-
-const defaultGroupID GroupID = 0
-
-func getGroupID(gt groupTpye, tableID int64) GroupID {
-	// use high 8 bits to store the group type
-	id := int64(gt) << 56
-	if gt == groupTable {
-		return id | tableID
-	}
-	return id
-}
-
-func getGroupType(id GroupID) groupTpye {
-	return groupTpye(id >> 56)
-}
-
-func printGroupID(id GroupID) string {
-	gt := groupTpye(id >> 56)
-	if gt == groupTable {
-		return fmt.Sprintf("%s-%d", gt.String(), id&0x00FFFFFFFFFFFFFF)
-	}
-	return gt.String()
 }

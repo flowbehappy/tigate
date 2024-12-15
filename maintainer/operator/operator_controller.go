@@ -281,6 +281,15 @@ func (oc *Controller) NewAddOperator(replicaSet *replica.SpanReplication, id nod
 	}
 }
 
+func (oc *Controller) NewMoveOperator(replicaSet *replica.SpanReplication, origin, dest node.ID) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
+	return &MoveDispatcherOperator{
+		replicaSet: replicaSet,
+		origin:     origin,
+		dest:       dest,
+		db:         oc.replicationDB,
+	}
+}
+
 func (oc *Controller) NewRemoveOperator(replicaSet *replica.SpanReplication) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
 	return &RemoveDispatcherOperator{
 		replicaSet: replicaSet,

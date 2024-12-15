@@ -28,12 +28,12 @@ import (
 )
 
 // balanceScheduler is used to check the balance status of all spans among all nodes
-type balanceScheduler[T comparable, S any, R replica.Replication] struct {
+type balanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] struct {
 	id        string
 	batchSize int
 
 	operatorController operator.Controller[T, S]
-	replicationDB      replica.ReplicationDB[R]
+	replicationDB      replica.ReplicationDB[T, R]
 	nodeManager        *watcher.NodeManager
 
 	random               *rand.Rand
@@ -50,10 +50,11 @@ type balanceScheduler[T comparable, S any, R replica.Replication] struct {
 	newMoveOperator func(r R, source, target node.ID) operator.Operator[T, S]
 }
 
-func NewBalanceScheduler[T comparable, S any, R replica.Replication](
+func NewBalanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]](
 	id string, batchSize int,
-	oc operator.Controller[T, S], db replica.ReplicationDB[R],
+	oc operator.Controller[T, S], db replica.ReplicationDB[T, R],
 	nodeManager *watcher.NodeManager, balanceInterval time.Duration,
+	newMoveOperator func(R, node.ID, node.ID) operator.Operator[T, S],
 ) *balanceScheduler[T, S, R] {
 	return &balanceScheduler[T, S, R]{
 		id:                   id,
@@ -64,6 +65,7 @@ func NewBalanceScheduler[T comparable, S any, R replica.Replication](
 		nodeManager:          nodeManager,
 		checkBalanceInterval: balanceInterval,
 		lastRebalanceTime:    time.Now(),
+		newMoveOperator:      newMoveOperator,
 	}
 }
 
@@ -208,7 +210,7 @@ func CheckBalanceStatus(nodeTaskSize map[node.ID]int, allNodes map[node.ID]*node
 }
 
 // Balance balances the running task by task size per node
-func Balance[R replica.Replication](
+func Balance[T replica.ReplicationID, R replica.Replication[T]](
 	// id string,
 	batchSize int, random *rand.Rand,
 	activeNodes map[node.ID]*node.Info,
@@ -234,13 +236,13 @@ func Balance[R replica.Replication](
 
 	totalSize := len(replicating)
 	lowerLimitPerCapture := int(math.Floor(float64(totalSize) / float64(len(nodeTasks))))
-	minPriorityQueue := priorityQueue[R]{
-		h:    heap.NewHeap[*item[R]](),
+	minPriorityQueue := priorityQueue[T, R]{
+		h:    heap.NewHeap[*item[T, R]](),
 		less: func(a, b int) bool { return a < b },
 		rand: random,
 	}
-	maxPriorityQueue := priorityQueue[R]{
-		h:    heap.NewHeap[*item[R]](),
+	maxPriorityQueue := priorityQueue[T, R]{
+		h:    heap.NewHeap[*item[T, R]](),
 		less: func(a, b int) bool { return a > b },
 		rand: random,
 	}
@@ -271,17 +273,17 @@ func Balance[R replica.Replication](
 	movedSize = 0
 	for {
 		target, _ := minPriorityQueue.PeekTop()
-		if target.load >= lowerLimitPerCapture {
+		if target.Load >= lowerLimitPerCapture {
 			// the minimum workload has reached the lower limit
 			break
 		}
 		victim, _ := maxPriorityQueue.PeekTop()
-		task := victim.tasks[0]
+		task := victim.Tasks[0]
 		if move(task, target.Node) {
 			// update the task size priority queue
-			target.load++
-			victim.load--
-			victim.tasks = victim.tasks[1:]
+			target.Load++
+			victim.Load--
+			victim.Tasks = victim.Tasks[1:]
 			movedSize++
 			if movedSize >= batchSize || movedSize >= totalMoveSize {
 				break

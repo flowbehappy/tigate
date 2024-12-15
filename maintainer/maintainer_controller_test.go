@@ -692,3 +692,7 @@ type mockThreadPool struct {
 func (m *mockThreadPool) Submit(_ threadpool.Task, _ time.Time) *threadpool.TaskHandle {
 	return nil
 }
+
+func (m *mockThreadPool) SubmitFunc(_ threadpool.FuncTask, _ time.Time) *threadpool.TaskHandle {
+	return nil
+}

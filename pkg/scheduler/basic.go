@@ -27,21 +27,21 @@ import (
 // basicScheduler generates operators for the spans, and push them to the operator controller
 // it generates add operator for the absent spans, and move operator for the unbalanced replicating spans
 // currently, it only supports balance the spans by size
-type basicScheduler[T comparable, S any, R replica.Replication] struct {
+type basicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] struct {
 	id        string
 	batchSize int
 
 	operatorController operator.Controller[T, S]
-	replicationDB      replica.ReplicationDB[R]
+	replicationDB      replica.ReplicationDB[T, R]
 	nodeManager        *watcher.NodeManager
 
 	absent         []R                                               // buffer for the absent spans
 	newAddOperator func(r R, target node.ID) operator.Operator[T, S] // scheduler r to target node
 }
 
-func NewBasicScheduler[T comparable, S any, R replica.Replication](
+func NewBasicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]](
 	changefeedID string, batchSize int,
-	oc operator.Controller[T, S], db replica.ReplicationDB[R],
+	oc operator.Controller[T, S], db replica.ReplicationDB[T, R],
 	nodeManager *watcher.NodeManager,
 	newAddOperator func(R, node.ID) operator.Operator[T, S],
 ) *basicScheduler[T, S, R] {
@@ -101,7 +101,7 @@ func (s *basicScheduler[T, S, R]) Name() string {
 }
 
 // BasicSchedule schedules the absent tasks to the available nodes
-func BasicSchedule[R replica.Replication](
+func BasicSchedule[T replica.ReplicationID, R replica.Replication[T]](
 	availableSize int,
 	absent []R,
 	nodeTasks map[node.ID]int,
@@ -110,8 +110,8 @@ func BasicSchedule[R replica.Replication](
 		log.Warn("scheduler: no node available, skip")
 		return
 	}
-	minPriorityQueue := priorityQueue[R]{
-		h:    heap.NewHeap[*item[R]](),
+	minPriorityQueue := priorityQueue[T, R]{
+		h:    heap.NewHeap[*item[T, R]](),
 		less: func(a, b int) bool { return a < b },
 	}
 	for key, size := range nodeTasks {
@@ -124,7 +124,7 @@ func BasicSchedule[R replica.Replication](
 		// the operator is pushed successfully
 		if schedule(cf, item.Node) {
 			// update the task size priority queue
-			item.load++
+			item.Load++
 			taskSize++
 		}
 		if taskSize >= availableSize {

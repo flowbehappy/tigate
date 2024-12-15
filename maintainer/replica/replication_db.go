@@ -24,7 +24,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ replica.ReplicationDB[*SpanReplication] = &ReplicationDB{}
+var _ replica.ReplicationDB[common.DispatcherID, *SpanReplication] = &ReplicationDB{}
 
 // ReplicationDB is an in memory data struct that maintains the replication spans
 type ReplicationDB struct {

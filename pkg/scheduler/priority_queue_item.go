@@ -42,51 +42,52 @@ func randomizeWorkload(random *rand.Rand, input int) int {
 	return (input << randomPartBitSize) | randomPart
 }
 
-type priorityQueue[R replica.Replication] struct {
-	h    *heap.Heap[*item[R]]
+type priorityQueue[T replica.ReplicationID, R replica.Replication[T]] struct {
+	h    *heap.Heap[*item[T, R]]
 	less func(a, b int) bool
 
 	rand *rand.Rand
 }
 
-func (q *priorityQueue[R]) InitItem(node node.ID, load int, tasks []R) {
-	q.AddOrUpdate(&item[R]{
+func (q *priorityQueue[T, R]) InitItem(node node.ID, load int, tasks []R) {
+	q.AddOrUpdate(&item[T, R]{
 		Node:  node,
-		tasks: tasks,
-		load:  load,
+		Tasks: tasks,
+		Load:  load,
 		less:  q.less,
 	})
 }
 
-func (q *priorityQueue[R]) AddOrUpdate(item *item[R]) {
-	item.randomizeWorkload = randomizeWorkload(q.rand, item.load)
+func (q *priorityQueue[T, R]) AddOrUpdate(item *item[T, R]) {
+	item.randomizeWorkload = randomizeWorkload(q.rand, item.Load)
 	q.h.AddOrUpdate(item)
 }
 
-func (q *priorityQueue[R]) PeekTop() (*item[R], bool) {
+func (q *priorityQueue[T, R]) PeekTop() (*item[T, R], bool) {
 	return q.h.PeekTop()
 }
 
 // item is an item in the priority queue, use the Load field as the priority
-type item[R replica.Replication] struct {
+type item[T replica.ReplicationID, R replica.Replication[T]] struct {
+	// for internal usage
 	Node  node.ID
-	tasks []R
-	load  int
+	Tasks []R
+	Load  int
 
-	// for heap adjustment
+	// for heap adjustment usage
 	index             int
-	less              func(a, b int) bool
 	randomizeWorkload int
+	less              func(randomizeWorkloadA, randomizeWorkloadB int) bool
 }
 
-func (i *item[R]) SetHeapIndex(idx int) {
+func (i *item[T, R]) SetHeapIndex(idx int) {
 	i.index = idx
 }
 
-func (i *item[R]) GetHeapIndex() int {
+func (i *item[T, R]) GetHeapIndex() int {
 	return i.index
 }
 
-func (i *item[R]) LessThan(t *item[R]) bool {
+func (i *item[T, R]) LessThan(t *item[T, R]) bool {
 	return i.less(i.randomizeWorkload, t.randomizeWorkload)
 }

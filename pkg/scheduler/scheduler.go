@@ -48,8 +48,7 @@ func NewController(schedulers map[string]Scheduler) *Controller {
 	}
 }
 
-func (sm *Controller) Start(taskScheduler threadpool.ThreadPool) []*threadpool.TaskHandle {
-	var handles []*threadpool.TaskHandle
+func (sm *Controller) Start(taskScheduler threadpool.ThreadPool) (handles []*threadpool.TaskHandle) {
 	basicScheduler := sm.schedulers[BasicScheduler]
 	handles = append(handles, taskScheduler.Submit(basicScheduler, time.Now()))
 

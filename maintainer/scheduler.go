@@ -37,7 +37,7 @@ func NewScheduleController(changefeedID common.ChangeFeedID,
 ) *scheduler.Controller {
 	schedulers := map[string]scheduler.Scheduler{
 		scheduler.BasicScheduler:   scheduler.NewBasicScheduler(changefeedID.String(), batchSize, oc, db, nodeM, oc.NewAddOperator),
-		scheduler.BalanceScheduler: scheduler.NewBalanceScheduler(changefeedID.String(), batchSize, oc, db, nodeM, balanceInterval),
+		scheduler.BalanceScheduler: scheduler.NewBalanceScheduler(changefeedID.String(), batchSize, oc, db, nodeM, balanceInterval, oc.NewMoveOperator),
 	}
 	if splitter != nil {
 		schedulers[scheduler.SplitScheduler] = newSplitScheduler(changefeedID, batchSize, splitter, oc, db, nodeM)

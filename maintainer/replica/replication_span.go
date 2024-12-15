@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/retry"
 	"github.com/pingcap/tiflow/pkg/spanz"
@@ -200,8 +201,16 @@ func (r *SpanReplication) SetNodeID(n node.ID) {
 	r.nodeID = n
 }
 
+func (r *SpanReplication) GetID() common.DispatcherID {
+	return r.ID
+}
+
 func (r *SpanReplication) GetNodeID() node.ID {
 	return r.nodeID
+}
+
+func (r *SpanReplication) GetGroupID() replica.GroupID {
+	return r.groupID
 }
 
 func (r *SpanReplication) NewAddDispatcherMessage(server node.ID) (*messaging.TargetMessage, error) {
