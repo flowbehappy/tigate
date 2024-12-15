@@ -20,10 +20,9 @@ import (
 	"github.com/pingcap/ticdc/pkg/node"
 )
 
-var NilReplication = (Replication)(nil)
-
 // Replication is the interface for the replication task, it should implement the GetNodeID method
 type Replication interface {
+	comparable
 	GetNodeID() node.ID
 }
 

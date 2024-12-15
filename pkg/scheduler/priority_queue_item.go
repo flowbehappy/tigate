@@ -21,55 +21,6 @@ import (
 	"github.com/pingcap/ticdc/utils/heap"
 )
 
-type priorityQueue[T replica.Replication] struct {
-	h    *heap.Heap[*Item[T]]
-	less func(a, b int) bool
-
-	rand *rand.Rand
-}
-
-func (q *priorityQueue[T]) InitItem(node node.ID, load int, tasks []T) {
-	q.AddOrUpdate(&Item[T]{
-		Node:  node,
-		tasks: tasks,
-		load:  load,
-		less:  q.less,
-	})
-}
-
-func (q *priorityQueue[T]) AddOrUpdate(item *Item[T]) {
-	item.randomizeWorkload = randomizeWorkload(q.rand, item.load)
-	q.h.AddOrUpdate(item)
-}
-
-func (q *priorityQueue[T]) PeekTop() (*Item[T], bool) {
-	return q.h.PeekTop()
-}
-
-// Item is an item in the priority queue, use the Load field as the priority
-type Item[T replica.Replication] struct {
-	Node  node.ID
-	tasks []T
-	load  int
-
-	// for heap adjustment
-	index             int
-	less              func(a, b int) bool
-	randomizeWorkload int
-}
-
-func (i *Item[T]) SetHeapIndex(idx int) {
-	i.index = idx
-}
-
-func (i *Item[T]) GetHeapIndex() int {
-	return i.index
-}
-
-func (i *Item[T]) LessThan(t *Item[T]) bool {
-	return i.less(i.randomizeWorkload, t.randomizeWorkload)
-}
-
 const (
 	randomPartBitSize = 8
 	randomPartMask    = (1 << randomPartBitSize) - 1
@@ -89,4 +40,53 @@ func randomizeWorkload(random *rand.Rand, input int) int {
 	// randomPart is a small random value that only affects the
 	// result of comparison of workloads when two workloads are equal.
 	return (input << randomPartBitSize) | randomPart
+}
+
+type priorityQueue[R replica.Replication] struct {
+	h    *heap.Heap[*item[R]]
+	less func(a, b int) bool
+
+	rand *rand.Rand
+}
+
+func (q *priorityQueue[R]) InitItem(node node.ID, load int, tasks []R) {
+	q.AddOrUpdate(&item[R]{
+		Node:  node,
+		tasks: tasks,
+		load:  load,
+		less:  q.less,
+	})
+}
+
+func (q *priorityQueue[R]) AddOrUpdate(item *item[R]) {
+	item.randomizeWorkload = randomizeWorkload(q.rand, item.load)
+	q.h.AddOrUpdate(item)
+}
+
+func (q *priorityQueue[R]) PeekTop() (*item[R], bool) {
+	return q.h.PeekTop()
+}
+
+// item is an item in the priority queue, use the Load field as the priority
+type item[R replica.Replication] struct {
+	Node  node.ID
+	tasks []R
+	load  int
+
+	// for heap adjustment
+	index             int
+	less              func(a, b int) bool
+	randomizeWorkload int
+}
+
+func (i *item[R]) SetHeapIndex(idx int) {
+	i.index = idx
+}
+
+func (i *item[R]) GetHeapIndex() int {
+	return i.index
+}
+
+func (i *item[R]) LessThan(t *item[R]) bool {
+	return i.less(i.randomizeWorkload, t.randomizeWorkload)
 }

@@ -107,11 +107,11 @@ func BasicSchedule[R replica.Replication](
 	nodeTasks map[node.ID]int,
 	schedule func(R, node.ID) bool) {
 	if len(nodeTasks) == 0 {
-		log.Warn("no node available, skip")
+		log.Warn("scheduler: no node available, skip")
 		return
 	}
 	minPriorityQueue := priorityQueue[R]{
-		h:    heap.NewHeap[*Item[R]](),
+		h:    heap.NewHeap[*item[R]](),
 		less: func(a, b int) bool { return a < b },
 	}
 	for key, size := range nodeTasks {

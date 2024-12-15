@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"go.uber.org/zap"
 )
 
@@ -280,7 +279,7 @@ type replicationTaskGroup struct {
 	scheduling  map[common.DispatcherID]*SpanReplication
 	absent      map[common.DispatcherID]*SpanReplication
 
-	checker []replica.Checker
+	// checker []replica.Checker
 }
 
 func newReplicationTaskGroup(cfID common.ChangeFeedID, id GroupID) *replicationTaskGroup {

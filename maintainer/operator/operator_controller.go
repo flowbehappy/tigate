@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/ticdc/pkg/operator"
+	"github.com/pingcap/ticdc/pkg/scheduler/operator"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -274,5 +274,22 @@ func (oc *Controller) checkAffectedNodes(op operator.Operator[common.DispatcherI
 }
 
 func (oc *Controller) NewAddOperator(replicaSet *replica.SpanReplication, id node.ID) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
-	return NewAddDispatcherOperator(oc.replicationDB, replicaSet, id)
+	return &AddDispatcherOperator{
+		replicaSet: replicaSet,
+		dest:       id,
+		db:         oc.replicationDB,
+	}
+}
+
+func (oc *Controller) NewRemoveOperator(replicaSet *replica.SpanReplication) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
+	return &RemoveDispatcherOperator{
+		replicaSet: replicaSet,
+		db:         oc.replicationDB,
+	}
+}
+
+func (oc *Controller) NewSplitOperator(
+	replicaSet *replica.SpanReplication, originNode node.ID, splitSpans []*heartbeatpb.TableSpan,
+) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
+	return NewSplitDispatcherOperator(oc.replicationDB, replicaSet, originNode, splitSpans)
 }

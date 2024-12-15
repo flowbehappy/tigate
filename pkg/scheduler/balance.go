@@ -19,18 +19,18 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/pkg/scheduler/operator"
 	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"github.com/pingcap/ticdc/server/watcher"
+	"github.com/pingcap/ticdc/utils/heap"
 	"go.uber.org/zap"
 )
 
 // balanceScheduler is used to check the balance status of all spans among all nodes
 type balanceScheduler[T comparable, S any, R replica.Replication] struct {
-	changefeedID common.ChangeFeedID
-	batchSize    int
+	id        string
+	batchSize int
 
 	operatorController operator.Controller[T, S]
 	replicationDB      replica.ReplicationDB[R]
@@ -46,15 +46,17 @@ type balanceScheduler[T comparable, S any, R replica.Replication] struct {
 	// `Schedule`.
 	// It speeds up rebalance.
 	forceBalance bool
+
+	newMoveOperator func(r R, source, target node.ID) operator.Operator[T, S]
 }
 
 func NewBalanceScheduler[T comparable, S any, R replica.Replication](
-	changefeedID common.ChangeFeedID, batchSize int,
+	id string, batchSize int,
 	oc operator.Controller[T, S], db replica.ReplicationDB[R],
 	nodeManager *watcher.NodeManager, balanceInterval time.Duration,
 ) *balanceScheduler[T, S, R] {
 	return &balanceScheduler[T, S, R]{
-		changefeedID:         changefeedID,
+		id:                   id,
 		batchSize:            batchSize,
 		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		operatorController:   oc,
@@ -107,6 +109,7 @@ func (s *balanceScheduler[T, S, R]) schedulerGroup(nodes map[node.ID]*node.Info)
 
 // TODO: refactor and simplify the implementation and limit max group size
 func (s *balanceScheduler[T, S, R]) schedulerGlobal(nodes map[node.ID]*node.Info) int {
+	var zero R
 	// fast path, check the balance status
 	moveSize := CheckBalanceStatus(s.replicationDB.GetTaskSizePerNode(), nodes)
 	if moveSize <= 0 {
@@ -124,7 +127,7 @@ func (s *balanceScheduler[T, S, R]) schedulerGlobal(nodes map[node.ID]*node.Info
 	sizePerNode := make(map[node.ID]int, len(nodes))
 	for _, nodeTasks := range groupNodetasks {
 		for id, task := range nodeTasks {
-			if task != replica.NilReplication {
+			if task != zero {
 				totalTasks++
 				sizePerNode[id]++
 			}
@@ -148,7 +151,7 @@ func (s *balanceScheduler[T, S, R]) schedulerGlobal(nodes map[node.ID]*node.Info
 		for id, task := range nodeTasks {
 			if task != zero && sizePerNode[id] > lowerLimitPerNode {
 				victims = append(victims, id)
-			} else if task == nil && sizePerNode[id] < lowerLimitPerNode {
+			} else if task == zero && sizePerNode[id] < lowerLimitPerNode {
 				availableNodes = append(availableNodes, id)
 			}
 		}
@@ -166,15 +169,132 @@ func (s *balanceScheduler[T, S, R]) schedulerGlobal(nodes map[node.ID]*node.Info
 			}
 		}
 	}
-	log.Info("finish global balance", zap.Stringer("changefeed", s.changefeedID), zap.Int("moved", moved))
+	log.Info("scheduler: finish global balance", zap.String("id", s.id), zap.Int("moved", moved))
 	return moved
 }
 
-func (s *balanceScheduler[T, S, R]) doMove(replication *replica.SpanReplication, id node.ID) bool {
-	op := operator.NewMoveDispatcherOperator(s.replicationDB, replication, replication.GetNodeID(), id)
+func (s *balanceScheduler[T, S, R]) doMove(replication R, id node.ID) bool {
+	op := s.newMoveOperator(replication, replication.GetNodeID(), id)
 	return s.operatorController.AddOperator(op)
 }
 
 func (s *balanceScheduler[T, S, R]) Name() string {
 	return BalanceScheduler
+}
+
+// CheckBalanceStatus checks the dispatcher scheduling balance status
+// returns the table size need to be moved
+func CheckBalanceStatus(nodeTaskSize map[node.ID]int, allNodes map[node.ID]*node.Info) int {
+	// add the absent node to the node size map
+	for nodeID := range allNodes {
+		if _, ok := nodeTaskSize[nodeID]; !ok {
+			nodeTaskSize[nodeID] = 0
+		}
+	}
+	totalSize := 0
+	for _, ts := range nodeTaskSize {
+		totalSize += ts
+	}
+	lowerLimitPerCapture := int(math.Floor(float64(totalSize) / float64(len(nodeTaskSize))))
+	// tables need to be moved
+	moveSize := 0
+	for _, ts := range nodeTaskSize {
+		tableNum2Add := lowerLimitPerCapture - ts
+		if tableNum2Add > 0 {
+			moveSize += tableNum2Add
+		}
+	}
+	return moveSize
+}
+
+// Balance balances the running task by task size per node
+func Balance[R replica.Replication](
+	// id string,
+	batchSize int, random *rand.Rand,
+	activeNodes map[node.ID]*node.Info,
+	replicating []R, move func(R, node.ID) bool,
+) (movedSize int) {
+	nodeTasks := make(map[node.ID][]R)
+	for _, cf := range replicating {
+		nodeID := cf.GetNodeID()
+		if _, ok := nodeTasks[nodeID]; !ok {
+			nodeTasks[nodeID] = make([]R, 0)
+		}
+		nodeTasks[nodeID] = append(nodeTasks[nodeID], cf)
+	}
+
+	absentNodeCnt := 0
+	// add the absent node to the node size map
+	for nodeID := range activeNodes {
+		if _, ok := nodeTasks[nodeID]; !ok {
+			nodeTasks[nodeID] = make([]R, 0)
+			absentNodeCnt++
+		}
+	}
+
+	totalSize := len(replicating)
+	lowerLimitPerCapture := int(math.Floor(float64(totalSize) / float64(len(nodeTasks))))
+	minPriorityQueue := priorityQueue[R]{
+		h:    heap.NewHeap[*item[R]](),
+		less: func(a, b int) bool { return a < b },
+		rand: random,
+	}
+	maxPriorityQueue := priorityQueue[R]{
+		h:    heap.NewHeap[*item[R]](),
+		less: func(a, b int) bool { return a > b },
+		rand: random,
+	}
+	totalMoveSize := 0
+	for nodeID, tasks := range nodeTasks {
+		tableNum2Add := lowerLimitPerCapture - len(tasks)
+		if tableNum2Add <= 0 {
+			// Complexity note: Shuffle has O(n), where `n` is the number of tables.
+			// Also, during a single call of `Schedule`, Shuffle can be called at most
+			// `c` times, where `c` is the number of captures (RiCDC nodes).
+			// Only called when a rebalance is triggered, which happens rarely,
+			// we do not expect a performance degradation as a result of adding
+			// the randomness.
+			random.Shuffle(len(tasks), func(i, j int) {
+				tasks[i], tasks[j] = tasks[j], tasks[i]
+			})
+			maxPriorityQueue.InitItem(nodeID, len(tasks), tasks)
+			continue
+		} else {
+			minPriorityQueue.InitItem(nodeID, len(tasks), nil)
+			totalMoveSize += tableNum2Add
+		}
+	}
+	if totalMoveSize == 0 {
+		return 0
+	}
+
+	movedSize = 0
+	for {
+		target, _ := minPriorityQueue.PeekTop()
+		if target.load >= lowerLimitPerCapture {
+			// the minimum workload has reached the lower limit
+			break
+		}
+		victim, _ := maxPriorityQueue.PeekTop()
+		task := victim.tasks[0]
+		if move(task, target.Node) {
+			// update the task size priority queue
+			target.load++
+			victim.load--
+			victim.tasks = victim.tasks[1:]
+			movedSize++
+			if movedSize >= batchSize || movedSize >= totalMoveSize {
+				break
+			}
+		}
+
+		minPriorityQueue.AddOrUpdate(target)
+		maxPriorityQueue.AddOrUpdate(victim)
+	}
+
+	log.Info("scheduler: balance done",
+		// zap.String("id", id),
+		zap.Int("movedSize", movedSize),
+		zap.Int("victims", totalMoveSize))
+	return movedSize
 }

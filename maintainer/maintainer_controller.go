@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/ticdc/logservice/schemastore"
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
-	"github.com/pingcap/ticdc/maintainer/scheduler"
 	"github.com/pingcap/ticdc/maintainer/split"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
@@ -31,7 +30,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
-	pkgScheduler "github.com/pingcap/ticdc/pkg/scheduler"
+	"github.com/pingcap/ticdc/pkg/scheduler"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils"
 	"github.com/pingcap/ticdc/utils/threadpool"
@@ -95,9 +94,7 @@ func NewController(changefeedID common.ChangeFeedID,
 		s.splitter = split.NewSplitter(changefeedID, pdapi, regionCache, cfConfig.Scheduler)
 		s.spanReplicationEnabled = true
 	}
-	s.schedulerController = scheduler.NewController(changefeedID, batchSize, oc, replicaSetDB, nodeManager, balanceInterval, s.splitter)
-	ss := pkgScheduler.NewBasicScheduler(changefeedID.String(), batchSize, oc, replicaSetDB, nodeManager, oc.NewAddOperator)
-	_ = ss
+	s.schedulerController = NewScheduleController(changefeedID, batchSize, oc, replicaSetDB, nodeManager, balanceInterval, s.splitter)
 	return s
 }
 
@@ -300,9 +297,7 @@ func (c *Controller) FinishBootstrap(
 	barrier.HandleBootstrapResponse(cachedResp)
 
 	// start scheduler
-	for _, scheduler := range c.schedulerController.GetSchedulers() {
-		c.taskHandlers = append(c.taskHandlers, c.taskScheduler.Submit(scheduler, time.Now()))
-	}
+	c.taskHandlers = append(c.taskHandlers, c.schedulerController.Start(c.taskScheduler)...)
 	// start operator controller
 	c.taskHandlers = append(c.taskHandlers, c.taskScheduler.Submit(c.operatorController, time.Now()))
 
