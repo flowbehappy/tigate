@@ -513,7 +513,7 @@ func TestSchemaBlock(t *testing.T) {
 	controller.AddNewTable(commonEvent.Table{SchemaID: 2, TableID: 3}, 1)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	var dropTables = []int64{1, 2}
-	absents := controller.replicationDB.GetAbsent(make([]*replica.SpanReplication, 0), 100)
+	absents := controller.replicationDB.GetAbsentForTest(make([]*replica.SpanReplication, 0), 100)
 	for _, stm := range absents {
 		if stm.GetSchemaID() == 1 {
 			dispatcherIDs = append(dispatcherIDs, stm.ID.ToPB())
@@ -716,7 +716,7 @@ func TestSyncPointBlock(t *testing.T) {
 	controller.AddNewTable(commonEvent.Table{SchemaID: 2, TableID: 3}, 1)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	var dropTables = []int64{1, 2, 3}
-	absents := controller.replicationDB.GetAbsent(make([]*replica.SpanReplication, 0), 10000)
+	absents := controller.replicationDB.GetAbsentForTest(make([]*replica.SpanReplication, 0), 10000)
 	for _, stm := range absents {
 		dispatcherIDs = append(dispatcherIDs, stm.ID.ToPB())
 		controller.replicationDB.BindSpanToNode("", "node1", stm)
@@ -1170,7 +1170,7 @@ func TestSyncPointBlockPerf(t *testing.T) {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 1)
 	}
 	var dispatcherIDs []*heartbeatpb.DispatcherID
-	absent := controller.replicationDB.GetAbsent(make([]*replica.SpanReplication, 0), 10000)
+	absent := controller.replicationDB.GetAbsentForTest(make([]*replica.SpanReplication, 0), 10000)
 	for _, stm := range absent {
 		controller.replicationDB.BindSpanToNode("", "node1", stm)
 		controller.replicationDB.MarkSpanReplicating(stm)

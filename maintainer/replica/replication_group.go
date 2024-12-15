@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"go.uber.org/zap"
 )
 
@@ -84,27 +85,24 @@ func (db *ReplicationDB) GetGroups() []GroupID {
 	return groups
 }
 
-// GetAbsent returns the absent spans with the maxSize, push the spans to the buffer
-func (db *ReplicationDB) GetAbsent(buffer []*SpanReplication, maxSize int) []*SpanReplication {
+func (db *ReplicationDB) GetAbsent() []*SpanReplication {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	buffer = buffer[:0]
+	var absent = make([]*SpanReplication, 0)
 	for _, g := range db.taskGroups {
 		for _, stm := range g.absent {
-			buffer = append(buffer, stm)
-			if len(buffer) >= maxSize {
-				break
-			}
+			absent = append(absent, stm)
 		}
 	}
-	return buffer
+	return absent
 }
 
-func (db *ReplicationDB) GetAbsentByGroup(id GroupID, buffer []*SpanReplication, maxSize int) []*SpanReplication {
+func (db *ReplicationDB) GetAbsentByGroup(id GroupID, maxSize int) []*SpanReplication {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
+	buffer := make([]*SpanReplication, 0, maxSize)
 	g := db.mustGetGroup(id)
 	for _, stm := range g.absent {
 		if !stm.IsDropped() {
@@ -115,6 +113,18 @@ func (db *ReplicationDB) GetAbsentByGroup(id GroupID, buffer []*SpanReplication,
 		}
 	}
 	return buffer
+}
+
+func (db *ReplicationDB) GetSchedulingByGroup(id GroupID) []*SpanReplication {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	g := db.mustGetGroup(id)
+	var scheduling = make([]*SpanReplication, 0, len(g.scheduling))
+	for _, stm := range g.scheduling {
+		scheduling = append(scheduling, stm)
+	}
+	return scheduling
 }
 
 // GetReplicating returns the replicating spans
@@ -141,6 +151,19 @@ func (db *ReplicationDB) GetReplicatingByGroup(id GroupID) []*SpanReplication {
 		replicating = append(replicating, stm)
 	}
 	return replicating
+}
+
+func (db *ReplicationDB) GetScheduling() []*SpanReplication {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	var scheduling = make([]*SpanReplication, 0)
+	for _, g := range db.taskGroups {
+		for _, stm := range g.scheduling {
+			scheduling = append(scheduling, stm)
+		}
+	}
+	return scheduling
 }
 
 func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info) (groups map[GroupID]map[node.ID]*SpanReplication, valid bool) {
@@ -257,7 +280,7 @@ type replicationTaskGroup struct {
 	scheduling  map[common.DispatcherID]*SpanReplication
 	absent      map[common.DispatcherID]*SpanReplication
 
-	checker []Checker
+	checker []replica.Checker
 }
 
 func newReplicationTaskGroup(cfID common.ChangeFeedID, id GroupID) *replicationTaskGroup {

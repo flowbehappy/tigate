@@ -75,7 +75,7 @@ func (s *basicScheduler) Execute() time.Time {
 }
 
 func (s *basicScheduler) schedule(id replica.GroupID, availableSize int) (scheduled int) {
-	absent := s.replicationDB.GetAbsentByGroup(id, s.absent, availableSize)
+	absent := s.replicationDB.GetAbsentByGroup(id, availableSize)
 	nodeSize := s.replicationDB.GetTaskSizePerNodeByGroup(id)
 	// add the absent node to the node size map
 	for id := range s.nodeManager.GetAliveNodes() {

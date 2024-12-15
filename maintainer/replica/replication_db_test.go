@@ -170,8 +170,8 @@ func TestGetAbsents(t *testing.T) {
 		absent := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, getTableSpanByID(int64(i+1)), 1)
 		db.AddAbsentReplicaSet(absent)
 	}
-	require.Len(t, db.GetAbsent(nil, 5), 5)
-	require.Len(t, db.GetAbsent(nil, 15), 10)
+	require.Len(t, db.GetAbsentForTest(nil, 5), 5)
+	require.Len(t, db.GetAbsentForTest(nil, 15), 10)
 }
 
 func TestRemoveAllTables(t *testing.T) {

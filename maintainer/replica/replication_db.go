@@ -20,8 +20,11 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"go.uber.org/zap"
 )
+
+var _ replica.ReplicationDB[*SpanReplication] = &ReplicationDB{}
 
 // ReplicationDB is an in memory data struct that maintains the replication spans
 type ReplicationDB struct {
@@ -430,6 +433,22 @@ func (db *ReplicationDB) addToSchemaAndTableMap(task *SpanReplication) {
 		db.tableTasks[tableID] = tableMap
 	}
 	tableMap[task.ID] = task
+}
+
+func (db *ReplicationDB) GetAbsentForTest(buffer []*SpanReplication, maxSize int) []*SpanReplication {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	buffer = buffer[:0]
+	for _, g := range db.taskGroups {
+		for _, stm := range g.absent {
+			buffer = append(buffer, stm)
+			if len(buffer) >= maxSize {
+				break
+			}
+		}
+	}
+	return buffer
 }
 
 // reset resets the maps of ReplicationDB

@@ -13,22 +13,21 @@
 
 package replica
 
-import "github.com/pingcap/ticdc/heartbeatpb"
-
-type Checker interface {
-	UpdateStatus(span *SpanReplication, status *heartbeatpb.TableSpanStatus)
-	Check() []*SpanReplication
-}
-
 type OpType int
 
 const (
-	OpSplit         OpType = iota
-	OpMerge                // merge to one span
-	OpMergeAndSplit        // remove old spans and split to other spans
+	OpSplit         OpType = iota // Split one span to multiple subspans
+	OpMerge                       // merge multiple spans to one span
+	OpMergeAndSplit               // remove old spans and split to multiple subspans
 )
 
-type CheckResult struct {
-	OpType OpType
-	Spans  []*SpanReplication
+type CheckResult[R Replication] struct {
+	OpType      OpType
+	SourceTasks []R
+	TargetTasks []R
+}
+
+type Checker[R Replication, S any] interface {
+	UpdateStatus(replication R, status S)
+	Check() []CheckResult[R]
 }

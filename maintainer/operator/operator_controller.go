@@ -31,6 +31,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var _ operator.Controller[common.DispatcherID, *heartbeatpb.TableSpanStatus] = &Controller{}
+
 // Controller is the operator controller, it manages all operators.
 // And the Controller is responsible for the execution of the operator.
 type Controller struct {
@@ -269,4 +271,8 @@ func (oc *Controller) checkAffectedNodes(op operator.Operator[common.DispatcherI
 			op.OnNodeRemove(nodeID)
 		}
 	}
+}
+
+func (oc *Controller) NewAddOperator(replicaSet *replica.SpanReplication, id node.ID) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
+	return NewAddDispatcherOperator(oc.replicationDB, replicaSet, id)
 }

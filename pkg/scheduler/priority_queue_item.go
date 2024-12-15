@@ -17,10 +17,11 @@ import (
 	"math/rand"
 
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"github.com/pingcap/ticdc/utils/heap"
 )
 
-type priorityQueue[T Replication] struct {
+type priorityQueue[T replica.Replication] struct {
 	h    *heap.Heap[*Item[T]]
 	less func(a, b int) bool
 
@@ -46,7 +47,7 @@ func (q *priorityQueue[T]) PeekTop() (*Item[T], bool) {
 }
 
 // Item is an item in the priority queue, use the Load field as the priority
-type Item[T Replication] struct {
+type Item[T replica.Replication] struct {
 	Node  node.ID
 	tasks []T
 	load  int

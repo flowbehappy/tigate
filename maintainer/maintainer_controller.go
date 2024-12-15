@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
+	pkgScheduler "github.com/pingcap/ticdc/pkg/scheduler"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils"
 	"github.com/pingcap/ticdc/utils/threadpool"
@@ -95,6 +96,8 @@ func NewController(changefeedID common.ChangeFeedID,
 		s.spanReplicationEnabled = true
 	}
 	s.schedulerController = scheduler.NewController(changefeedID, batchSize, oc, replicaSetDB, nodeManager, balanceInterval, s.splitter)
+	ss := pkgScheduler.NewBasicScheduler(changefeedID.String(), batchSize, oc, replicaSetDB, nodeManager, oc.NewAddOperator)
+	_ = ss
 	return s
 }
 
