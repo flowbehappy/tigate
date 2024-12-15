@@ -14,7 +14,6 @@
 package replica
 
 import (
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -22,62 +21,15 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"go.uber.org/zap"
 )
 
-type groupTpye int8
-
-const (
-	groupDefault groupTpye = iota
-	groupTable
-	groupHotLevel1
-)
-
-func (gt groupTpye) Less(other groupTpye) bool {
-	return gt < other
-}
-
-func (gt groupTpye) String() string {
-	switch gt {
-	case groupDefault:
-		return "default"
-	case groupTable:
-		return "table"
-	default:
-		return "HotLevel" + strconv.Itoa(int(gt-groupHotLevel1))
-	}
-}
-
-type GroupID = int64
-
-const defaultGroupID GroupID = 0
-
-func getGroupID(gt groupTpye, tableID int64) GroupID {
-	// use high 8 bits to store the group type
-	id := int64(gt) << 56
-	if gt == groupTable {
-		return id | tableID
-	}
-	return id
-}
-
-func getGroupType(id GroupID) groupTpye {
-	return groupTpye(id >> 56)
-}
-
-func printGroupID(id GroupID) string {
-	gt := groupTpye(id >> 56)
-	if gt == groupTable {
-		return fmt.Sprintf("%s-%d", gt.String(), id&0x00FFFFFFFFFFFFFF)
-	}
-	return gt.String()
-}
-
-func (db *ReplicationDB) GetGroups() []GroupID {
+func (db *ReplicationDB) GetGroups() []replica.GroupID {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	groups := make([]GroupID, 0, len(db.taskGroups))
+	groups := make([]replica.GroupID, 0, len(db.taskGroups))
 	for id := range db.taskGroups {
 		groups = append(groups, id)
 	}
@@ -90,14 +42,12 @@ func (db *ReplicationDB) GetAbsent() []*SpanReplication {
 
 	var absent = make([]*SpanReplication, 0)
 	for _, g := range db.taskGroups {
-		for _, stm := range g.absent {
-			absent = append(absent, stm)
-		}
+		absent = append(absent, g.GetAbsent()...)
 	}
 	return absent
 }
 
-func (db *ReplicationDB) GetAbsentByGroup(id GroupID, maxSize int) []*SpanReplication {
+func (db *ReplicationDB) GetAbsentByGroup(id replica.GroupID, maxSize int) []*SpanReplication {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
@@ -114,7 +64,7 @@ func (db *ReplicationDB) GetAbsentByGroup(id GroupID, maxSize int) []*SpanReplic
 	return buffer
 }
 
-func (db *ReplicationDB) GetSchedulingByGroup(id GroupID) []*SpanReplication {
+func (db *ReplicationDB) GetSchedulingByGroup(id replica.GroupID) []*SpanReplication {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
@@ -133,14 +83,12 @@ func (db *ReplicationDB) GetReplicating() []*SpanReplication {
 
 	var replicating = make([]*SpanReplication, 0)
 	for _, g := range db.taskGroups {
-		for _, stm := range g.replicating {
-			replicating = append(replicating, stm)
-		}
+		replicating = append(replicating, g.GetReplicating()...)
 	}
 	return replicating
 }
 
-func (db *ReplicationDB) GetReplicatingByGroup(id GroupID) []*SpanReplication {
+func (db *ReplicationDB) GetReplicatingByGroup(id replica.GroupID) []*SpanReplication {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
@@ -158,20 +106,18 @@ func (db *ReplicationDB) GetScheduling() []*SpanReplication {
 
 	var scheduling = make([]*SpanReplication, 0)
 	for _, g := range db.taskGroups {
-		for _, stm := range g.scheduling {
-			scheduling = append(scheduling, stm)
-		}
+		scheduling = append(scheduling, g.GetScheduling()...)
 	}
 	return scheduling
 }
 
-func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info) (groups map[GroupID]map[node.ID]*SpanReplication, valid bool) {
-	groups = make(map[GroupID]map[node.ID]*SpanReplication, len(db.taskGroups))
+func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info) (groups map[replica.GroupID]map[node.ID]*SpanReplication, valid bool) {
+	groups = make(map[replica.GroupID]map[node.ID]*SpanReplication, len(db.taskGroups))
 	nodesNum := len(nodes)
 
 	db.lock.RLock()
 	defer db.lock.RUnlock()
-	for _, g := range db.taskGroups {
+	for gid, g := range db.taskGroups {
 		if !g.IsStable() {
 			return nil, false
 		}
@@ -181,7 +127,7 @@ func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info)
 			totalSpan += len(tasks)
 		}
 		if totalSpan == 0 {
-			log.Warn("meet empty group", zap.String("changefeed", g.changefeedID.Name()), zap.String("group", g.groupName))
+			log.Warn("meet empty group", zap.Stringer("changefeed", db.changefeedID), zap.String("group", replica.GetGroupName(gid)))
 			db.maybeRemoveGroup(g)
 			continue
 		}
@@ -203,8 +149,8 @@ func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info)
 			default:
 				// len(tasks) > upperLimitPerNode || len(tasks) < upperLimitPerNode-1
 				log.Error("invalid group state",
-					zap.String("changefeed", g.changefeedID.Name()),
-					zap.String("group", g.groupName), zap.Int("totalSpan", totalSpan),
+					zap.String("changefeed", db.changefeedID.String()),
+					zap.String("group", replica.GetGroupName(gid)), zap.Int("totalSpan", totalSpan),
 					zap.Int("nodesNum", nodesNum), zap.Int("upperLimitPerNode", upperLimitPerNode),
 					zap.String("node", nodeID.String()), zap.Int("nodeTaskSize", len(tasks)))
 			}
@@ -216,7 +162,7 @@ func (db *ReplicationDB) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info)
 				}
 			}
 			// only record imbalance group
-			groups[g.groupID] = groupMap
+			groups[gid] = groupMap
 		}
 	}
 	return groups, true
@@ -227,7 +173,7 @@ func (db *ReplicationDB) GetTaskSizePerNode() map[node.ID]int {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	sizeMap := make(map[node.ID]int, len(db.mustGetGroup(defaultGroupID).GetNodeTasks()))
+	sizeMap := make(map[node.ID]int)
 	for _, g := range db.taskGroups {
 		for nodeID, tasks := range g.GetNodeTasks() {
 			sizeMap[nodeID] += len(tasks)
@@ -236,7 +182,7 @@ func (db *ReplicationDB) GetTaskSizePerNode() map[node.ID]int {
 	return sizeMap
 }
 
-func (db *ReplicationDB) GetTaskSizePerNodeByGroup(id GroupID) map[node.ID]int {
+func (db *ReplicationDB) GetTaskSizePerNodeByGroup(id replica.GroupID) map[node.ID]int {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
@@ -255,7 +201,7 @@ func (db *ReplicationDB) GetGroupStat() string {
 		if total > 0 {
 			distribute.WriteString(" ")
 		}
-		distribute.WriteString(printGroupID(group))
+		distribute.WriteString(replica.GetGroupName(group))
 		distribute.WriteString(": [")
 		for nodeID, size := range db.GetTaskSizePerNodeByGroup(group) {
 			distribute.WriteString(nodeID.String())
@@ -268,195 +214,29 @@ func (db *ReplicationDB) GetGroupStat() string {
 	return distribute.String()
 }
 
-type replicationTaskGroup struct {
-	changefeedID common.ChangeFeedID
-	groupID      GroupID
-	groupName    string
-	// group the tasks by the node id for
-	nodeTasks map[node.ID]map[common.DispatcherID]*SpanReplication
-	// maps that maintained base on the span scheduling status
-	replicating map[common.DispatcherID]*SpanReplication
-	scheduling  map[common.DispatcherID]*SpanReplication
-	absent      map[common.DispatcherID]*SpanReplication
-
-	// checker []replica.Checker
-}
-
-func newReplicationTaskGroup(cfID common.ChangeFeedID, id GroupID) *replicationTaskGroup {
-	return &replicationTaskGroup{
-		changefeedID: cfID,
-		groupID:      id,
-		groupName:    printGroupID(id),
-		nodeTasks:    make(map[node.ID]map[common.DispatcherID]*SpanReplication),
-		replicating:  make(map[common.DispatcherID]*SpanReplication),
-		scheduling:   make(map[common.DispatcherID]*SpanReplication),
-		absent:       make(map[common.DispatcherID]*SpanReplication),
-	}
-}
-
-func (g *replicationTaskGroup) mustVerifyGroupID(id GroupID) {
-	if g.groupID != id {
-		log.Panic("group id not match", zap.Int64("group", g.groupID), zap.Int64("id", id))
-	}
-}
-
-func (db *ReplicationDB) getOrCreateGroup(task *SpanReplication) *replicationTaskGroup {
+func (db *ReplicationDB) getOrCreateGroup(task *SpanReplication) *replica.ReplicationGroup[common.DispatcherID, *SpanReplication] {
 	groupID := task.groupID
 	g, ok := db.taskGroups[groupID]
 	if !ok {
-		g = newReplicationTaskGroup(db.changefeedID, groupID)
+		g = replica.NewReplicationGroup(db.changefeedID.String(), groupID)
 		db.taskGroups[groupID] = g
-		log.Info("create new task group", zap.Stringer("groupType", getGroupType(groupID)),
+		log.Info("create new task group", zap.Stringer("groupType", replica.GroupTpye(groupID)),
 			zap.Int64("tableID", task.Span.TableID))
 	}
 	return g
 }
 
-func (db *ReplicationDB) maybeRemoveGroup(g *replicationTaskGroup) {
-	if g.groupID == defaultGroupID || !g.IsEmpty() {
-		return
+func (db *ReplicationDB) maybeRemoveGroup(g *replica.ReplicationGroup[common.DispatcherID, *SpanReplication]) {
+	if g.GetReplicatingSize() == 0 && g.GetSchedulingSize() == 0 && g.GetAbsentSize() == 0 {
+		delete(db.taskGroups, g.GetID())
+		log.Info("remove task group", zap.Stringer("groupType", replica.GroupTpye(g.GetID())))
 	}
-	delete(db.taskGroups, g.groupID)
 }
 
-func (db *ReplicationDB) mustGetGroup(groupID GroupID) *replicationTaskGroup {
+func (db *ReplicationDB) mustGetGroup(groupID replica.GroupID) *replicationTaskGroup {
 	g, ok := db.taskGroups[groupID]
 	if !ok {
-		log.Panic("group not found", zap.String("group", printGroupID(groupID)))
+		log.Panic("group not found", zap.String("group", printreplica.GroupID(groupID)))
 	}
 	return g
-}
-
-// MarkSpanAbsent move the span to the absent status
-func (g *replicationTaskGroup) MarkSpanAbsent(span *SpanReplication) {
-	g.mustVerifyGroupID(span.groupID)
-	log.Info("marking span absent",
-		zap.String("changefeed", g.changefeedID.Name()),
-		zap.String("group", g.groupName),
-		zap.String("span", span.ID.String()),
-		zap.String("node", span.GetNodeID().String()))
-
-	delete(g.scheduling, span.ID)
-	delete(g.replicating, span.ID)
-	g.absent[span.ID] = span
-	originNodeID := span.GetNodeID()
-	span.SetNodeID("")
-	g.updateNodeMap(originNodeID, "", span)
-}
-
-// MarkSpanScheduling move the span to the scheduling map
-func (g *replicationTaskGroup) MarkSpanScheduling(span *SpanReplication) {
-	g.mustVerifyGroupID(span.groupID)
-	log.Info("marking span scheduling",
-		zap.String("changefeed", g.changefeedID.Name()),
-		zap.String("group", g.groupName),
-		zap.String("span", span.ID.String()))
-
-	delete(g.absent, span.ID)
-	delete(g.replicating, span.ID)
-	g.scheduling[span.ID] = span
-}
-
-// AddReplicatingSpan adds a replicating the replicating map, that means the task is already scheduled to a dispatcher
-func (g *replicationTaskGroup) AddReplicatingSpan(span *SpanReplication) {
-	g.mustVerifyGroupID(span.groupID)
-	nodeID := span.GetNodeID()
-	log.Info("add an replicating span",
-		zap.String("changefeed", g.changefeedID.Name()),
-		zap.String("group", g.groupName),
-		zap.String("nodeID", nodeID.String()),
-		zap.String("span", span.ID.String()))
-	g.replicating[span.ID] = span
-	g.updateNodeMap("", nodeID, span)
-}
-
-// MarkSpanReplicating move the span to the replicating map
-func (g *replicationTaskGroup) MarkSpanReplicating(span *SpanReplication) {
-	g.mustVerifyGroupID(span.groupID)
-	log.Info("marking span replicating",
-		zap.String("changefeed", g.changefeedID.Name()),
-		zap.String("group", g.groupName),
-		zap.String("span", span.ID.String()))
-
-	delete(g.absent, span.ID)
-	delete(g.scheduling, span.ID)
-	g.replicating[span.ID] = span
-}
-
-func (g *replicationTaskGroup) BindSpanToNode(old, new node.ID, span *SpanReplication) {
-	g.mustVerifyGroupID(span.groupID)
-	log.Info("bind span to node",
-		zap.String("changefeed", g.changefeedID.Name()),
-		zap.String("group", g.groupName),
-		zap.String("span", span.ID.String()),
-		zap.String("oldNode", old.String()),
-		zap.String("node", new.String()))
-
-	span.SetNodeID(new)
-	delete(g.absent, span.ID)
-	delete(g.replicating, span.ID)
-	g.scheduling[span.ID] = span
-	g.updateNodeMap(old, new, span)
-}
-
-// updateNodeMap updates the node map, it will remove the task from the old node and add it to the new node
-func (g *replicationTaskGroup) updateNodeMap(old, new node.ID, span *SpanReplication) {
-	//clear from the old node
-	if old != "" {
-		oldMap, ok := g.nodeTasks[old]
-		if ok {
-			delete(oldMap, span.ID)
-			if len(oldMap) == 0 {
-				delete(g.nodeTasks, old)
-			}
-		}
-	}
-	// add to the new node if the new node is not empty
-	if new != "" {
-		newMap, ok := g.nodeTasks[new]
-		if !ok {
-			newMap = make(map[common.DispatcherID]*SpanReplication)
-			g.nodeTasks[new] = newMap
-		}
-		newMap[span.ID] = span
-	}
-}
-
-// addAbsentReplicaSetUnLock adds the replica set to the absent map
-func (g *replicationTaskGroup) AddAbsentReplicaSet(span *SpanReplication) {
-	g.mustVerifyGroupID(span.groupID)
-	g.absent[span.ID] = span
-}
-
-func (g *replicationTaskGroup) RemoveSpan(span *SpanReplication) {
-	g.mustVerifyGroupID(span.groupID)
-	log.Info("remove span",
-		zap.String("changefeed", g.changefeedID.Name()),
-		zap.String("group", g.groupName),
-		zap.Int64("table", span.Span.TableID),
-		zap.String("span", span.ID.String()))
-	delete(g.absent, span.ID)
-	delete(g.replicating, span.ID)
-	delete(g.scheduling, span.ID)
-	nodeMap := g.nodeTasks[span.GetNodeID()]
-	delete(nodeMap, span.ID)
-	if len(nodeMap) == 0 {
-		delete(g.nodeTasks, span.GetNodeID())
-	}
-}
-
-func (g *replicationTaskGroup) IsEmpty() bool {
-	return g.IsStable() && len(g.replicating) == 0
-}
-
-func (g *replicationTaskGroup) IsStable() bool {
-	return len(g.scheduling) == 0 && len(g.absent) == 0
-}
-
-func (g *replicationTaskGroup) GetTaskSizeByNodeID(nodeID node.ID) int {
-	return len(g.nodeTasks[nodeID])
-}
-
-func (g *replicationTaskGroup) GetNodeTasks() map[node.ID]map[common.DispatcherID]*SpanReplication {
-	return g.nodeTasks
 }

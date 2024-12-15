@@ -37,7 +37,9 @@ type ReplicationDB struct {
 	tableTasks  map[int64]map[common.DispatcherID]*SpanReplication
 	// task group is used for tracking scheduling status, the ddl dispatcher is
 	// not included since it doesn't need to be scheduled
-	taskGroups map[GroupID]*replicationTaskGroup
+	// taskGroups map[GroupID]*replicationTaskGroup
+
+	taskGroups map[replica.GroupID]*replica.ReplicationGroup[common.DispatcherID, *SpanReplication]
 
 	ddlSpan *SpanReplication
 
@@ -78,15 +80,10 @@ func (db *ReplicationDB) TryRemoveAll() []*SpanReplication {
 	defer db.lock.Unlock()
 
 	var tasks = make([]*SpanReplication, 0)
-	addMapToList := func(m map[common.DispatcherID]*SpanReplication) {
-		for _, stm := range m {
-			tasks = append(tasks, stm)
-		}
-	}
 	for _, g := range db.taskGroups {
 		// we need to add the replicating and scheduling tasks to the list, and then reset the db
-		addMapToList(g.replicating)
-		addMapToList(g.scheduling)
+		tasks = append(tasks, g.GetReplicating()...)
+		tasks = append(tasks, g.GetScheduling()...)
 	}
 
 	db.reset()
@@ -135,7 +132,7 @@ func (db *ReplicationDB) GetAbsentSize() int {
 
 	sum := 0
 	for _, g := range db.taskGroups {
-		sum += len(g.absent)
+		sum += g.GetAbsentSize()
 	}
 	return sum
 }
@@ -147,7 +144,7 @@ func (db *ReplicationDB) GetSchedulingSize() int {
 
 	sum := 0
 	for _, g := range db.taskGroups {
-		sum += len(g.scheduling)
+		sum += g.GetSchedulingSize()
 	}
 	return sum
 }
@@ -159,7 +156,7 @@ func (db *ReplicationDB) GetReplicatingSize() int {
 
 	sum := 0
 	for _, g := range db.taskGroups {
-		sum += len(g.replicating)
+		sum += g.GetReplicatingSize()
 	}
 	return sum
 }
@@ -441,7 +438,7 @@ func (db *ReplicationDB) GetAbsentForTest(buffer []*SpanReplication, maxSize int
 
 	buffer = buffer[:0]
 	for _, g := range db.taskGroups {
-		for _, stm := range g.absent {
+		for _, stm := range g.GetAbsent() {
 			buffer = append(buffer, stm)
 			if len(buffer) >= maxSize {
 				break
@@ -456,8 +453,8 @@ func (db *ReplicationDB) reset() {
 	db.schemaTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
 	db.tableTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
 	db.allTasks = make(map[common.DispatcherID]*SpanReplication)
-	db.taskGroups = make(map[GroupID]*replicationTaskGroup)
-	db.taskGroups[defaultGroupID] = newReplicationTaskGroup(db.changefeedID, defaultGroupID)
+	db.taskGroups = make(map[GroupID]*replica.ReplicationGroup[common.DispatcherID, *SpanReplication])
+	db.taskGroups[defaultGroupID] = replica.NewDefaultReplicationGroup[common.DispatcherID, *SpanReplication](db.changefeedID.String())
 	db.hotSpans = NewHotSpans()
 }
 
