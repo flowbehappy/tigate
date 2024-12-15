@@ -256,6 +256,8 @@ type replicationTaskGroup struct {
 	replicating map[common.DispatcherID]*SpanReplication
 	scheduling  map[common.DispatcherID]*SpanReplication
 	absent      map[common.DispatcherID]*SpanReplication
+
+	checker []Checker
 }
 
 func newReplicationTaskGroup(cfID common.ChangeFeedID, id GroupID) *replicationTaskGroup {
