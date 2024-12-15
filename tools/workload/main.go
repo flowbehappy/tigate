@@ -38,8 +38,8 @@ var (
 
 	tableCount      int
 	tableStartIndex int
-	qps             int
-	rps             int
+	thread          int
+	batchSize       int
 
 	dbHost     string
 	dbPort     int
@@ -79,8 +79,8 @@ func init() {
 	flag.IntVar((&dbNum), "db-num", 1, "the number of databases")
 	flag.IntVar(&tableCount, "table-count", 1, "table count of the workload")
 	flag.IntVar(&tableStartIndex, "table-start-index", 0, "table start index, sbtest<index>")
-	flag.IntVar(&qps, "qps", 1000, "qps of the workload")
-	flag.IntVar(&rps, "rps", 10, "the row count per second of the workload")
+	flag.IntVar(&thread, "thread", 16, "total thread of the workload")
+	flag.IntVar(&batchSize, "batch-size", 10, "batch size of each insert/update/delete")
 	flag.Uint64Var(&totalCount, "total-row-count", 1000000, "the total row count of the workload")
 	flag.IntVar(&percentageForUpdate, "percentage-for-update", 0, "percentage for update: [0, 100]")
 	flag.BoolVar(&skipCreateTable, "skip-create-table", false, "do not create tables")
@@ -139,8 +139,8 @@ func main() {
 		dbs[0] = db
 	}
 
-	qpsForUpdate := qps * percentageForUpdate
-	qpsForInsert := qps - qpsForUpdate
+	updateConcurrency := thread * percentageForUpdate / 100
+	insertConcurrency := thread - updateConcurrency
 
 	log.Info("database info", zap.Int("dbCount", dbNum), zap.Int("tableCount", tableCount))
 
@@ -171,8 +171,8 @@ func main() {
 		}
 		// insert
 		if totalCount != 0 {
-			group.Add(qpsForInsert)
-			for i := 0; i < qpsForInsert; i++ {
+			group.Add(insertConcurrency)
+			for i := 0; i < insertConcurrency; i++ {
 				go func() {
 					defer group.Done()
 					doInsert(dbs, workload)
@@ -188,12 +188,12 @@ func main() {
 	}
 
 	log.Info("start running workload",
-		zap.String("workload_type", workloadType), zap.Int("rps", rps), zap.Float64("large-ratio", largeRowRatio),
-		zap.Int("qps", qps), zap.String("action", action),
+		zap.String("workload_type", workloadType), zap.Float64("large-ratio", largeRowRatio),
+		zap.Int("total_thread", thread), zap.Int("batch-size", batchSize), zap.String("action", action),
 	)
 	if action == "insert" || action == "write" {
-		group.Add(qpsForInsert)
-		for i := 0; i < qpsForInsert; i++ {
+		group.Add(insertConcurrency)
+		for i := 0; i < insertConcurrency; i++ {
 			fmt.Println("insert goroutine", i, "started")
 			go func() {
 				defer func() {
@@ -205,10 +205,10 @@ func main() {
 		}
 	}
 
-	if (action == "write" || action == "update") && qpsForUpdate != 0 {
-		updateTaskCh := make(chan updateTask, rps)
-		group.Add(qpsForUpdate)
-		for i := 0; i < qpsForUpdate; i++ {
+	if (action == "write" || action == "update") && updateConcurrency != 0 {
+		updateTaskCh := make(chan updateTask, updateConcurrency)
+		group.Add(updateConcurrency)
+		for i := 0; i < updateConcurrency; i++ {
 			fmt.Println("update goroutine", i, "started")
 			go func() {
 				defer func() {
@@ -269,8 +269,8 @@ func genUpdateTask(output chan updateTask) {
 		// TODO: add more randomness.
 		task := updateTask{
 			UpdateOption: schema.UpdateOption{
-				Table:    j,
-				RowCount: rps,
+				Table: j,
+				Batch: batchSize,
 			},
 		}
 		output <- task
@@ -287,8 +287,8 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 		}
 		if res != nil {
 			cnt, err := res.RowsAffected()
-			if err != nil || cnt != int64(task.RowCount) {
-				log.Info("get rows affected error", zap.Error(err), zap.Int64("affectedRows", cnt), zap.Int("rowCount", task.RowCount))
+			if err != nil || cnt != int64(task.Batch) {
+				log.Info("get rows affected error", zap.Error(err), zap.Int64("affectedRows", cnt), zap.Int("rowCount", task.Batch))
 				atomic.AddUint64(&totalError, 1)
 			}
 			atomic.AddUint64(&total, uint64(cnt))
@@ -308,15 +308,15 @@ func doInsert(dbs []*sql.DB, workload schema.Workload) {
 	for {
 		i := rand.Intn(dbNum)
 		j := rand.Intn(tableCount) + tableStartIndex
-		insertSql := workload.BuildInsertSql(j, rps)
+		insertSql := workload.BuildInsertSql(j, batchSize)
 		err := exceInsert(dbs[i], insertSql, workload, j)
 		if err != nil {
 			log.Info("insert error", zap.Error(err))
 			atomic.AddUint64(&totalError, 1)
 			continue
 		}
-		atomic.AddUint64(&total, uint64(rps))
-		if total*uint64(rps) >= totalCount {
+		atomic.AddUint64(&total, uint64(batchSize))
+		if total*uint64(batchSize) >= totalCount {
 			return
 		}
 	}

@@ -41,12 +41,12 @@ func (c *SysbenchWorkload) BuildCreateTableStatement(n int) string {
 	return fmt.Sprintf(createTable, n)
 }
 
-func (c *SysbenchWorkload) BuildInsertSql(tableN int, rowCount int) string {
+func (c *SysbenchWorkload) BuildInsertSql(tableN int, batchSize int) string {
 	n := rand.Int63()
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("insert into sbtest%d (id, k, c, pad) values(%d, %d, 'abcdefghijklmnopsrstuvwxyzabcd', 'abcdefghijklmnopsrst')", tableN, n, n))
 
-	for r := 1; r < rowCount; r++ {
+	for r := 1; r < batchSize; r++ {
 		n = rand.Int63()
 		buf.WriteString(fmt.Sprintf(",(%d, %d, 'abcdefghijklmnopsrstuvwxyzabcd', 'abcdefghijklmnopsrst')", n, n))
 	}

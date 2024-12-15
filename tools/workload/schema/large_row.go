@@ -35,14 +35,14 @@ func newColumnValues(r *rand.Rand, size, count int) [][]byte {
 	return result
 }
 
-func newRowValues(r *rand.Rand, columnSize int, columnCount int, rowCount int) []string {
+func newRowValues(r *rand.Rand, columnSize int, columnCount int, batchSize int) []string {
 	const numColumnValues = 512
 	columns := newColumnValues(r, columnSize, numColumnValues)
 
-	result := make([]string, 0, rowCount)
+	result := make([]string, 0, batchSize)
 
 	var sb strings.Builder
-	for i := 0; i < rowCount; i++ {
+	for i := 0; i < batchSize; i++ {
 		sb.Reset()
 
 		for j := 0; j < columnCount; j++ {
@@ -118,12 +118,12 @@ func (l *LargeRowWorkload) BuildCreateTableStatement(n int) string {
 	return query
 }
 
-func (l *LargeRowWorkload) BuildInsertSql(tableN int, rowCount int) string {
+func (l *LargeRowWorkload) BuildInsertSql(tableN int, batchSize int) string {
 	tableName := getTableName(tableN)
 	insertSQL := fmt.Sprintf("INSERT INTO %s VALUES (%d,%s)", tableName, rand.Int63(), l.getSmallRow())
 
 	var largeRowCount int
-	for i := 1; i < rowCount; i++ {
+	for i := 1; i < batchSize; i++ {
 		if l.r.Float64() < l.largeRatio {
 			insertSQL = fmt.Sprintf("%s,(%d,%s)", insertSQL, rand.Int63(), l.getLargeRow())
 			largeRowCount++
@@ -133,7 +133,7 @@ func (l *LargeRowWorkload) BuildInsertSql(tableN int, rowCount int) string {
 	}
 
 	log.Info("large row workload, insert the table",
-		zap.Int("table", tableN), zap.Int("rowCount", rowCount),
+		zap.Int("table", tableN), zap.Int("batchSize", batchSize),
 		zap.Int("largeRowCount", largeRowCount), zap.Int("length", len(insertSQL)))
 
 	return insertSQL
@@ -145,7 +145,7 @@ func (l *LargeRowWorkload) BuildUpdateSql(opts UpdateOption) string {
 	upsertSQL.WriteString(fmt.Sprintf("INSERT INTO %s VALUES (%d,%s)", tableName, rand.Int63()%100000, l.getSmallRow()))
 
 	var largeRowCount int
-	for i := 1; i < opts.RowCount; i++ {
+	for i := 1; i < opts.Batch; i++ {
 		if l.r.Float64() < l.largeRatio {
 			upsertSQL.WriteString(fmt.Sprintf(",(%d,%s)", rand.Int63()%100000, l.getLargeRow()))
 			largeRowCount++
@@ -156,7 +156,7 @@ func (l *LargeRowWorkload) BuildUpdateSql(opts UpdateOption) string {
 	upsertSQL.WriteString(" ON DUPLICATE KEY UPDATE col_0=VALUES(col_0)")
 
 	log.Info("large row workload, upsert the table",
-		zap.Int("table", opts.Table), zap.Int("rowCount", opts.RowCount),
+		zap.Int("table", opts.Table), zap.Int("batchSize", opts.Batch),
 		zap.Int("largeRowCount", largeRowCount))
 	return upsertSQL.String()
 }

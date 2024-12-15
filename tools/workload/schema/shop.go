@@ -70,12 +70,12 @@ func (s *ShopItemWorkload) BuildCreateTableStatement(n int) string {
 	return fmt.Sprintf(createShopItemTable, n)
 }
 
-func (s *ShopItemWorkload) BuildInsertSql(tableN int, rowCount int) string {
+func (s *ShopItemWorkload) BuildInsertSql(tableN int, batchSize int) string {
 	tableName := fmt.Sprintf("shop_item_%d", tableN)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("INSERT INTO %s VALUES ", tableName))
 
-	for i := 0; i < rowCount; i++ {
+	for i := 0; i < batchSize; i++ {
 		if i > 0 {
 			sb.WriteString(",")
 		}
@@ -96,7 +96,7 @@ func (s *ShopItemWorkload) buildUpsertSql(opt UpdateOption) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("INSERT INTO %s VALUES ", tableName))
 
-	for i := 0; i < opt.RowCount; i++ {
+	for i := 0; i < opt.Batch; i++ {
 		if i > 0 {
 			sb.WriteString(",")
 		}
@@ -112,7 +112,7 @@ func (s *ShopItemWorkload) buildUpdateSql(opt UpdateOption) string {
 	tableName := fmt.Sprintf("shop_item_%d", opt.Table)
 	var sb strings.Builder
 
-	for i := 0; i < opt.RowCount; i++ {
+	for i := 0; i < opt.Batch; i++ {
 		if i > 0 {
 			sb.WriteString(";")
 		}
