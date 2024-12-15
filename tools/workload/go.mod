@@ -4,6 +4,7 @@ go 1.23.2
 
 require (
 	github.com/go-sql-driver/mysql v1.8.1
+	github.com/google/uuid v1.6.0
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
 	github.com/pingcap/tiflow v0.0.0-20241113040829-b2a4f9af26d2

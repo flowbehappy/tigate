@@ -16,14 +16,14 @@ package schema
 type Workload interface {
 	// BuildCreateTableStatement returns the create-table sql of the table n
 	BuildCreateTableStatement(n int) string
-	// BuildInsertSql returns the insert sql statement of the tableN, insert rowCount records
-	BuildInsertSql(tableN int, rowCount int) string
+	// BuildInsertSql returns the insert sql statement of the tableN, insert batchSize records
+	BuildInsertSql(tableN int, batchSize int) string
 	// BuildUpdateSql return the update sql statement based on the update option
 	BuildUpdateSql(opt UpdateOption) string
 }
 
 type UpdateOption struct {
 	Table           int
-	RowCount        int
+	Batch           int
 	IsSpecialUpdate bool
 }

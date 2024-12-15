@@ -38,8 +38,8 @@ var (
 
 	tableCount      int
 	tableStartIndex int
-	qps             int
-	rps             int
+	thread          int
+	batchSize       int
 
 	dbHost     string
 	dbPort     int
@@ -61,7 +61,7 @@ var (
 	largeRowRatio float64
 
 	action              string
-	percentageForUpdate int
+	percentageForUpdate float64
 
 	dbNum    int
 	dbPrefix string
@@ -71,6 +71,7 @@ const (
 	bank     = "bank"
 	sysbench = "sysbench"
 	largeRow = "large_row"
+	shopItem = "shop_item"
 )
 
 func init() {
@@ -78,13 +79,13 @@ func init() {
 	flag.IntVar((&dbNum), "db-num", 1, "the number of databases")
 	flag.IntVar(&tableCount, "table-count", 1, "table count of the workload")
 	flag.IntVar(&tableStartIndex, "table-start-index", 0, "table start index, sbtest<index>")
-	flag.IntVar(&qps, "qps", 1000, "qps of the workload")
-	flag.IntVar(&rps, "rps", 10, "the row count per second of the workload")
+	flag.IntVar(&thread, "thread", 16, "total thread of the workload")
+	flag.IntVar(&batchSize, "batch-size", 10, "batch size of each insert/update/delete")
 	flag.Uint64Var(&totalCount, "total-row-count", 1000000, "the total row count of the workload")
-	flag.IntVar(&percentageForUpdate, "percentage-for-update", 0, "percentage for update: [0, 100]")
+	flag.Float64Var(&percentageForUpdate, "percentage-for-update", 0, "percentage for update: [0, 1.0]")
 	flag.BoolVar(&skipCreateTable, "skip-create-table", false, "do not create tables")
 	flag.StringVar(&action, "action", "prepare", "action of the workload: [prepare, insert, update, delete, write, cleanup]")
-	flag.StringVar(&workloadType, "workload-type", "sysbench", "workload type: [bank, sysbench, express, common, one, bigtable, large_row, wallet]")
+	flag.StringVar(&workloadType, "workload-type", "sysbench", "workload type: [bank, sysbench, express, common, one, bigtable, large_row, wallet, shop_item]")
 	flag.StringVar(&dbHost, "database-host", "127.0.0.1", "database host")
 	flag.StringVar(&dbUser, "database-user", "root", "database user")
 	flag.StringVar(&dbPassword, "database-password", "", "database password")
@@ -117,7 +118,7 @@ func main() {
 	if dbPrefix != "" {
 		for i := 0; i < dbNum; i++ {
 			dbName := fmt.Sprintf("%s%d", dbPrefix, i+1)
-			db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824", dbUser, dbPassword, dbHost, dbPort, dbName))
+			db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824&multiStatements=true", dbUser, dbPassword, dbHost, dbPort, dbName))
 			if err != nil {
 				log.Info("create the sql client failed", zap.Error(err))
 			}
@@ -127,7 +128,7 @@ func main() {
 			dbs[i] = db
 		}
 	} else {
-		db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824", dbUser, dbPassword, dbHost, dbPort, dbName))
+		db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824&multiStatements=true", dbUser, dbPassword, dbHost, dbPort, dbName))
 		if err != nil {
 			log.Info("create the sql client failed", zap.Error(err))
 		}
@@ -138,8 +139,8 @@ func main() {
 		dbs[0] = db
 	}
 
-	qpsForUpdate := qps * percentageForUpdate
-	qpsForInsert := qps - qpsForUpdate
+	updateConcurrency := int(float64(thread) * percentageForUpdate)
+	insertConcurrency := thread - updateConcurrency
 
 	log.Info("database info", zap.Int("dbCount", dbNum), zap.Int("tableCount", tableCount))
 
@@ -152,6 +153,9 @@ func main() {
 	case largeRow:
 		fmt.Println("use large_row workload")
 		workload = schema.NewLargeRowWorkload(rowSize, largeRowSize, largeRowRatio)
+	case shopItem:
+		fmt.Println("use shop_item workload")
+		workload = schema.NewShopItemWorkload(totalCount, rowSize)
 	default:
 		log.Panic("unsupported workload type", zap.String("workload", workloadType))
 	}
@@ -167,8 +171,8 @@ func main() {
 		}
 		// insert
 		if totalCount != 0 {
-			group.Add(qpsForInsert)
-			for i := 0; i < qpsForInsert; i++ {
+			group.Add(insertConcurrency)
+			for i := 0; i < insertConcurrency; i++ {
 				go func() {
 					defer group.Done()
 					doInsert(dbs, workload)
@@ -184,32 +188,45 @@ func main() {
 	}
 
 	log.Info("start running workload",
-		zap.String("workload_type", workloadType), zap.Int("rps", rps), zap.Float64("large-ratio", largeRowRatio),
-		zap.Int("qps", qps), zap.String("action", action),
+		zap.String("workload_type", workloadType), zap.Float64("large-ratio", largeRowRatio),
+		zap.Int("total_thread", thread), zap.Int("batch-size", batchSize), zap.String("action", action),
 	)
-	if action == "insert" || action == "write" {
-		group.Add(qpsForInsert)
-		for i := 0; i < qpsForInsert; i++ {
+	if action == "write" || action == "insert" {
+		group.Add(insertConcurrency)
+		for i := 0; i < insertConcurrency; i++ {
+			fmt.Println("insert goroutine", i, "started")
 			go func() {
-				defer group.Done()
+				defer func() {
+					fmt.Println("insert goroutine", i, "exited")
+					group.Done()
+				}()
 				doInsert(dbs, workload)
 			}()
 		}
 	}
 
-	if (action == "write" || action == "update") && qpsForUpdate != 0 {
-		updateTaskCh := make(chan updateTask, rps)
-		group.Add(qpsForUpdate)
-		for i := 0; i < qpsForUpdate; i++ {
+	if action == "write" || action == "update" {
+		if updateConcurrency == 0 {
+			log.Info("skip update workload since updateConcurrency is 0", zap.String("action", action),
+				zap.Int("total_thread", thread), zap.Float64("percentageForUpdate", percentageForUpdate))
+		} else {
+			updateTaskCh := make(chan updateTask, updateConcurrency)
+			group.Add(updateConcurrency)
+			for i := 0; i < updateConcurrency; i++ {
+				fmt.Println("update goroutine", i, "started")
+				go func() {
+					defer func() {
+						fmt.Println("update goroutine", i, "exited")
+						group.Done()
+					}()
+					doUpdate(dbs[0], workload, updateTaskCh)
+				}()
+			}
 			go func() {
 				defer group.Done()
-				doUpdate(dbs[0], workload, updateTaskCh)
+				genUpdateTask(updateTaskCh)
 			}()
 		}
-		go func() {
-			defer group.Done()
-			genUpdateTask(updateTaskCh)
-		}()
 	}
 
 	group.Wait()
@@ -257,8 +274,8 @@ func genUpdateTask(output chan updateTask) {
 		// TODO: add more randomness.
 		task := updateTask{
 			UpdateOption: schema.UpdateOption{
-				Table:    j,
-				RowCount: rps,
+				Table: j,
+				Batch: batchSize,
 			},
 		}
 		output <- task
@@ -268,15 +285,15 @@ func genUpdateTask(output chan updateTask) {
 func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 	for task := range input {
 		updateSql := workload.BuildUpdateSql(task.UpdateOption)
-		res, err := db.Exec(updateSql)
+		res, err := exceSQL(db, updateSql, workload, task.Table)
 		if err != nil {
 			log.Info("update error", zap.Error(err), zap.String("sql", updateSql[:20]))
 			atomic.AddUint64(&totalError, 1)
 		}
 		if res != nil {
 			cnt, err := res.RowsAffected()
-			if err != nil || cnt != int64(task.RowCount) {
-				log.Info("get rows affected error", zap.Error(err), zap.Int64("affectedRows", cnt), zap.Int("rowCount", task.RowCount))
+			if err != nil || cnt < int64(task.Batch) {
+				log.Info("get rows affected error", zap.Error(err), zap.Int64("affectedRows", cnt), zap.Int("rowCount", task.Batch), zap.String("sql", updateSql))
 				atomic.AddUint64(&totalError, 1)
 			}
 			atomic.AddUint64(&total, uint64(cnt))
@@ -293,39 +310,40 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 }
 
 func doInsert(dbs []*sql.DB, workload schema.Workload) {
-	t := time.Tick(time.Second)
-	for range t {
+	for {
 		i := rand.Intn(dbNum)
 		j := rand.Intn(tableCount) + tableStartIndex
-		insertSql := workload.BuildInsertSql(j, rps)
-		err := exceInsert(dbs[i], insertSql, workload, j)
+		insertSql := workload.BuildInsertSql(j, batchSize)
+		_, err := exceSQL(dbs[i], insertSql, workload, j)
 		if err != nil {
 			log.Info("insert error", zap.Error(err))
 			atomic.AddUint64(&totalError, 1)
 			continue
 		}
-		atomic.AddUint64(&total, 1)
-		if total*uint64(rps) >= totalCount {
+		atomic.AddUint64(&total, uint64(batchSize))
+		if total*uint64(batchSize) >= totalCount {
 			return
 		}
 	}
 }
 
-func exceInsert(db *sql.DB, sql string, workload schema.Workload, n int) error {
-	_, err := db.Exec(sql)
+func exceSQL(db *sql.DB, sql string, workload schema.Workload, n int) (sql.Result, error) {
+	res, err := db.Exec(sql)
 	if err != nil {
-		// if table not exists, we create it
-		if strings.Contains(err.Error(), "Error 1146") {
-			_, err := db.Exec(workload.BuildCreateTableStatement(n))
-			if err != nil {
-				log.Info("create table error: ", zap.Error(err))
-				return err
-			}
-			_, err = db.Exec(sql)
-			return err
+		if !strings.Contains(err.Error(), "Error 1146") {
+			log.Info("insert error", zap.Error(err))
+			return res, err
 		}
+		// if table not exists, we create it
+		_, err := db.Exec(workload.BuildCreateTableStatement(n))
+		if err != nil {
+			log.Info("create table error: ", zap.Error(err))
+			return res, err
+		}
+		_, err = db.Exec(sql)
+		return res, err
 	}
-	return nil
+	return res, nil
 }
 
 func printTPS() {
