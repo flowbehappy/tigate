@@ -87,8 +87,8 @@ func (s *ShopItemWorkload) BuildInsertSql(tableN int, batchSize int) string {
 }
 
 func (s *ShopItemWorkload) BuildUpdateSql(opt UpdateOption) string {
-	// return s.buildUpsertSql(opt)
-	return s.buildUpdateSql(opt)
+	return s.buildUpsertSql(opt)
+	// return s.buildUpdateSql(opt)
 }
 
 func (s *ShopItemWorkload) buildUpsertSql(opt UpdateOption) string {
@@ -104,7 +104,7 @@ func (s *ShopItemWorkload) buildUpsertSql(opt UpdateOption) string {
 		sb.WriteString(fmt.Sprintf("(%s)", row))
 	}
 
-	sb.WriteString(" ON DUPLICATE KEY UPDATE item_id=VALUES(item_id)")
+	sb.WriteString(" ON DUPLICATE KEY UPDATE updated_time=updated_time+1")
 	return sb.String()
 }
 

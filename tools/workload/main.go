@@ -61,7 +61,7 @@ var (
 	largeRowRatio float64
 
 	action              string
-	percentageForUpdate int
+	percentageForUpdate float64
 
 	dbNum    int
 	dbPrefix string
@@ -82,7 +82,7 @@ func init() {
 	flag.IntVar(&thread, "thread", 16, "total thread of the workload")
 	flag.IntVar(&batchSize, "batch-size", 10, "batch size of each insert/update/delete")
 	flag.Uint64Var(&totalCount, "total-row-count", 1000000, "the total row count of the workload")
-	flag.IntVar(&percentageForUpdate, "percentage-for-update", 0, "percentage for update: [0, 100]")
+	flag.Float64Var(&percentageForUpdate, "percentage-for-update", 0, "percentage for update: [0, 1.0]")
 	flag.BoolVar(&skipCreateTable, "skip-create-table", false, "do not create tables")
 	flag.StringVar(&action, "action", "prepare", "action of the workload: [prepare, insert, update, delete, write, cleanup]")
 	flag.StringVar(&workloadType, "workload-type", "sysbench", "workload type: [bank, sysbench, express, common, one, bigtable, large_row, wallet, shop_item]")
@@ -118,7 +118,7 @@ func main() {
 	if dbPrefix != "" {
 		for i := 0; i < dbNum; i++ {
 			dbName := fmt.Sprintf("%s%d", dbPrefix, i+1)
-			db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824", dbUser, dbPassword, dbHost, dbPort, dbName))
+			db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824&multiStatements=true", dbUser, dbPassword, dbHost, dbPort, dbName))
 			if err != nil {
 				log.Info("create the sql client failed", zap.Error(err))
 			}
@@ -128,7 +128,7 @@ func main() {
 			dbs[i] = db
 		}
 	} else {
-		db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824", dbUser, dbPassword, dbHost, dbPort, dbName))
+		db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824&multiStatements=true", dbUser, dbPassword, dbHost, dbPort, dbName))
 		if err != nil {
 			log.Info("create the sql client failed", zap.Error(err))
 		}
@@ -139,7 +139,7 @@ func main() {
 		dbs[0] = db
 	}
 
-	updateConcurrency := thread * percentageForUpdate / 100
+	updateConcurrency := int(float64(thread) * percentageForUpdate)
 	insertConcurrency := thread - updateConcurrency
 
 	log.Info("database info", zap.Int("dbCount", dbNum), zap.Int("tableCount", tableCount))
@@ -191,7 +191,7 @@ func main() {
 		zap.String("workload_type", workloadType), zap.Float64("large-ratio", largeRowRatio),
 		zap.Int("total_thread", thread), zap.Int("batch-size", batchSize), zap.String("action", action),
 	)
-	if action == "insert" || action == "write" {
+	if action == "write" || action == "insert" {
 		group.Add(insertConcurrency)
 		for i := 0; i < insertConcurrency; i++ {
 			fmt.Println("insert goroutine", i, "started")
@@ -205,23 +205,28 @@ func main() {
 		}
 	}
 
-	if (action == "write" || action == "update") && updateConcurrency != 0 {
-		updateTaskCh := make(chan updateTask, updateConcurrency)
-		group.Add(updateConcurrency)
-		for i := 0; i < updateConcurrency; i++ {
-			fmt.Println("update goroutine", i, "started")
-			go func() {
-				defer func() {
-					fmt.Println("update goroutine", i, "exited")
-					group.Done()
+	if action == "write" || action == "update" {
+		if updateConcurrency == 0 {
+			log.Info("skip update workload since updateConcurrency is 0", zap.String("action", action),
+				zap.Int("total_thread", thread), zap.Float64("percentageForUpdate", percentageForUpdate))
+		} else {
+			updateTaskCh := make(chan updateTask, updateConcurrency)
+			group.Add(updateConcurrency)
+			for i := 0; i < updateConcurrency; i++ {
+				fmt.Println("update goroutine", i, "started")
+				go func() {
+					defer func() {
+						fmt.Println("update goroutine", i, "exited")
+						group.Done()
+					}()
+					doUpdate(dbs[0], workload, updateTaskCh)
 				}()
-				doUpdate(dbs[0], workload, updateTaskCh)
+			}
+			go func() {
+				defer group.Done()
+				genUpdateTask(updateTaskCh)
 			}()
 		}
-		go func() {
-			defer group.Done()
-			genUpdateTask(updateTaskCh)
-		}()
 	}
 
 	group.Wait()
@@ -288,7 +293,7 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 		if res != nil {
 			cnt, err := res.RowsAffected()
 			if err != nil || cnt != int64(task.Batch) {
-				log.Info("get rows affected error", zap.Error(err), zap.Int64("affectedRows", cnt), zap.Int("rowCount", task.Batch))
+				log.Info("get rows affected error", zap.Error(err), zap.Int64("affectedRows", cnt), zap.Int("rowCount", task.Batch), zap.String("sql", updateSql))
 				atomic.AddUint64(&totalError, 1)
 			}
 			atomic.AddUint64(&total, uint64(cnt))
