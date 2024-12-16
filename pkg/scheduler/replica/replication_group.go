@@ -28,10 +28,11 @@ type (
 )
 
 const (
-	defaultGroupID GroupID = 0
+	DefaultGroupID GroupID = 0
 
-	groupDefault GroupTpye = iota
-	groupTable
+	GroupDefault GroupTpye = iota
+	GroupTable
+	// add more group strategy later
 	groupHotLevel1
 )
 
@@ -62,7 +63,7 @@ type ReplicationGroup[T ReplicationID, R Replication[T]] struct {
 }
 
 func NewDefaultReplicationGroup[T ReplicationID, R Replication[T]](id string) *ReplicationGroup[T, R] {
-	return NewReplicationGroup[T, R](id, defaultGroupID)
+	return NewReplicationGroup[T, R](id, DefaultGroupID)
 }
 
 func NewReplicationGroup[T ReplicationID, R Replication[T]](id string, groupID GroupID) *ReplicationGroup[T, R] {
@@ -262,7 +263,7 @@ func (g *ReplicationGroup[T, R]) GetTaskSizePerNode() map[node.ID]int {
 
 func GetGroupName(id GroupID) string {
 	gt := GroupTpye(id >> 56)
-	if gt == groupTable {
+	if gt == GroupTable {
 		return fmt.Sprintf("%s-%d", gt.String(), id&0x00FFFFFFFFFFFFFF)
 	}
 	return gt.String()
@@ -274,24 +275,24 @@ func (gt GroupTpye) Less(other GroupTpye) bool {
 
 func (gt GroupTpye) String() string {
 	switch gt {
-	case groupDefault:
+	case GroupDefault:
 		return "default"
-	case groupTable:
+	case GroupTable:
 		return "table"
 	default:
 		return "HotLevel" + strconv.Itoa(int(gt-groupHotLevel1))
 	}
 }
 
-func getGroupID(gt GroupTpye, tableID int64) GroupID {
+func GenGroupID(gt GroupTpye, tableID int64) GroupID {
 	// use high 8 bits to store the group type
 	id := int64(gt) << 56
-	if gt == groupTable {
+	if gt == GroupTable {
 		return id | tableID
 	}
 	return id
 }
 
-func getGroupType(id GroupID) GroupTpye {
+func GetGroupType(id GroupID) GroupTpye {
 	return GroupTpye(id >> 56)
 }

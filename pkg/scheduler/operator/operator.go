@@ -16,9 +16,10 @@ package operator
 import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 )
 
-type Controller[T comparable, S any] interface {
+type Controller[T replica.ReplicationID, S any] interface {
 	// AddOperator adds an operator to the controller
 	AddOperator(op Operator[T, S]) bool
 	// GetOperator gets an operator by ID
@@ -30,7 +31,7 @@ type Controller[T comparable, S any] interface {
 // Operator is the interface for the coordinator schedule maintainer
 // operator thread run Start -> Schedule -> PostFinish
 // Check, OnNodeRemove and OnTaskRemoved is called by the other thread when some event is triggered
-type Operator[T comparable, S any] interface {
+type Operator[T replica.ReplicationID, S any] interface {
 	// ID returns the ID
 	ID() T
 	// Type returns the operator type

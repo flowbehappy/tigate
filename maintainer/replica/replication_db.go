@@ -37,9 +37,7 @@ type ReplicationDB struct {
 	tableTasks  map[int64]map[common.DispatcherID]*SpanReplication
 	// task group is used for tracking scheduling status, the ddl dispatcher is
 	// not included since it doesn't need to be scheduled
-	// taskGroups map[GroupID]*replicationTaskGroup
-
-	taskGroups map[replica.GroupID]*replica.ReplicationGroup[common.DispatcherID, *SpanReplication]
+	taskGroups *replica.ReplicationGroups[common.DispatcherID, *SpanReplication]
 
 	ddlSpan *SpanReplication
 
@@ -80,11 +78,9 @@ func (db *ReplicationDB) TryRemoveAll() []*SpanReplication {
 	defer db.lock.Unlock()
 
 	var tasks = make([]*SpanReplication, 0)
-	for _, g := range db.taskGroups {
-		// we need to add the replicating and scheduling tasks to the list, and then reset the db
-		tasks = append(tasks, g.GetReplicating()...)
-		tasks = append(tasks, g.GetScheduling()...)
-	}
+	// we need to add the replicating and scheduling tasks to the list, and then reset the db
+	tasks = append(tasks, db.taskGroups.GetReplicating()...)
+	tasks = append(tasks, db.taskGroups.GetScheduling()...)
 
 	db.reset()
 	db.putDDLDispatcher(db.ddlSpan)
@@ -125,42 +121,6 @@ func (db *ReplicationDB) TryRemoveBySchemaID(schemaID int64) []*SpanReplication 
 	return tasks
 }
 
-// GetAbsentSize returns the size of the absent map
-func (db *ReplicationDB) GetAbsentSize() int {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	sum := 0
-	for _, g := range db.taskGroups {
-		sum += g.GetAbsentSize()
-	}
-	return sum
-}
-
-// GetSchedulingSize returns the size of the absent map
-func (db *ReplicationDB) GetSchedulingSize() int {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	sum := 0
-	for _, g := range db.taskGroups {
-		sum += g.GetSchedulingSize()
-	}
-	return sum
-}
-
-// GetReplicatingSize returns the absent spans
-func (db *ReplicationDB) GetReplicatingSize() int {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	sum := 0
-	for _, g := range db.taskGroups {
-		sum += g.GetReplicatingSize()
-	}
-	return sum
-}
-
 // GetTasksByTableIDs returns the spans by the table ids
 func (db *ReplicationDB) GetTasksByTableIDs(tableIDs ...int64) []*SpanReplication {
 	db.lock.RLock()
@@ -196,25 +156,6 @@ func (db *ReplicationDB) IsTableExists(tableID int64) bool {
 	return ok && len(tm) > 0
 }
 
-// GetTaskByNodeID returns all the tasks that are maintained by the node
-func (db *ReplicationDB) GetTaskByNodeID(id node.ID) []*SpanReplication {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	var stms []*SpanReplication
-	for _, g := range db.taskGroups {
-		for _, value := range g.GetNodeTasks()[id] {
-			stms = append(stms, value)
-		}
-	}
-	if len(stms) == 0 {
-		log.Info("node is not maintained by controller, ignore",
-			zap.String("changefeed", db.changefeedID.Name()),
-			zap.Stringer("node", id))
-	}
-	return stms
-}
-
 // GetTaskSizeBySchemaID returns the size of the task by the schema id
 func (db *ReplicationDB) GetTaskSizeBySchemaID(schemaID int64) int {
 	db.lock.RLock()
@@ -241,18 +182,6 @@ func (db *ReplicationDB) GetTasksBySchemaID(schemaID int64) []*SpanReplication {
 		replicaSets = append(replicaSets, v)
 	}
 	return replicaSets
-}
-
-// GetTaskSizeByNodeID returns the size of the task by the node id
-func (db *ReplicationDB) GetTaskSizeByNodeID(id node.ID) int {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	sum := 0
-	for _, g := range db.taskGroups {
-		sum += g.GetTaskSizeByNodeID(id)
-	}
-	return sum
 }
 
 // ReplaceReplicaSet replaces the old replica set with the new spans
@@ -291,15 +220,13 @@ func (db *ReplicationDB) AddReplicatingSpan(task *SpanReplication) {
 	defer db.lock.Unlock()
 	db.allTasks[task.ID] = task
 	db.addToSchemaAndTableMap(task)
-	g := db.getOrCreateGroup(task)
-	g.AddReplicatingSpan(task)
+	db.taskGroups.AddReplicatingReplica(task)
 }
 
 // AddAbsentReplicaSet adds the replica set to the absent map
 func (db *ReplicationDB) AddAbsentReplicaSet(tasks ...*SpanReplication) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
-
 	db.addAbsentReplicaSetUnLock(tasks...)
 }
 
@@ -307,21 +234,21 @@ func (db *ReplicationDB) AddAbsentReplicaSet(tasks ...*SpanReplication) {
 func (db *ReplicationDB) MarkSpanAbsent(span *SpanReplication) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
-	db.mustGetGroup(span.groupID).MarkSpanAbsent(span)
+	db.taskGroups.MarkReplicaAbsent(span)
 }
 
 // MarkSpanScheduling move the span to the scheduling map
 func (db *ReplicationDB) MarkSpanScheduling(span *SpanReplication) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
-	db.mustGetGroup(span.groupID).MarkSpanScheduling(span)
+	db.taskGroups.MarkReplicaScheduling(span)
 }
 
 // MarkSpanReplicating move the span to the replicating map
 func (db *ReplicationDB) MarkSpanReplicating(span *SpanReplication) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
-	db.mustGetGroup(span.groupID).MarkSpanReplicating(span)
+	db.taskGroups.MarkReplicaReplicating(span)
 }
 
 // ForceRemove remove the span from the db
@@ -377,15 +304,14 @@ func (db *ReplicationDB) UpdateSchemaID(tableID, newSchemaID int64) {
 func (db *ReplicationDB) BindSpanToNode(old, new node.ID, task *SpanReplication) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
-	db.mustGetGroup(task.groupID).BindSpanToNode(old, new, task)
+	db.taskGroups.BindReplicaToNode(old, new, task)
 }
 
 // addAbsentReplicaSetUnLock adds the replica set to the absent map
 func (db *ReplicationDB) addAbsentReplicaSetUnLock(tasks ...*SpanReplication) {
 	for _, task := range tasks {
 		db.allTasks[task.ID] = task
-		g := db.getOrCreateGroup(task)
-		g.AddAbsentReplicaSet(task)
+		db.taskGroups.AddAbsentReplica(task)
 		db.addToSchemaAndTableMap(task)
 	}
 }
@@ -393,9 +319,7 @@ func (db *ReplicationDB) addAbsentReplicaSetUnLock(tasks ...*SpanReplication) {
 // removeSpanUnLock removes the replica set from the db without lock
 func (db *ReplicationDB) removeSpanUnLock(spans ...*SpanReplication) {
 	for _, span := range spans {
-		g := db.mustGetGroup(span.groupID)
-		g.RemoveSpan(span)
-		db.maybeRemoveGroup(g)
+		db.taskGroups.RemoveReplica(span)
 
 		tableID := span.Span.TableID
 		schemaID := span.GetSchemaID()
@@ -437,8 +361,8 @@ func (db *ReplicationDB) GetAbsentForTest(buffer []*SpanReplication, maxSize int
 	defer db.lock.RUnlock()
 
 	buffer = buffer[:0]
-	for _, g := range db.taskGroups {
-		for _, stm := range g.GetAbsent() {
+	for _, g := range db.taskGroups.GetGroups() {
+		for _, stm := range db.taskGroups.GetAbsentByGroup(g, maxSize) {
 			buffer = append(buffer, stm)
 			if len(buffer) >= maxSize {
 				break
@@ -453,8 +377,7 @@ func (db *ReplicationDB) reset() {
 	db.schemaTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
 	db.tableTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
 	db.allTasks = make(map[common.DispatcherID]*SpanReplication)
-	db.taskGroups = make(map[GroupID]*replica.ReplicationGroup[common.DispatcherID, *SpanReplication])
-	db.taskGroups[defaultGroupID] = replica.NewDefaultReplicationGroup[common.DispatcherID, *SpanReplication](db.changefeedID.String())
+	db.taskGroups = replica.NewReplicationGroups[common.DispatcherID, *SpanReplication](db.changefeedID.String())
 	db.hotSpans = NewHotSpans()
 }
 

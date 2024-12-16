@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/node"
 	"go.uber.org/zap"
 )
@@ -51,102 +50,113 @@ type ReplicationDB[T ReplicationID, R Replication[T]] interface {
 	GetTaskSizePerNodeByGroup(groupID GroupID) map[node.ID]int
 }
 
-type groupedReplicationDB[T ReplicationID, R Replication[T]] struct {
+func NewReplicationGroups[T ReplicationID, R Replication[T]](id string) *ReplicationGroups[T, R] {
+	r := &ReplicationGroups[T, R]{
+		id:         id,
+		taskGroups: make(map[GroupID]*ReplicationGroup[T, R]),
+	}
+	r.taskGroups[DefaultGroupID] = NewDefaultReplicationGroup[T, R](id)
+	return r
+}
+
+type ReplicationGroups[T ReplicationID, R Replication[T]] struct {
+	id         string
 	taskGroups map[GroupID]*ReplicationGroup[T, R]
 }
 
-func (db groupedReplicationDB[T, R]) GetGroups() []replica.GroupID {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	groups := make([]replica.GroupID, 0, len(db.taskGroups))
+func (db ReplicationGroups[T, R]) GetGroups() []GroupID {
+	groups := make([]GroupID, 0, len(db.taskGroups))
 	for id := range db.taskGroups {
 		groups = append(groups, id)
 	}
 	return groups
 }
 
-func (db groupedReplicationDB[T, R]) GetAbsent() []*SpanReplication {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	var absent = make([]*SpanReplication, 0)
+func (db ReplicationGroups[T, R]) GetAbsent() []R {
+	var absent = make([]R, 0)
 	for _, g := range db.taskGroups {
 		absent = append(absent, g.GetAbsent()...)
 	}
 	return absent
 }
 
-func (db groupedReplicationDB[T, R]) GetAbsentByGroup(id replica.GroupID, maxSize int) []*SpanReplication {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
+func (db ReplicationGroups[T, R]) GetAbsentSize() int {
+	size := 0
+	for _, g := range db.taskGroups {
+		size += g.GetAbsentSize()
+	}
+	return size
+}
 
-	buffer := make([]*SpanReplication, 0, maxSize)
+func (db ReplicationGroups[T, R]) GetAbsentByGroup(id GroupID, batch int) []R {
+	buffer := make([]R, 0, batch)
 	g := db.mustGetGroup(id)
-	for _, stm := range g.absent {
-		if !stm.IsDropped() {
-			buffer = append(buffer, stm)
-		}
-		if len(buffer) >= maxSize {
+	for _, stm := range g.GetAbsent() {
+		// IsDropped is not implemented yet, it filter the dropped table and
+		// prevent unexpected scheduling behavior
+		// if !stm.IsDropped() {
+		// 	buffer = append(buffer, stm)
+		// }
+		buffer = append(buffer, stm)
+		if len(buffer) >= batch {
 			break
 		}
 	}
 	return buffer
 }
 
-func (db groupedReplicationDB[T, R]) GetSchedulingByGroup(id replica.GroupID) []*SpanReplication {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
+func (db ReplicationGroups[T, R]) GetSchedulingByGroup(id GroupID) []R {
 	g := db.mustGetGroup(id)
-	var scheduling = make([]*SpanReplication, 0, len(g.scheduling))
-	for _, stm := range g.scheduling {
-		scheduling = append(scheduling, stm)
-	}
-	return scheduling
+	return g.GetScheduling()
 }
 
 // GetReplicating returns the replicating spans
-func (db groupedReplicationDB[T, R]) GetReplicating() []*SpanReplication {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	var replicating = make([]*SpanReplication, 0)
+func (db ReplicationGroups[T, R]) GetReplicating() []R {
+	var replicating = make([]R, 0)
 	for _, g := range db.taskGroups {
 		replicating = append(replicating, g.GetReplicating()...)
 	}
 	return replicating
 }
 
-func (db groupedReplicationDB[T, R]) GetReplicatingByGroup(id replica.GroupID) []*SpanReplication {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
+func (db ReplicationGroups[T, R]) GetReplicatingSize() int {
+	size := 0
+	for _, g := range db.taskGroups {
+		size += g.GetReplicatingSize()
+	}
+	return size
+}
 
+func (db ReplicationGroups[T, R]) GetReplicatingByGroup(id GroupID) []R {
 	g := db.mustGetGroup(id)
-	var replicating = make([]*SpanReplication, 0, len(g.replicating))
+	var replicating = make([]R, 0, len(g.replicating))
 	for _, stm := range g.replicating {
 		replicating = append(replicating, stm)
 	}
 	return replicating
 }
 
-func (db groupedReplicationDB[T, R]) GetScheduling() []*SpanReplication {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	var scheduling = make([]*SpanReplication, 0)
+func (db ReplicationGroups[T, R]) GetScheduling() []R {
+	var scheduling = make([]R, 0)
 	for _, g := range db.taskGroups {
 		scheduling = append(scheduling, g.GetScheduling()...)
 	}
 	return scheduling
 }
 
-func (db groupedReplicationDB[T, R]) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info) (groups map[replica.GroupID]map[node.ID]*SpanReplication, valid bool) {
-	groups = make(map[replica.GroupID]map[node.ID]*SpanReplication, len(db.taskGroups))
+func (db ReplicationGroups[T, R]) GetSchedulingSize() int {
+	size := 0
+	for _, g := range db.taskGroups {
+		size += g.GetSchedulingSize()
+	}
+	return size
+}
+
+func (db ReplicationGroups[T, R]) GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info) (groups map[GroupID]map[node.ID]R, valid bool) {
+	groups = make(map[GroupID]map[node.ID]R, len(db.taskGroups))
 	nodesNum := len(nodes)
 
-	db.lock.RLock()
-	defer db.lock.RUnlock()
+	var zeroR R
 	for gid, g := range db.taskGroups {
 		if !g.IsStable() {
 			return nil, false
@@ -157,14 +167,14 @@ func (db groupedReplicationDB[T, R]) GetImbalanceGroupNodeTask(nodes map[node.ID
 			totalSpan += len(tasks)
 		}
 		if totalSpan == 0 {
-			log.Warn("meet empty group", zap.Stringer("changefeed", db.changefeedID), zap.String("group", replica.GetGroupName(gid)))
+			log.Warn("scheduler: meet empty group", zap.String("schedulerID", db.id), zap.String("group", GetGroupName(gid)))
 			db.maybeRemoveGroup(g)
 			continue
 		}
 
 		// calc imbalance state for stable group
 		upperLimitPerNode := int(math.Ceil(float64(totalSpan) / float64(nodesNum)))
-		groupMap := make(map[node.ID]*SpanReplication, nodesNum)
+		groupMap := make(map[node.ID]R, nodesNum)
 		limitCnt := 0
 		for nodeID, tasks := range nodesTasks {
 			switch len(tasks) {
@@ -175,12 +185,12 @@ func (db groupedReplicationDB[T, R]) GetImbalanceGroupNodeTask(nodes map[node.ID
 					break
 				}
 			case upperLimitPerNode - 1:
-				groupMap[nodeID] = nil
+				groupMap[nodeID] = zeroR
 			default:
 				// len(tasks) > upperLimitPerNode || len(tasks) < upperLimitPerNode-1
-				log.Error("invalid group state",
-					zap.String("changefeed", db.changefeedID.String()),
-					zap.String("group", replica.GetGroupName(gid)), zap.Int("totalSpan", totalSpan),
+				log.Error("scheduler: invalid group state",
+					zap.String("schedulerID", db.id),
+					zap.String("group", GetGroupName(gid)), zap.Int("totalSpan", totalSpan),
 					zap.Int("nodesNum", nodesNum), zap.Int("upperLimitPerNode", upperLimitPerNode),
 					zap.String("node", nodeID.String()), zap.Int("nodeTaskSize", len(tasks)))
 			}
@@ -188,7 +198,7 @@ func (db groupedReplicationDB[T, R]) GetImbalanceGroupNodeTask(nodes map[node.ID
 		if limitCnt < nodesNum {
 			for nodeID := range nodes {
 				if _, ok := groupMap[nodeID]; !ok {
-					groupMap[nodeID] = nil
+					groupMap[nodeID] = zeroR
 				}
 			}
 			// only record imbalance group
@@ -199,10 +209,7 @@ func (db groupedReplicationDB[T, R]) GetImbalanceGroupNodeTask(nodes map[node.ID
 }
 
 // GetTaskSizePerNode returns the size of the task per node
-func (db groupedReplicationDB[T, R]) GetTaskSizePerNode() map[node.ID]int {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
+func (db ReplicationGroups[T, R]) GetTaskSizePerNode() map[node.ID]int {
 	sizeMap := make(map[node.ID]int)
 	for _, g := range db.taskGroups {
 		for nodeID, tasks := range g.GetNodeTasks() {
@@ -212,10 +219,25 @@ func (db groupedReplicationDB[T, R]) GetTaskSizePerNode() map[node.ID]int {
 	return sizeMap
 }
 
-func (db groupedReplicationDB[T, R]) GetTaskSizePerNodeByGroup(id replica.GroupID) map[node.ID]int {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
+func (db ReplicationGroups[T, R]) GetTaskByNodeID(id node.ID) []R {
+	var stms []R
+	for _, g := range db.taskGroups {
+		for _, value := range g.GetNodeTasks()[id] {
+			stms = append(stms, value)
+		}
+	}
+	return stms
+}
 
+func (db ReplicationGroups[T, R]) GetTaskSizeByNodeID(id node.ID) int {
+	size := 0
+	for _, g := range db.taskGroups {
+		size += len(g.GetNodeTasks()[id])
+	}
+	return size
+}
+
+func (db ReplicationGroups[T, R]) GetTaskSizePerNodeByGroup(id GroupID) map[node.ID]int {
 	g := db.mustGetGroup(id)
 	sizeMap := make(map[node.ID]int, len(g.GetNodeTasks()))
 	for nodeID, tasks := range g.GetNodeTasks() {
@@ -224,14 +246,14 @@ func (db groupedReplicationDB[T, R]) GetTaskSizePerNodeByGroup(id replica.GroupI
 	return sizeMap
 }
 
-func (db groupedReplicationDB[T, R]) GetGroupStat() string {
+func (db ReplicationGroups[T, R]) GetGroupStat() string {
 	distribute := strings.Builder{}
 	total := 0
 	for _, group := range db.GetGroups() {
 		if total > 0 {
 			distribute.WriteString(" ")
 		}
-		distribute.WriteString(replica.GetGroupName(group))
+		distribute.WriteString(GetGroupName(group))
 		distribute.WriteString(": [")
 		for nodeID, size := range db.GetTaskSizePerNodeByGroup(group) {
 			distribute.WriteString(nodeID.String())
@@ -244,29 +266,69 @@ func (db groupedReplicationDB[T, R]) GetGroupStat() string {
 	return distribute.String()
 }
 
-func (db groupedReplicationDB[T, R]) getOrCreateGroup(task *SpanReplication) *replica.ReplicationGroup[common.DispatcherID, *SpanReplication] {
-	groupID := task.groupID
+func (db ReplicationGroups[T, R]) getOrCreateGroup(task R) *ReplicationGroup[T, R] {
+	groupID := task.GetGroupID()
 	g, ok := db.taskGroups[groupID]
 	if !ok {
-		g = replica.NewReplicationGroup(db.changefeedID.String(), groupID)
+		g = NewReplicationGroup[T, R](db.id, groupID)
 		db.taskGroups[groupID] = g
-		log.Info("create new task group", zap.Stringer("groupType", replica.GroupTpye(groupID)),
-			zap.Int64("tableID", task.Span.TableID))
+		log.Info("scheduler: add new task group", zap.String("schedulerID", db.id),
+			zap.String("group", GetGroupName(groupID)),
+			zap.Stringer("groupType", GroupTpye(groupID)))
 	}
 	return g
 }
 
-func (db groupedReplicationDB[T, R]) maybeRemoveGroup(g *replica.ReplicationGroup[common.DispatcherID, *SpanReplication]) {
-	if g.GetReplicatingSize() == 0 && g.GetSchedulingSize() == 0 && g.GetAbsentSize() == 0 {
-		delete(db.taskGroups, g.GetID())
-		log.Info("remove task group", zap.Stringer("groupType", replica.GroupTpye(g.GetID())))
+func (db ReplicationGroups[T, R]) maybeRemoveGroup(g *ReplicationGroup[T, R]) {
+	if g.groupID == DefaultGroupID || !g.IsEmpty() {
+		return
 	}
+	delete(db.taskGroups, g.groupID)
+	log.Info("scheduler: remove task group", zap.String("schedulerID", db.id),
+		zap.String("group", GetGroupName(g.groupID)),
+		zap.Stringer("groupType", GroupTpye(g.groupID)))
 }
 
-func (db groupedReplicationDB[T, R]) mustGetGroup(groupID replica.GroupID) *replicationTaskGroup {
+func (db ReplicationGroups[T, R]) mustGetGroup(groupID GroupID) *ReplicationGroup[T, R] {
 	g, ok := db.taskGroups[groupID]
 	if !ok {
-		log.Panic("group not found", zap.String("group", printreplica.GroupID(groupID)))
+		log.Panic("group not found", zap.String("group", GetGroupName(groupID)))
 	}
 	return g
+}
+
+func (db ReplicationGroups[T, R]) AddReplicatingReplica(task R) {
+	g := db.getOrCreateGroup(task)
+	g.AddReplicatingReplica(task)
+}
+
+func (db ReplicationGroups[T, R]) AddAbsentReplica(task R) {
+	g := db.getOrCreateGroup(task)
+	g.AddAbsentReplica(task)
+}
+
+func (db ReplicationGroups[T, R]) MarkReplicaAbsent(task R) {
+	g := db.getOrCreateGroup(task)
+	g.MarkReplicaAbsent(task)
+}
+
+func (db ReplicationGroups[T, R]) MarkReplicaScheduling(task R) {
+	g := db.getOrCreateGroup(task)
+	g.MarkReplicaScheduling(task)
+}
+
+func (db ReplicationGroups[T, R]) MarkReplicaReplicating(task R) {
+	g := db.getOrCreateGroup(task)
+	g.MarkReplicaReplicating(task)
+}
+
+func (db ReplicationGroups[T, R]) BindReplicaToNode(old, new node.ID, replica R) {
+	g := db.getOrCreateGroup(replica)
+	g.BindReplicaToNode(old, new, replica)
+}
+
+func (db ReplicationGroups[T, R]) RemoveReplica(task R) {
+	g := db.mustGetGroup(task.GetGroupID())
+	g.RemoveReplica(task)
+	db.maybeRemoveGroup(g)
 }
