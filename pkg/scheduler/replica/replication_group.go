@@ -15,7 +15,6 @@ package replica
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/node"
@@ -27,13 +26,13 @@ type (
 	GroupTpye int8
 )
 
-const (
-	DefaultGroupID GroupID = 0
+const DefaultGroupID GroupID = 0
 
+const (
 	GroupDefault GroupTpye = iota
 	GroupTable
 	// add more group strategy later
-	groupHotLevel1
+	// groupHotLevel1
 )
 
 // replicationGroup maintains a group of replication tasks.
@@ -270,7 +269,8 @@ func (gt GroupTpye) String() string {
 	case GroupTable:
 		return "table"
 	default:
-		return "HotLevel" + strconv.Itoa(int(gt-groupHotLevel1))
+		// return "HotLevel" + strconv.Itoa(int(gt-groupHotLevel1))
+		panic("unreachable")
 	}
 }
 
