@@ -28,7 +28,6 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/pkg/logutil"
 	"go.uber.org/zap"
 )
 
@@ -47,9 +46,14 @@ var (
 	dbPassword string
 	dbName     string
 
-	totalCount uint64
-	total      uint64
-	totalError uint64
+	// totalRowCount is the total number of rows that will be inserted.
+	totalRowCount uint64
+	// flushedRowCount is the number of rows that have been flushed.
+	flushedRowCount atomic.Uint64
+	// queryCount is the number of queries that have been executed.
+	queryCount atomic.Uint64
+	// errCount is the number of errors that have occurred.
+	errCount atomic.Uint64
 
 	workloadType string
 
@@ -81,7 +85,7 @@ func init() {
 	flag.IntVar(&tableStartIndex, "table-start-index", 0, "table start index, sbtest<index>")
 	flag.IntVar(&thread, "thread", 16, "total thread of the workload")
 	flag.IntVar(&batchSize, "batch-size", 10, "batch size of each insert/update/delete")
-	flag.Uint64Var(&totalCount, "total-row-count", 1000000, "the total row count of the workload")
+	flag.Uint64Var(&totalRowCount, "total-row-count", 1000000, "the total row count of the workload")
 	flag.Float64Var(&percentageForUpdate, "percentage-for-update", 0, "percentage for update: [0, 1.0]")
 	flag.BoolVar(&skipCreateTable, "skip-create-table", false, "do not create tables")
 	flag.StringVar(&action, "action", "prepare", "action of the workload: [prepare, insert, update, delete, write, cleanup]")
@@ -102,47 +106,96 @@ func init() {
 }
 
 func main() {
+	log.Info("start to run workload")
+	validateFlags()
+
+	dbs := setupDatabases()
+	workload := createWorkload()
+
+	// Start monitoring
+	go reportMetrics()
+
+	// Execute workload
+	wg := &sync.WaitGroup{}
+	executeWorkload(dbs, workload, wg)
+
+	// Cleanup
+	wg.Wait()
+	closeDatabases(dbs)
+}
+
+func validateFlags() {
 	if flags := flag.Args(); len(flags) > 0 {
-		panic(fmt.Sprintf("unparsed flags: %v", flags))
+		log.Panic(fmt.Sprintf("unparsed flags: %v", flags))
 	}
-	err := logutil.InitLogger(&logutil.Config{
-		Level: logLevel,
-		File:  logFile,
-	})
-	if err != nil {
-		log.Error("init logger failed", zap.Error(err))
-		return
-	}
+}
+
+func setupDatabases() []*sql.DB {
+	log.Info("start to setup databases")
+	defer func() {
+		log.Info("setup databases finished")
+	}()
 
 	dbs := make([]*sql.DB, dbNum)
+
 	if dbPrefix != "" {
-		for i := 0; i < dbNum; i++ {
-			dbName := fmt.Sprintf("%s%d", dbPrefix, i+1)
-			db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824&multiStatements=true", dbUser, dbPassword, dbHost, dbPort, dbName))
-			if err != nil {
-				log.Info("create the sql client failed", zap.Error(err))
-			}
-			db.SetMaxIdleConns(256)
-			db.SetMaxOpenConns(256)
-			db.SetConnMaxLifetime(time.Minute)
-			dbs[i] = db
-		}
+		dbs = setupMultipleDatabases()
 	} else {
-		db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824&multiStatements=true", dbUser, dbPassword, dbHost, dbPort, dbName))
-		if err != nil {
-			log.Info("create the sql client failed", zap.Error(err))
-		}
-		dbNum = 1
-		db.SetMaxIdleConns(256)
-		db.SetMaxOpenConns(256)
-		db.SetConnMaxLifetime(time.Minute)
-		dbs[0] = db
+		dbs = setupSingleDatabase()
 	}
 
-	updateConcurrency := int(float64(thread) * percentageForUpdate)
-	insertConcurrency := thread - updateConcurrency
+	if len(dbs) == 0 {
+		log.Panic("no mysql client was created successfully")
+	}
 
-	log.Info("database info", zap.Int("dbCount", dbNum), zap.Int("tableCount", tableCount))
+	return dbs
+}
+
+func setupMultipleDatabases() []*sql.DB {
+	dbs := make([]*sql.DB, dbNum)
+	for i := 0; i < dbNum; i++ {
+		dbName := fmt.Sprintf("%s%d", dbPrefix, i+1)
+		db, err := createDBConnection(dbName)
+		if err != nil {
+			log.Info("create the sql client failed", zap.Error(err))
+			continue
+		}
+		configureDBConnection(db)
+		dbs[i] = db
+	}
+	return dbs
+}
+
+func setupSingleDatabase() []*sql.DB {
+	dbs := make([]*sql.DB, 1)
+	db, err := createDBConnection(dbName)
+	if err != nil {
+		log.Panic("create the sql client failed", zap.Error(err))
+	}
+	configureDBConnection(db)
+	dbs[0] = db
+	dbNum = 1
+	return dbs
+}
+
+func createDBConnection(dbName string) (*sql.DB, error) {
+	log.Info("create db connection", zap.String("dbName", dbName))
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=1073741824&multiStatements=true",
+		dbUser, dbPassword, dbHost, dbPort, dbName)
+	return sql.Open("mysql", dsn)
+}
+
+func configureDBConnection(db *sql.DB) {
+	db.SetMaxIdleConns(256)
+	db.SetMaxOpenConns(256)
+	db.SetConnMaxLifetime(time.Minute)
+}
+
+func createWorkload() schema.Workload {
+	log.Info("start to create workload")
+	defer func() {
+		log.Info("create workload finished")
+	}()
 
 	var workload schema.Workload
 	switch workloadType {
@@ -151,35 +204,25 @@ func main() {
 	case sysbench:
 		workload = schema.NewSysbenchWorkload()
 	case largeRow:
-		fmt.Println("use large_row workload")
 		workload = schema.NewLargeRowWorkload(rowSize, largeRowSize, largeRowRatio)
 	case shopItem:
-		fmt.Println("use shop_item workload")
-		workload = schema.NewShopItemWorkload(totalCount, rowSize)
+		workload = schema.NewShopItemWorkload(totalRowCount, rowSize)
 	default:
 		log.Panic("unsupported workload type", zap.String("workload", workloadType))
 	}
+	return workload
+}
 
-	go printTPS()
-	group := &sync.WaitGroup{}
+func executeWorkload(dbs []*sql.DB, workload schema.Workload, wg *sync.WaitGroup) {
+	updateConcurrency := int(float64(thread) * percentageForUpdate)
+	insertConcurrency := thread - updateConcurrency
+	insertDBs := dbs[:insertConcurrency]
+	updateDBs := dbs[insertConcurrency:]
+
+	log.Info("database info", zap.Int("dbCount", dbNum), zap.Int("tableCount", tableCount))
+
 	if !skipCreateTable && action == "prepare" {
-		log.Info("start to create tables", zap.Int("tableCount", tableCount))
-		for _, db := range dbs {
-			if err := initTables(db, workload); err != nil {
-				panic(err)
-			}
-		}
-		// insert
-		if totalCount != 0 {
-			group.Add(insertConcurrency)
-			for i := 0; i < insertConcurrency; i++ {
-				go func() {
-					defer group.Done()
-					doInsert(dbs, workload)
-				}()
-			}
-			group.Wait()
-		}
+		handlePrepareAction(dbs, insertDBs, insertConcurrency, workload, wg)
 		return
 	}
 
@@ -187,51 +230,90 @@ func main() {
 		return
 	}
 
-	log.Info("start running workload",
-		zap.String("workload_type", workloadType), zap.Float64("large-ratio", largeRowRatio),
-		zap.Int("total_thread", thread), zap.Int("batch-size", batchSize), zap.String("action", action),
-	)
-	if action == "write" || action == "insert" {
-		group.Add(insertConcurrency)
-		for i := 0; i < insertConcurrency; i++ {
-			fmt.Println("insert goroutine", i, "started")
-			go func() {
-				defer func() {
-					fmt.Println("insert goroutine", i, "exited")
-					group.Done()
-				}()
-				doInsert(dbs, workload)
-			}()
+	handleWorkloadExecution(insertDBs, updateDBs, insertConcurrency, updateConcurrency, workload, wg)
+}
+
+func handlePrepareAction(dbs []*sql.DB, insertDBs []*sql.DB, insertConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
+	log.Info("start to create tables", zap.Int("tableCount", tableCount))
+	for _, db := range dbs {
+		if err := initTables(db, workload); err != nil {
+			panic(err)
 		}
+	}
+
+	if totalRowCount != 0 {
+		executeInsertWorkers(insertDBs, insertConcurrency, workload, wg)
+	}
+}
+
+func handleWorkloadExecution(insertDBs, updateDBs []*sql.DB, insertConcurrency, updateConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
+	log.Info("start running workload",
+		zap.String("workload_type", workloadType),
+		zap.Float64("large-ratio", largeRowRatio),
+		zap.Int("total_thread", thread),
+		zap.Int("batch-size", batchSize),
+		zap.String("action", action),
+	)
+
+	if action == "write" || action == "insert" {
+		executeInsertWorkers(insertDBs, insertConcurrency, workload, wg)
 	}
 
 	if action == "write" || action == "update" {
-		if updateConcurrency == 0 {
-			log.Info("skip update workload since updateConcurrency is 0", zap.String("action", action),
-				zap.Int("total_thread", thread), zap.Float64("percentageForUpdate", percentageForUpdate))
-		} else {
-			updateTaskCh := make(chan updateTask, updateConcurrency)
-			group.Add(updateConcurrency)
-			for i := 0; i < updateConcurrency; i++ {
-				fmt.Println("update goroutine", i, "started")
-				go func() {
-					defer func() {
-						fmt.Println("update goroutine", i, "exited")
-						group.Done()
-					}()
-					doUpdate(dbs[0], workload, updateTaskCh)
-				}()
-			}
-			go func() {
-				defer group.Done()
-				genUpdateTask(updateTaskCh)
+		executeUpdateWorkers(updateDBs, updateConcurrency, workload, wg)
+	}
+}
+
+func executeInsertWorkers(insertDBs []*sql.DB, insertConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
+	wg.Add(insertConcurrency)
+	for i := 0; i < insertConcurrency; i++ {
+		db := insertDBs[i]
+		go func(workerID int) {
+			defer func() {
+				log.Info("insert worker exited", zap.Int("worker", workerID))
+				wg.Done()
 			}()
-		}
+			log.Info("start insert worker", zap.Int("worker", workerID))
+			doInsert(db, workload)
+		}(i)
+	}
+}
+
+func executeUpdateWorkers(updateDBs []*sql.DB, updateConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
+	if updateConcurrency == 0 {
+		log.Info("skip update workload",
+			zap.String("action", action),
+			zap.Int("total_thread", thread),
+			zap.Float64("percentageForUpdate", percentageForUpdate))
+		return
 	}
 
-	group.Wait()
+	updateTaskCh := make(chan updateTask, updateConcurrency)
+	wg.Add(updateConcurrency + 1) // +1 for task generator
+
+	for i := 0; i < updateConcurrency; i++ {
+		db := updateDBs[i]
+		go func(workerID int) {
+			defer func() {
+				log.Info("update worker exited", zap.Int("worker", workerID))
+				wg.Done()
+			}()
+			log.Info("start update worker", zap.Int("worker", workerID))
+			doUpdate(db, workload, updateTaskCh)
+		}(i)
+	}
+
+	go func() {
+		defer wg.Done()
+		genUpdateTask(updateTaskCh)
+	}()
+}
+
+func closeDatabases(dbs []*sql.DB) {
 	for _, db := range dbs {
-		db.Close()
+		if err := db.Close(); err != nil {
+			log.Error("failed to close database connection", zap.Error(err))
+		}
 	}
 }
 
@@ -285,18 +367,18 @@ func genUpdateTask(output chan updateTask) {
 func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 	for task := range input {
 		updateSql := workload.BuildUpdateSql(task.UpdateOption)
-		res, err := exceSQL(db, updateSql, workload, task.Table)
+		res, err := execute(db, updateSql, workload, task.Table)
 		if err != nil {
 			log.Info("update error", zap.Error(err), zap.String("sql", updateSql[:20]))
-			atomic.AddUint64(&totalError, 1)
+			errCount.Add(1)
 		}
 		if res != nil {
 			cnt, err := res.RowsAffected()
 			if err != nil || cnt < int64(task.Batch) {
 				log.Info("get rows affected error", zap.Error(err), zap.Int64("affectedRows", cnt), zap.Int("rowCount", task.Batch), zap.String("sql", updateSql))
-				atomic.AddUint64(&totalError, 1)
+				errCount.Add(1)
 			}
-			atomic.AddUint64(&total, uint64(cnt))
+			flushedRowCount.Add(uint64(cnt))
 			if task.IsSpecialUpdate {
 				log.Info("update full table succeed, row count %d\n", zap.Int("table", task.Table), zap.Int64("affectedRows", cnt))
 			}
@@ -309,25 +391,22 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 	}
 }
 
-func doInsert(dbs []*sql.DB, workload schema.Workload) {
+func doInsert(db *sql.DB, workload schema.Workload) {
 	for {
-		i := rand.Intn(dbNum)
 		j := rand.Intn(tableCount) + tableStartIndex
 		insertSql := workload.BuildInsertSql(j, batchSize)
-		_, err := exceSQL(dbs[i], insertSql, workload, j)
+		_, err := execute(db, insertSql, workload, j)
 		if err != nil {
 			log.Info("insert error", zap.Error(err))
-			atomic.AddUint64(&totalError, 1)
+			errCount.Add(1)
 			continue
 		}
-		atomic.AddUint64(&total, uint64(batchSize))
-		if total*uint64(batchSize) >= totalCount {
-			return
-		}
+		flushedRowCount.Add(uint64(batchSize))
 	}
 }
 
-func exceSQL(db *sql.DB, sql string, workload schema.Workload, n int) (sql.Result, error) {
+func execute(db *sql.DB, sql string, workload schema.Workload, n int) (sql.Result, error) {
+	queryCount.Add(1)
 	res, err := db.Exec(sql)
 	if err != nil {
 		if !strings.Contains(err.Error(), "Error 1146") {
@@ -346,21 +425,74 @@ func exceSQL(db *sql.DB, sql string, workload schema.Workload, n int) (sql.Resul
 	return res, nil
 }
 
-func printTPS() {
-	t := time.Tick(time.Second * 5)
-	old := uint64(0)
-	oldErr := uint64(0)
-	pre := time.Now()
-	for now := range t {
-		duration := now.Sub(pre).Seconds()
-		pre = now
-		temp := atomic.LoadUint64(&total)
-		qps := (float64(temp) - float64(old)) / duration
-		old = temp
-		temp = atomic.LoadUint64(&totalError)
-		errQps := (float64(temp) - float64(oldErr)) / duration
-		fmt.Printf("total %d, total err %d, qps is %f, err qps %f\n", total, totalError, qps, errQps)
+// reportMetrics prints throughput statistics every 5 seconds
+func reportMetrics() {
+	log.Info("start to report metrics")
+	const (
+		reportInterval = 5 * time.Second
+	)
 
-		oldErr = temp
+	ticker := time.NewTicker(reportInterval)
+	defer ticker.Stop()
+
+	var (
+		lastQueryCount uint64
+		lastFlushed    uint64
+		lastErrorCount uint64
+	)
+
+	for range ticker.C {
+		stats := calculateStats(lastQueryCount, lastFlushed, lastErrorCount, reportInterval)
+		// Update last values for next iteration
+		lastQueryCount = stats.queryCount
+		lastFlushed = stats.flushedRowCount
+		lastErrorCount = stats.errCount
+		// Print statistics
+		printStats(stats)
 	}
+}
+
+type statistics struct {
+	queryCount      uint64
+	flushedRowCount uint64
+	errCount        uint64
+	// QPS
+	qps int
+	// row/s
+	rps int
+	// error/s
+	eps int
+}
+
+func calculateStats(
+	lastQueryCount,
+	lastFlushed,
+	lastErrors uint64,
+	reportInterval time.Duration,
+) statistics {
+	currentFlushed := flushedRowCount.Load()
+	currentErrors := errCount.Load()
+	currentQueryCount := queryCount.Load()
+
+	return statistics{
+		queryCount:      currentQueryCount,
+		flushedRowCount: currentFlushed,
+		errCount:        currentErrors,
+		qps:             int(currentQueryCount-lastQueryCount) / int(reportInterval.Seconds()),
+		rps:             int(currentFlushed-lastFlushed) / int(reportInterval.Seconds()),
+		eps:             int(currentErrors-lastErrors) / int(reportInterval.Seconds()),
+	}
+}
+
+func printStats(stats statistics) {
+	status := fmt.Sprintf(
+		"Total Write Rows: %d, Total Queries: %d, Total Errors: %d, QPS: %d, Row/s: %d, Error/s: %d",
+		stats.flushedRowCount,
+		stats.queryCount,
+		stats.errCount,
+		stats.qps,
+		stats.rps,
+		stats.eps,
+	)
+	log.Info(status)
 }
