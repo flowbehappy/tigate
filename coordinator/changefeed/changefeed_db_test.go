@@ -22,23 +22,24 @@ import (
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/tiflow/cdc/model"
-	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
 
 func TestAddAbsentChangefeed(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf := &Changefeed{ID: common.NewChangeFeedIDWithName("test")}
+	cf.backoff = NewBackoff(cf.ID, 0, 0)
 
 	db.AddAbsentChangefeed(cf)
 
-	require.Contains(t, db.absent, cf.ID)
+	require.Contains(t, db.GetAbsent(), cf)
 	require.Contains(t, db.changefeeds, cf.ID)
 }
 
 func TestAddStoppedChangefeed(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf := &Changefeed{ID: common.NewChangeFeedIDWithName("test")}
 
 	db.AddStoppedChangefeed(cf)
@@ -48,19 +49,19 @@ func TestAddStoppedChangefeed(t *testing.T) {
 }
 
 func TestAddReplicatingMaintainer(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf := &Changefeed{ID: common.NewChangeFeedIDWithName("test")}
 	nodeID := node.ID("node-1")
 
 	db.AddReplicatingMaintainer(cf, nodeID)
 
-	require.Contains(t, db.replicating, cf.ID)
+	require.Contains(t, db.GetReplicating(), cf)
 	require.Contains(t, db.changefeeds, cf.ID)
 	require.Equal(t, nodeID, cf.GetNodeID())
 }
 
 func TestStopByChangefeedID(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf := &Changefeed{ID: common.NewChangeFeedIDWithName("test")}
 	db.AddReplicatingMaintainer(cf, node.ID("node-1"))
 
@@ -74,36 +75,36 @@ func TestStopByChangefeedID(t *testing.T) {
 }
 
 func TestResume(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf := &Changefeed{ID: common.NewChangeFeedIDWithName("test")}
 	db.AddStoppedChangefeed(cf)
 	cf.backoff = NewBackoff(cf.ID, 0, 0)
 
 	db.Resume(cf.ID, true)
 
-	require.Contains(t, db.absent, cf.ID)
+	require.Contains(t, db.GetAbsent(), cf)
 	require.NotContains(t, db.stopped, cf.ID)
 }
 
 func TestRemoveChangefeed(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf := &Changefeed{ID: common.NewChangeFeedIDWithName("test")}
 	db.AddAbsentChangefeed(cf)
 
 	db.StopByChangefeedID(cf.ID, false)
-	require.NotContains(t, db.absent, cf.ID)
+	require.NotContains(t, db.GetAbsent(), cf)
 	require.Contains(t, db.changefeeds, cf.ID)
 
 	cf2 := &Changefeed{ID: common.NewChangeFeedIDWithName("test2")}
 	db.AddReplicatingMaintainer(cf2, "node1")
 	require.Equal(t, node.ID("node1"), db.StopByChangefeedID(cf2.ID, true))
-	require.NotContains(t, db.absent, cf2.ID)
+	require.NotContains(t, db.GetAbsent(), cf2)
 	require.NotContains(t, db.changefeeds, cf2.ID)
 	require.Equal(t, "", cf2.nodeID.String())
 }
 
 func TestGetByID(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf := &Changefeed{ID: common.NewChangeFeedIDWithName("test")}
 	db.AddStoppedChangefeed(cf)
 
@@ -112,7 +113,7 @@ func TestGetByID(t *testing.T) {
 }
 
 func TestChangefeedDBGetAllChangefeeds(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf1 := &Changefeed{ID: common.NewChangeFeedIDWithName("test1")}
 	cf2 := &Changefeed{ID: common.NewChangeFeedIDWithName("test2")}
 	db.AddAbsentChangefeed(cf1)
@@ -125,7 +126,7 @@ func TestChangefeedDBGetAllChangefeeds(t *testing.T) {
 }
 
 func TestGetWaitingSchedulingChangefeeds(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf1 := &Changefeed{ID: common.NewChangeFeedIDWithName("test1")}
 	cf2 := &Changefeed{ID: common.NewChangeFeedIDWithName("test2")}
 	cf1.backoff = NewBackoff(cf1.ID, 0, 0)
@@ -149,7 +150,7 @@ func TestGetWaitingSchedulingChangefeeds(t *testing.T) {
 }
 
 func TestGetAllStoppedChangefeeds(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf1 := &Changefeed{ID: common.NewChangeFeedIDWithName("test1")}
 	cf2 := &Changefeed{ID: common.NewChangeFeedIDWithName("test2")}
 	db.AddStoppedChangefeed(cf1)
@@ -159,7 +160,7 @@ func TestGetAllStoppedChangefeeds(t *testing.T) {
 }
 
 func TestGetAllReplicatingMaintainers(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf1 := &Changefeed{ID: common.NewChangeFeedIDWithName("test1")}
 	cf2 := &Changefeed{ID: common.NewChangeFeedIDWithName("test2")}
 	nodeID1 := node.ID("node-1")
@@ -173,7 +174,7 @@ func TestGetAllReplicatingMaintainers(t *testing.T) {
 }
 
 func TestGetSize(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cf1 := &Changefeed{ID: common.NewChangeFeedIDWithName("test1")}
 	cf2 := &Changefeed{ID: common.NewChangeFeedIDWithName("test2")}
 	db.AddReplicatingMaintainer(cf1, "node-1")
@@ -185,7 +186,7 @@ func TestGetSize(t *testing.T) {
 	require.Equal(t, 3, db.GetSize())
 	db.BindChangefeedToNode("", "node-1", cf2)
 	require.Equal(t, 0, db.GetAbsentSize())
-	require.Equal(t, 1, len(db.scheduling))
+	require.Equal(t, 1, len(db.GetScheduling()))
 	require.Contains(t, db.GetByNodeID("node-1"), cf1)
 	require.Contains(t, db.GetByNodeID("node-1"), cf2)
 
@@ -205,7 +206,7 @@ func TestGetSize(t *testing.T) {
 }
 
 func TestReplaceStoppedChangefeed(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := &Changefeed{
 		ID: cfID,
@@ -235,7 +236,7 @@ func TestReplaceStoppedChangefeed(t *testing.T) {
 }
 
 func TestScheduleChangefeed(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
 		Config:  config.GetDefaultReplicaConfig(),
@@ -246,22 +247,22 @@ func TestScheduleChangefeed(t *testing.T) {
 	db.BindChangefeedToNode("", "node-1", cf)
 	cf.backoff.isRestarting.Store(true)
 	db.MarkMaintainerReplicating(cf)
-	require.Contains(t, db.replicating, cf.ID)
+	require.Contains(t, db.GetReplicating(), cf)
 	require.False(t, cf.backoff.isRestarting.Load())
 
 	cf2 := db.GetByChangefeedDisplayName(cf.ID.DisplayName)
 	require.Equal(t, cf, cf2)
 
 	db.MarkMaintainerAbsent(cf2)
-	require.Contains(t, db.absent, cf.ID)
-	require.NotContains(t, db.replicating, cf.ID)
-	require.NotContains(t, db.scheduling, cf.ID)
+	require.Contains(t, db.GetAbsent(), cf)
+	require.NotContains(t, db.GetReplicating(), cf)
+	require.NotContains(t, db.GetScheduling(), cf)
 	require.Equal(t, "", cf.nodeID.String())
 	require.NotContains(t, db.GetByNodeID("node-1"), cf)
 }
 
 func TestCalculateGCSafepoint(t *testing.T) {
-	db := NewChangefeedDB()
+	db := NewChangefeedDB(1216)
 	require.True(t, math.MaxUint64 == db.CalculateGCSafepoint())
 
 	cfID := common.NewChangeFeedIDWithName("test")
@@ -297,7 +298,7 @@ func TestCalculateGCSafepoint(t *testing.T) {
 			Config: config.GetDefaultReplicaConfig(),
 			State:  model.StateFailed,
 			Error: &model.RunningError{
-				Code: string(cerror.ErrGCTTLExceeded.ID()),
+				Code: string(errors.ErrGCTTLExceeded.ID()),
 			},
 		}, 7)
 	db.AddStoppedChangefeed(cf4)
