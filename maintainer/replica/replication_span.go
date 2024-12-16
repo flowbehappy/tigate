@@ -158,8 +158,8 @@ func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {
 	}
 }
 
-func (r *SpanReplication) IsDropped() bool {
-	return false
+func (r *SpanReplication) ShouldRun() bool {
+	return true
 	// state := r.blockState.Load()
 	// if state != nil && state.NeedDroppedTables != nil {
 	// 	status := r.status.Load()

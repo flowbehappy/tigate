@@ -211,6 +211,9 @@ func (g *replicationGroup[T, R]) GetAbsentSize() int {
 func (g *replicationGroup[T, R]) GetAbsent() []R {
 	res := make([]R, 0, len(g.absent))
 	for _, r := range g.absent {
+		if !r.ShouldRun() {
+			continue
+		}
 		res = append(res, r)
 	}
 	return res

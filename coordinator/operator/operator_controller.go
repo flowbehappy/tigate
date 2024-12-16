@@ -276,3 +276,11 @@ func (oc *Controller) checkAffectedNodes(op operator.Operator[common.ChangeFeedI
 		}
 	}
 }
+
+func (oc *Controller) NewAddMaintainerOperator(cf *changefeed.Changefeed, dest node.ID) operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus] {
+	return NewAddMaintainerOperator(oc.changefeedDB, cf, dest)
+}
+
+func (oc *Controller) NewMoveMaintainerOperator(cf *changefeed.Changefeed, origin, dest node.ID) operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus] {
+	return NewMoveMaintainerOperator(oc.changefeedDB, cf, origin, dest)
+}

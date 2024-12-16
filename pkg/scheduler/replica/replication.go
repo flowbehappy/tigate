@@ -36,6 +36,8 @@ type Replication[T ReplicationID] interface {
 
 	GetNodeID() node.ID
 	SetNodeID(node.ID)
+
+	ShouldRun() bool
 }
 
 // ScheduleGroup define the querying interface for scheduling information.
@@ -302,12 +304,17 @@ func (db *replicationDB[T, R]) GetTaskSizeByNodeID(id node.ID) (size int) {
 }
 
 func (db *replicationDB[T, R]) GetTaskSizePerNodeByGroup(id GroupID) (sizeMap map[node.ID]int) {
-	sizeMap = make(map[node.ID]int)
 	db.withRLock(func() {
-		for nodeID, tasks := range db.mustGetGroup(id).GetNodeTasks() {
-			sizeMap[nodeID] = len(tasks)
-		}
+		sizeMap = db.getTaskSizePerNodeByGroup(id)
 	})
+	return
+}
+
+func (db *replicationDB[T, R]) getTaskSizePerNodeByGroup(id GroupID) (sizeMap map[node.ID]int) {
+	sizeMap = make(map[node.ID]int)
+	for nodeID, tasks := range db.mustGetGroup(id).GetNodeTasks() {
+		sizeMap[nodeID] = len(tasks)
+	}
 	return
 }
 
@@ -321,7 +328,7 @@ func (db *replicationDB[T, R]) GetGroupStat() string {
 			}
 			distribute.WriteString(GetGroupName(group))
 			distribute.WriteString(": [")
-			for nodeID, size := range db.GetTaskSizePerNodeByGroup(group) {
+			for nodeID, size := range db.getTaskSizePerNodeByGroup(group) {
 				distribute.WriteString(nodeID.String())
 				distribute.WriteString("->")
 				distribute.WriteString(strconv.Itoa(size))
