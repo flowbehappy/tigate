@@ -198,6 +198,11 @@ func TestRemoveAllTables(t *testing.T) {
 	db.AddAbsentReplicaSet(scheduling)
 	db.MarkSpanScheduling(scheduling)
 
+	require.Len(t, db.GetAllTasks(), 4)
+	require.Len(t, db.GetReplicating(), 1)
+	require.Len(t, db.GetAbsent(), 1)
+	require.Len(t, db.GetScheduling(), 1)
+
 	removed = db.TryRemoveAll()
 	require.Len(t, removed, 2)
 	require.Len(t, db.GetAllTasks(), 1)

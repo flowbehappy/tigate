@@ -32,7 +32,7 @@ type basicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] st
 	batchSize int
 
 	operatorController operator.Controller[T, S]
-	replicationDB      replica.ReplicationDB[T, R]
+	db                 replica.ScheduleGroup[T, R]
 	nodeManager        *watcher.NodeManager
 
 	absent         []R                                               // buffer for the absent spans
@@ -41,7 +41,7 @@ type basicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] st
 
 func NewBasicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]](
 	changefeedID string, batchSize int,
-	oc operator.Controller[T, S], db replica.ReplicationDB[T, R],
+	oc operator.Controller[T, S], db replica.ScheduleGroup[T, R],
 	nodeManager *watcher.NodeManager,
 	newAddOperator func(R, node.ID) operator.Operator[T, S],
 ) *basicScheduler[T, S, R] {
@@ -49,7 +49,7 @@ func NewBasicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]]
 		id:                 changefeedID,
 		batchSize:          batchSize,
 		operatorController: oc,
-		replicationDB:      db,
+		db:                 db,
 		nodeManager:        nodeManager,
 		absent:             make([]R, 0, batchSize),
 		newAddOperator:     newAddOperator,
@@ -59,7 +59,7 @@ func NewBasicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]]
 // Execute periodically execute the operator
 func (s *basicScheduler[T, S, R]) Execute() time.Time {
 	availableSize := s.batchSize - s.operatorController.OperatorSize()
-	if s.replicationDB.GetAbsentSize() <= 0 || availableSize <= 0 {
+	if s.db.GetAbsentSize() <= 0 || availableSize <= 0 {
 		// can not schedule more operators, skip
 		return time.Now().Add(time.Millisecond * 500)
 	}
@@ -68,7 +68,7 @@ func (s *basicScheduler[T, S, R]) Execute() time.Time {
 		return time.Now().Add(time.Millisecond * 100)
 	}
 
-	for _, id := range s.replicationDB.GetGroups() {
+	for _, id := range s.db.GetGroups() {
 		availableSize -= s.schedule(id, availableSize)
 		if availableSize <= 0 {
 			break
@@ -78,8 +78,8 @@ func (s *basicScheduler[T, S, R]) Execute() time.Time {
 }
 
 func (s *basicScheduler[T, S, R]) schedule(id replica.GroupID, availableSize int) (scheduled int) {
-	absent := s.replicationDB.GetAbsentByGroup(id, availableSize)
-	nodeSize := s.replicationDB.GetTaskSizePerNodeByGroup(id)
+	absent := s.db.GetAbsentByGroup(id, availableSize)
+	nodeSize := s.db.GetTaskSizePerNodeByGroup(id)
 	// add the absent node to the node size map
 	for id := range s.nodeManager.GetAliveNodes() {
 		if _, ok := nodeSize[id]; !ok {

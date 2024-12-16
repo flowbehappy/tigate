@@ -33,7 +33,7 @@ type balanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] 
 	batchSize int
 
 	operatorController operator.Controller[T, S]
-	replicationDB      replica.ReplicationDB[T, R]
+	db                 replica.ScheduleGroup[T, R]
 	nodeManager        *watcher.NodeManager
 
 	random               *rand.Rand
@@ -52,7 +52,7 @@ type balanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] 
 
 func NewBalanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]](
 	id string, batchSize int,
-	oc operator.Controller[T, S], db replica.ReplicationDB[T, R],
+	oc operator.Controller[T, S], db replica.ScheduleGroup[T, R],
 	nodeManager *watcher.NodeManager, balanceInterval time.Duration,
 	newMoveOperator func(R, node.ID, node.ID) operator.Operator[T, S],
 ) *balanceScheduler[T, S, R] {
@@ -61,7 +61,7 @@ func NewBalanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T
 		batchSize:            batchSize,
 		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		operatorController:   oc,
-		replicationDB:        db,
+		db:                   db,
 		nodeManager:          nodeManager,
 		checkBalanceInterval: balanceInterval,
 		lastRebalanceTime:    time.Now(),
@@ -74,7 +74,7 @@ func (s *balanceScheduler[T, S, R]) Execute() time.Time {
 		return s.lastRebalanceTime.Add(s.checkBalanceInterval)
 	}
 	now := time.Now()
-	if s.operatorController.OperatorSize() > 0 || s.replicationDB.GetAbsentSize() > 0 {
+	if s.operatorController.OperatorSize() > 0 || s.db.GetAbsentSize() > 0 {
 		// not in stable schedule state, skip balance
 		return now.Add(s.checkBalanceInterval)
 	}
@@ -93,14 +93,14 @@ func (s *balanceScheduler[T, S, R]) Execute() time.Time {
 
 func (s *balanceScheduler[T, S, R]) schedulerGroup(nodes map[node.ID]*node.Info) int {
 	batch, moved := s.batchSize, 0
-	for _, group := range s.replicationDB.GetGroups() {
+	for _, group := range s.db.GetGroups() {
 		// fast path, check the balance status
-		moveSize := CheckBalanceStatus(s.replicationDB.GetTaskSizePerNodeByGroup(group), nodes)
+		moveSize := CheckBalanceStatus(s.db.GetTaskSizePerNodeByGroup(group), nodes)
 		if moveSize <= 0 {
 			// no need to do the balance, skip
 			continue
 		}
-		replicas := s.replicationDB.GetReplicatingByGroup(group)
+		replicas := s.db.GetReplicatingByGroup(group)
 		moved += Balance(batch, s.random, nodes, replicas, s.doMove)
 		if moved >= batch {
 			break
@@ -113,12 +113,12 @@ func (s *balanceScheduler[T, S, R]) schedulerGroup(nodes map[node.ID]*node.Info)
 func (s *balanceScheduler[T, S, R]) schedulerGlobal(nodes map[node.ID]*node.Info) int {
 	var zero R
 	// fast path, check the balance status
-	moveSize := CheckBalanceStatus(s.replicationDB.GetTaskSizePerNode(), nodes)
+	moveSize := CheckBalanceStatus(s.db.GetTaskSizePerNode(), nodes)
 	if moveSize <= 0 {
 		// no need to do the balance, skip
 		return 0
 	}
-	groupNodetasks, valid := s.replicationDB.GetImbalanceGroupNodeTask(nodes)
+	groupNodetasks, valid := s.db.GetImbalanceGroupNodeTask(nodes)
 	if !valid {
 		// no need to do the balance, skip
 		return 0

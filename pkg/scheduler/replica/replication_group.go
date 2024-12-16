@@ -36,18 +36,9 @@ const (
 	groupHotLevel1
 )
 
-type ScheduleGroup[T ReplicationID, R Replication[T]] interface {
-	GetAbsentSize() int
-	GetAbsent() []R
-	GetSchedulingSize() int
-	GetScheduling() []R
-	GetReplicatingSize() int
-	GetReplicating() []R
-
-	GetTaskSizePerNode() map[node.ID]int
-}
-
-type ReplicationGroup[T ReplicationID, R Replication[T]] struct {
+// replicationGroup maintains a group of replication tasks.
+// All methods are not thread-safe.
+type replicationGroup[T ReplicationID, R Replication[T]] struct {
 	id        string
 	groupID   GroupID
 	groupName string
@@ -62,12 +53,8 @@ type ReplicationGroup[T ReplicationID, R Replication[T]] struct {
 	// checker []replica.Checker
 }
 
-func NewDefaultReplicationGroup[T ReplicationID, R Replication[T]](id string) *ReplicationGroup[T, R] {
-	return NewReplicationGroup[T, R](id, DefaultGroupID)
-}
-
-func NewReplicationGroup[T ReplicationID, R Replication[T]](id string, groupID GroupID) *ReplicationGroup[T, R] {
-	return &ReplicationGroup[T, R]{
+func newReplicationGroup[T ReplicationID, R Replication[T]](id string, groupID GroupID) *replicationGroup[T, R] {
+	return &replicationGroup[T, R]{
 		id:          id,
 		groupID:     groupID,
 		groupName:   GetGroupName(groupID),
@@ -78,14 +65,14 @@ func NewReplicationGroup[T ReplicationID, R Replication[T]](id string, groupID G
 	}
 }
 
-func (g *ReplicationGroup[T, R]) mustVerifyGroupID(id GroupID) {
+func (g *replicationGroup[T, R]) mustVerifyGroupID(id GroupID) {
 	if g.groupID != id {
 		log.Panic("scheduler: group id not match", zap.Int64("group", g.groupID), zap.Int64("id", id))
 	}
 }
 
 // MarkReplicaAbsent move the replica to the absent status
-func (g *ReplicationGroup[T, R]) MarkReplicaAbsent(replica R) {
+func (g *replicationGroup[T, R]) MarkReplicaAbsent(replica R) {
 	g.mustVerifyGroupID(replica.GetGroupID())
 	log.Info("scheduler: marking replica absent",
 		zap.String("schedulerID", g.id),
@@ -103,7 +90,7 @@ func (g *ReplicationGroup[T, R]) MarkReplicaAbsent(replica R) {
 }
 
 // MarkReplicaScheduling move the replica to the scheduling map
-func (g *ReplicationGroup[T, R]) MarkReplicaScheduling(replica R) {
+func (g *replicationGroup[T, R]) MarkReplicaScheduling(replica R) {
 	g.mustVerifyGroupID(replica.GetGroupID())
 	log.Info("scheduler: marking replica scheduling",
 		zap.String("schedulerID", g.id),
@@ -116,7 +103,7 @@ func (g *ReplicationGroup[T, R]) MarkReplicaScheduling(replica R) {
 }
 
 // AddReplicatingReplica adds a replicating the replicating map, that means the task is already scheduled to a dispatcher
-func (g *ReplicationGroup[T, R]) AddReplicatingReplica(replica R) {
+func (g *replicationGroup[T, R]) AddReplicatingReplica(replica R) {
 	g.mustVerifyGroupID(replica.GetGroupID())
 	nodeID := replica.GetNodeID()
 	log.Info("scheduler: add an replicating replica",
@@ -129,7 +116,7 @@ func (g *ReplicationGroup[T, R]) AddReplicatingReplica(replica R) {
 }
 
 // MarkReplicaReplicating move the replica to the replicating map
-func (g *ReplicationGroup[T, R]) MarkReplicaReplicating(replica R) {
+func (g *replicationGroup[T, R]) MarkReplicaReplicating(replica R) {
 	g.mustVerifyGroupID(replica.GetGroupID())
 	log.Info("scheduler: marking replica replicating",
 		zap.String("schedulerID", g.id),
@@ -141,7 +128,7 @@ func (g *ReplicationGroup[T, R]) MarkReplicaReplicating(replica R) {
 	g.replicating[replica.GetID()] = replica
 }
 
-func (g *ReplicationGroup[T, R]) BindReplicaToNode(old, new node.ID, replica R) {
+func (g *replicationGroup[T, R]) BindReplicaToNode(old, new node.ID, replica R) {
 	g.mustVerifyGroupID(replica.GetGroupID())
 	log.Info("scheduler: bind replica to node",
 		zap.String("schedulerID", g.id),
@@ -158,7 +145,7 @@ func (g *ReplicationGroup[T, R]) BindReplicaToNode(old, new node.ID, replica R) 
 }
 
 // updateNodeMap updates the node map, it will remove the task from the old node and add it to the new node
-func (g *ReplicationGroup[T, R]) updateNodeMap(old, new node.ID, replica R) {
+func (g *replicationGroup[T, R]) updateNodeMap(old, new node.ID, replica R) {
 	//clear from the old node
 	if old != "" {
 		oldMap, ok := g.nodeTasks[old]
@@ -180,12 +167,12 @@ func (g *ReplicationGroup[T, R]) updateNodeMap(old, new node.ID, replica R) {
 	}
 }
 
-func (g *ReplicationGroup[T, R]) AddAbsentReplica(replica R) {
+func (g *replicationGroup[T, R]) AddAbsentReplica(replica R) {
 	g.mustVerifyGroupID(replica.GetGroupID())
 	g.absent[replica.GetID()] = replica
 }
 
-func (g *ReplicationGroup[T, R]) RemoveReplica(replica R) {
+func (g *replicationGroup[T, R]) RemoveReplica(replica R) {
 	g.mustVerifyGroupID(replica.GetGroupID())
 	log.Info("scheduler: remove replica",
 		zap.String("schedulerID", g.id),
@@ -201,27 +188,27 @@ func (g *ReplicationGroup[T, R]) RemoveReplica(replica R) {
 	}
 }
 
-func (g *ReplicationGroup[T, R]) IsEmpty() bool {
+func (g *replicationGroup[T, R]) IsEmpty() bool {
 	return g.IsStable() && len(g.replicating) == 0
 }
 
-func (g *ReplicationGroup[T, R]) IsStable() bool {
+func (g *replicationGroup[T, R]) IsStable() bool {
 	return len(g.scheduling) == 0 && len(g.absent) == 0
 }
 
-func (g *ReplicationGroup[T, R]) GetTaskSizeByNodeID(nodeID node.ID) int {
+func (g *replicationGroup[T, R]) GetTaskSizeByNodeID(nodeID node.ID) int {
 	return len(g.nodeTasks[nodeID])
 }
 
-func (g *ReplicationGroup[T, R]) GetNodeTasks() map[node.ID]map[T]R {
+func (g *replicationGroup[T, R]) GetNodeTasks() map[node.ID]map[T]R {
 	return g.nodeTasks
 }
 
-func (g *ReplicationGroup[T, R]) GetAbsentSize() int {
+func (g *replicationGroup[T, R]) GetAbsentSize() int {
 	return len(g.absent)
 }
 
-func (g *ReplicationGroup[T, R]) GetAbsent() []R {
+func (g *replicationGroup[T, R]) GetAbsent() []R {
 	res := make([]R, 0, len(g.absent))
 	for _, r := range g.absent {
 		res = append(res, r)
@@ -229,11 +216,11 @@ func (g *ReplicationGroup[T, R]) GetAbsent() []R {
 	return res
 }
 
-func (g *ReplicationGroup[T, R]) GetSchedulingSize() int {
+func (g *replicationGroup[T, R]) GetSchedulingSize() int {
 	return len(g.scheduling)
 }
 
-func (g *ReplicationGroup[T, R]) GetScheduling() []R {
+func (g *replicationGroup[T, R]) GetScheduling() []R {
 	res := make([]R, 0, len(g.scheduling))
 	for _, r := range g.scheduling {
 		res = append(res, r)
@@ -241,11 +228,11 @@ func (g *ReplicationGroup[T, R]) GetScheduling() []R {
 	return res
 }
 
-func (g *ReplicationGroup[T, R]) GetReplicatingSize() int {
+func (g *replicationGroup[T, R]) GetReplicatingSize() int {
 	return len(g.replicating)
 }
 
-func (g *ReplicationGroup[T, R]) GetReplicating() []R {
+func (g *replicationGroup[T, R]) GetReplicating() []R {
 	res := make([]R, 0, len(g.replicating))
 	for _, r := range g.replicating {
 		res = append(res, r)
@@ -253,7 +240,7 @@ func (g *ReplicationGroup[T, R]) GetReplicating() []R {
 	return res
 }
 
-func (g *ReplicationGroup[T, R]) GetTaskSizePerNode() map[node.ID]int {
+func (g *replicationGroup[T, R]) GetTaskSizePerNode() map[node.ID]int {
 	res := make(map[node.ID]int)
 	for nodeID, tasks := range g.nodeTasks {
 		res[nodeID] = len(tasks)
