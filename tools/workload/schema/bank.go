@@ -98,7 +98,7 @@ func (c *BankWorkload) BuildCreateTableStatement(n int) string {
 	return fmt.Sprintf(createBankTable, n)
 }
 
-func (c *BankWorkload) BuildInsertSql(tableN int, rowCount int) string {
+func (c *BankWorkload) BuildInsertSql(tableN int, batchSize int) string {
 	n := rand.Int63()
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf(`
@@ -230,7 +230,7 @@ values(%d,
 )
 `, tableN, n))
 
-	for r := 1; r < rowCount; r++ {
+	for r := 1; r < batchSize; r++ {
 		n = rand.Int63()
 		buf.WriteString(fmt.Sprintf(
 			`,

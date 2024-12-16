@@ -621,7 +621,7 @@ func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 	}
 	if len(msgs) > 0 {
 		m.sendMessages(msgs)
-		log.Debug("send maintainer close request",
+		log.Info("send maintainer close request",
 			zap.String("changefeed", m.id.Name()),
 			zap.Int("count", len(msgs)))
 	}
