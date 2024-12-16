@@ -216,13 +216,11 @@ func createWorkload() schema.Workload {
 func executeWorkload(dbs []*sql.DB, workload schema.Workload, wg *sync.WaitGroup) {
 	updateConcurrency := int(float64(thread) * percentageForUpdate)
 	insertConcurrency := thread - updateConcurrency
-	insertDBs := dbs[:insertConcurrency]
-	updateDBs := dbs[insertConcurrency:]
 
 	log.Info("database info", zap.Int("dbCount", dbNum), zap.Int("tableCount", tableCount))
 
 	if !skipCreateTable && action == "prepare" {
-		handlePrepareAction(dbs, insertDBs, insertConcurrency, workload, wg)
+		handlePrepareAction(dbs, insertConcurrency, workload, wg)
 		return
 	}
 
@@ -230,10 +228,10 @@ func executeWorkload(dbs []*sql.DB, workload schema.Workload, wg *sync.WaitGroup
 		return
 	}
 
-	handleWorkloadExecution(insertDBs, updateDBs, insertConcurrency, updateConcurrency, workload, wg)
+	handleWorkloadExecution(dbs, insertConcurrency, updateConcurrency, workload, wg)
 }
 
-func handlePrepareAction(dbs []*sql.DB, insertDBs []*sql.DB, insertConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
+func handlePrepareAction(dbs []*sql.DB, insertConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
 	log.Info("start to create tables", zap.Int("tableCount", tableCount))
 	for _, db := range dbs {
 		if err := initTables(db, workload); err != nil {
@@ -242,11 +240,11 @@ func handlePrepareAction(dbs []*sql.DB, insertDBs []*sql.DB, insertConcurrency i
 	}
 
 	if totalRowCount != 0 {
-		executeInsertWorkers(insertDBs, insertConcurrency, workload, wg)
+		executeInsertWorkers(dbs, insertConcurrency, workload, wg)
 	}
 }
 
-func handleWorkloadExecution(insertDBs, updateDBs []*sql.DB, insertConcurrency, updateConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
+func handleWorkloadExecution(dbs []*sql.DB, insertConcurrency, updateConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
 	log.Info("start running workload",
 		zap.String("workload_type", workloadType),
 		zap.Float64("large-ratio", largeRowRatio),
@@ -256,18 +254,18 @@ func handleWorkloadExecution(insertDBs, updateDBs []*sql.DB, insertConcurrency, 
 	)
 
 	if action == "write" || action == "insert" {
-		executeInsertWorkers(insertDBs, insertConcurrency, workload, wg)
+		executeInsertWorkers(dbs, insertConcurrency, workload, wg)
 	}
 
 	if action == "write" || action == "update" {
-		executeUpdateWorkers(updateDBs, updateConcurrency, workload, wg)
+		executeUpdateWorkers(dbs, updateConcurrency, workload, wg)
 	}
 }
 
-func executeInsertWorkers(insertDBs []*sql.DB, insertConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
+func executeInsertWorkers(dbs []*sql.DB, insertConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
 	wg.Add(insertConcurrency)
 	for i := 0; i < insertConcurrency; i++ {
-		db := insertDBs[i]
+		db := dbs[i%len(dbs)]
 		go func(workerID int) {
 			defer func() {
 				log.Info("insert worker exited", zap.Int("worker", workerID))
@@ -279,7 +277,7 @@ func executeInsertWorkers(insertDBs []*sql.DB, insertConcurrency int, workload s
 	}
 }
 
-func executeUpdateWorkers(updateDBs []*sql.DB, updateConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
+func executeUpdateWorkers(dbs []*sql.DB, updateConcurrency int, workload schema.Workload, wg *sync.WaitGroup) {
 	if updateConcurrency == 0 {
 		log.Info("skip update workload",
 			zap.String("action", action),
@@ -292,7 +290,7 @@ func executeUpdateWorkers(updateDBs []*sql.DB, updateConcurrency int, workload s
 	wg.Add(updateConcurrency + 1) // +1 for task generator
 
 	for i := 0; i < updateConcurrency; i++ {
-		db := updateDBs[i]
+		db := dbs[i%len(dbs)]
 		go func(workerID int) {
 			defer func() {
 				log.Info("update worker exited", zap.Int("worker", workerID))
