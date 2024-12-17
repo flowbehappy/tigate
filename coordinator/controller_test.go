@@ -35,7 +35,7 @@ import (
 func TestResumeChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	controller := &Controller{
 		backend:      backend,
 		changefeedDB: changefeedDB,
@@ -63,7 +63,7 @@ func TestResumeChangefeed(t *testing.T) {
 func TestPauseChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 
 	self := node.NewInfo("localhost:8300", "")
 	nodeManager := watcher.NewNodeManager(nil, nil)
@@ -98,7 +98,7 @@ func TestPauseChangefeed(t *testing.T) {
 func TestUpdateChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	controller := &Controller{
 		backend:      backend,
 		changefeedDB: changefeedDB,
@@ -133,7 +133,7 @@ func TestUpdateChangefeed(t *testing.T) {
 func TestGetChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	controller := &Controller{
 		backend:      backend,
 		changefeedDB: changefeedDB,
@@ -158,7 +158,7 @@ func TestGetChangefeed(t *testing.T) {
 func TestRemoveChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	self := node.NewInfo("localhost:8300", "")
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	nodeManager.GetAliveNodes()[self.ID] = self
@@ -192,7 +192,7 @@ func TestRemoveChangefeed(t *testing.T) {
 func TestListChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	self := node.NewInfo("localhost:8300", "")
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	nodeManager.GetAliveNodes()[self.ID] = self
@@ -233,7 +233,7 @@ func TestListChangefeed(t *testing.T) {
 func TestCreateChangefeed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	self := node.NewInfo("localhost:8300", "")
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	nodeManager.GetAliveNodes()[self.ID] = self

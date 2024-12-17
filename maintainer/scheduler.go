@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package maintainer
 
 import (
 	"context"
@@ -22,9 +22,28 @@ import (
 	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/maintainer/split"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/scheduler"
 	"github.com/pingcap/ticdc/server/watcher"
 	"go.uber.org/zap"
 )
+
+func NewScheduleController(changefeedID common.ChangeFeedID,
+	batchSize int,
+	oc *operator.Controller,
+	db *replica.ReplicationDB,
+	nodeM *watcher.NodeManager,
+	balanceInterval time.Duration,
+	splitter *split.Splitter,
+) *scheduler.Controller {
+	schedulers := map[string]scheduler.Scheduler{
+		scheduler.BasicScheduler:   scheduler.NewBasicScheduler(changefeedID.String(), batchSize, oc, db, nodeM, oc.NewAddOperator),
+		scheduler.BalanceScheduler: scheduler.NewBalanceScheduler(changefeedID.String(), batchSize, oc, db, nodeM, balanceInterval, oc.NewMoveOperator),
+	}
+	if splitter != nil {
+		schedulers[scheduler.SplitScheduler] = newSplitScheduler(changefeedID, batchSize, splitter, oc, db, nodeM)
+	}
+	return scheduler.NewController(schedulers)
+}
 
 // splitScheduler is used to check the split status of all spans
 type splitScheduler struct {
@@ -107,5 +126,5 @@ func (s *splitScheduler) Execute() time.Time {
 }
 
 func (s *splitScheduler) Name() string {
-	return SplitScheduler
+	return scheduler.SplitScheduler
 }

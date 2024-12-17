@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	cerror "github.com/pingcap/tiflow/pkg/errors"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -316,12 +316,13 @@ func (p *persistentStorage) unregisterTable(tableID int64) error {
 }
 
 func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {
-	p.mu.Lock()
+	p.mu.RLock()
 	store, ok := p.tableInfoStoreMap[tableID]
 	if !ok {
+		p.mu.RUnlock()
 		return nil, fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 	}
-	p.mu.Unlock()
+	p.mu.RUnlock()
 	return store.getTableInfo(ts)
 }
 
@@ -710,33 +711,47 @@ func transformDDLJobQuery(job *model.Job) (string, error) {
 	//  `alter table "t" add column "c" int default 1;`
 	// by adding `ANSI_QUOTES` to the SQL mode.
 	p.SetSQLMode(job.SQLMode)
-	stms, _, err := p.Parse(job.Query, job.Charset, job.Collate)
+	stmts, _, err := p.Parse(job.Query, job.Charset, job.Collate)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	if len(stms) != 1 {
-		log.Error("invalid ddlQuery statement size",
-			zap.String("ddlQuery", job.Query))
-		return "", cerror.ErrUnexpected.FastGenByArgs("invalid ddlQuery statement size")
+	var result string
+	buildQuery := func(stmt ast.StmtNode) (string, error) {
+		var sb strings.Builder
+		// translate TiDB feature to special comment
+		restoreFlags := format.RestoreTiDBSpecialComment
+		// escape the keyword
+		restoreFlags |= format.RestoreNameBackQuotes
+		// upper case keyword
+		restoreFlags |= format.RestoreKeyWordUppercase
+		// wrap string with single quote
+		restoreFlags |= format.RestoreStringSingleQuotes
+		// remove placement rule
+		restoreFlags |= format.SkipPlacementRuleForRestore
+		// force disable ttl
+		restoreFlags |= format.RestoreWithTTLEnableOff
+		if err = stmt.Restore(format.NewRestoreCtx(restoreFlags, &sb)); err != nil {
+			return "", errors.Trace(err)
+		}
+		return sb.String(), nil
 	}
-	var sb strings.Builder
-	// translate TiDB feature to special comment
-	restoreFlags := format.RestoreTiDBSpecialComment
-	// escape the keyword
-	restoreFlags |= format.RestoreNameBackQuotes
-	// upper case keyword
-	restoreFlags |= format.RestoreKeyWordUppercase
-	// wrap string with single quote
-	restoreFlags |= format.RestoreStringSingleQuotes
-	// remove placement rule
-	restoreFlags |= format.SkipPlacementRuleForRestore
-	// force disable ttl
-	restoreFlags |= format.RestoreWithTTLEnableOff
-	if err = stms[0].Restore(format.NewRestoreCtx(restoreFlags, &sb)); err != nil {
-		return "", errors.Trace(err)
+	if len(stmts) > 1 {
+		results := make([]string, 0, len(stmts))
+		for _, stmt := range stmts {
+			query, err := buildQuery(stmt)
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+			results = append(results, query)
+		}
+		result = strings.Join(results, ";")
+	} else {
+		result, err = buildQuery(stmts[0])
+		if err != nil {
+			return "", errors.Trace(err)
+		}
 	}
 
-	result := sb.String()
 	log.Info("transform ddl query to result",
 		zap.String("DDL", job.Query),
 		zap.String("charset", job.Charset),
@@ -921,6 +936,18 @@ func shouldSkipDDL(
 		model.ActionAlterTablePartitionAttributes:
 		// Note: these ddls seems not useful to sync to downstream?
 		return true
+	case model.ActionCreateTables:
+		// For duplicate create tables ddl job, the tables in the job should be same, check the first table is enough
+		if _, ok := tableMap[event.MultipleTableInfos[0].ID]; ok {
+			log.Warn("table already exists. ignore DDL ",
+				zap.String("DDL", event.Query),
+				zap.Int64("jobID", event.ID),
+				zap.Int64("schemaID", event.CurrentSchemaID),
+				zap.Int64("tableID", event.CurrentTableID),
+				zap.Uint64("finishTs", event.FinishedTs),
+				zap.Int64("jobSchemaVersion", event.SchemaVersion))
+			return true
+		}
 	}
 	// Note: create tables don't need to be ignore, because we won't receive it twice
 	return false

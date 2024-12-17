@@ -44,9 +44,13 @@ import (
 /*
 EventDispatcherManager is responsible for managing the dispatchers of a changefeed in the instance.
 EventDispatcherManager is working on:
- 1. Collecting all the heartbeat messages / block status messages / table status messages,
-    and push to the related queue, to be consumed by the heartbeat collector(to maintainer).
- 2. Create and remove all dispatchers.
+ 1. Init sink for the changefeed.
+ 2. Register in the HeartBeatCollector, which is responsible for communication with the maintainer.
+    And collecting and batch the messages that need to communicate with the maintainer from all dispatchers,
+    These messages will be truly sent to the maintainer by heartbeat collector.
+    Messages include: 1. table status 2. block status 3. heartbeats.
+ 3. Create and remove all dispatchers, including table trigger event dispatcher.
+ 4. Collect the error from all the dispatchers and sink module, and report to the maintainer.
 
 One changefeed in one instance has one EventDispatcherManager.
 One EventDispatcherManager has one backend sink.
@@ -658,8 +662,8 @@ func (e *EventDispatcherManager) GetMaintainerID() node.ID {
 	return e.maintainerID
 }
 
-func (e *EventDispatcherManager) GetChangeFeedID() common.ChangeFeedID {
-	return e.changefeedID
+func (e *EventDispatcherManager) SetMaintainerID(maintainerID node.ID) {
+	e.maintainerID = maintainerID
 }
 
 func (e *EventDispatcherManager) GetTableTriggerEventDispatcher() *dispatcher.Dispatcher {
@@ -672,14 +676,6 @@ func (e *EventDispatcherManager) SetHeartbeatRequestQueue(heartbeatRequestQueue 
 
 func (e *EventDispatcherManager) SetBlockStatusRequestQueue(blockStatusRequestQueue *BlockStatusRequestQueue) {
 	e.blockStatusRequestQueue = blockStatusRequestQueue
-}
-
-func (e *EventDispatcherManager) GetBlockStatuses() chan *heartbeatpb.TableSpanBlockStatus {
-	return e.blockStatusesChan
-}
-
-func (e *EventDispatcherManager) SetMaintainerID(maintainerID node.ID) {
-	e.maintainerID = maintainerID
 }
 
 // Get all dispatchers id of the specified schemaID. Including the tableTriggerEventDispatcherID if exists.

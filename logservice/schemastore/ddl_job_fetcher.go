@@ -15,6 +15,8 @@ package schemastore
 
 import (
 	"context"
+	"math"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -22,6 +24,7 @@ import (
 	"github.com/pingcap/ticdc/logservice/logpuller"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/utils/heap"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -32,16 +35,21 @@ import (
 	"go.uber.org/zap"
 )
 
+var once sync.Once
+var ddlTableInfo *event.DDLTableInfo
+
 type ddlJobFetcher struct {
-	puller *logpuller.LogPullerMultiSpan
+	resolvedTsTracker struct {
+		sync.Mutex
+		resolvedTsItemMap map[logpuller.SubscriptionID]*resolvedTsItem
+		resolvedTsHeap    *heap.Heap[*resolvedTsItem]
+	}
 
-	cacheDDLEvent func(ddlEvent DDLJobWithCommitTs)
-
+	// cacheDDLEvent and advanceResolvedTs may be called concurrently
+	// the only gurantee is that when call advanceResolvedTs with ts, all ddl job with commit ts <= ts has been passed to cacheDDLEvent
+	cacheDDLEvent     func(ddlEvent DDLJobWithCommitTs)
 	advanceResolvedTs func(resolvedTS uint64)
 
-	// ddlTableInfo is initialized when receive the first concurrent DDL job.
-	ddlTableInfo *event.DDLTableInfo
-	// kvStorage is used to init `ddlTableInfo`
 	kvStorage kv.Storage
 }
 
@@ -59,18 +67,56 @@ func newDDLJobFetcher(
 		advanceResolvedTs: advanceResolvedTs,
 		kvStorage:         kvStorage,
 	}
-	ddlSpans := getAllDDLSpan()
-	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(subClient, pdClock, ddlSpans, startTs, ddlJobFetcher.input, advanceResolvedTs)
+	ddlJobFetcher.resolvedTsTracker.resolvedTsItemMap = make(map[logpuller.SubscriptionID]*resolvedTsItem)
+	ddlJobFetcher.resolvedTsTracker.resolvedTsHeap = heap.NewHeap[*resolvedTsItem]()
+
+	for _, span := range getAllDDLSpan() {
+		subID := subClient.AllocSubscriptionID()
+		item := &resolvedTsItem{
+			resolvedTs: 0,
+		}
+		ddlJobFetcher.resolvedTsTracker.resolvedTsItemMap[subID] = item
+		ddlJobFetcher.resolvedTsTracker.resolvedTsHeap.AddOrUpdate(item)
+		advanceSubSpanResolvedTs := func(ts uint64) {
+			ddlJobFetcher.tryAdvanceResolvedTs(subID, ts)
+		}
+		subClient.Subscribe(subID, span, startTs, ddlJobFetcher.input, advanceSubSpanResolvedTs, 0)
+	}
 
 	return ddlJobFetcher
 }
 
 func (p *ddlJobFetcher) run(ctx context.Context) error {
-	return p.puller.Run(ctx)
+	return nil
 }
 
 func (p *ddlJobFetcher) close(ctx context.Context) error {
-	return p.puller.Close(ctx)
+	return nil
+}
+
+func (p *ddlJobFetcher) tryAdvanceResolvedTs(subID logpuller.SubscriptionID, newResolvedTs uint64) {
+	p.resolvedTsTracker.Lock()
+	defer p.resolvedTsTracker.Unlock()
+	item, ok := p.resolvedTsTracker.resolvedTsItemMap[subID]
+	if !ok {
+		log.Panic("unknown zubscriptionID, should not happen",
+			zap.Uint64("subID", uint64(subID)))
+	}
+	if newResolvedTs < item.resolvedTs {
+		log.Panic("resolved ts should not fallback",
+			zap.Uint64("newResolvedTs", newResolvedTs),
+			zap.Uint64("oldResolvedTs", item.resolvedTs))
+	}
+	item.resolvedTs = newResolvedTs
+	p.resolvedTsTracker.resolvedTsHeap.AddOrUpdate(item)
+
+	minResolvedTsItem, ok := p.resolvedTsTracker.resolvedTsHeap.PeekTop()
+	if !ok || minResolvedTsItem.resolvedTs == math.MaxUint64 {
+		log.Panic("should not happen")
+	}
+	// minResolvedTsItem may be 0, it it ok to send it because it will be filtered later.
+	// it is ok to send redundant resolved ts to advanceResolvedTs.
+	p.advanceResolvedTs(minResolvedTsItem.resolvedTs)
 }
 
 func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, _ func()) bool {
@@ -93,28 +139,28 @@ func (p *ddlJobFetcher) input(kvs []common.RawKVEntry, _ func()) bool {
 	return false
 }
 
+// unmarshalDDL unmarshals a ddl job from a raw kv entry.
 func (p *ddlJobFetcher) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, error) {
 	if rawKV.OpType != common.OpTypePut {
 		return nil, nil
 	}
-	if p.ddlTableInfo == nil && !event.IsLegacyFormatJob(rawKV) {
-		log.Info("begin to init ddl table info")
-		err := p.initDDLTableInfo()
-		if err != nil {
-			log.Error("init ddl table info failed", zap.Error(err))
-			return nil, errors.Trace(err)
-		}
+	if !event.IsLegacyFormatJob(rawKV) {
+		once.Do(func() {
+			if err := initDDLTableInfo(p.kvStorage); err != nil {
+				log.Fatal("init ddl table info failed", zap.Error(err))
+			}
+		})
 	}
 
-	return event.ParseDDLJob(rawKV, p.ddlTableInfo)
+	return event.ParseDDLJob(rawKV, ddlTableInfo)
 }
 
-func (p *ddlJobFetcher) initDDLTableInfo() error {
-	version, err := p.kvStorage.CurrentVersion(kv.GlobalTxnScope)
+func initDDLTableInfo(kvStorage kv.Storage) error {
+	version, err := kvStorage.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	snap := logpuller.GetSnapshotMeta(p.kvStorage, version.Ver)
+	snap := logpuller.GetSnapshotMeta(kvStorage, version.Ver)
 
 	dbInfos, err := snap.ListDatabases()
 	if err != nil {
@@ -142,9 +188,9 @@ func (p *ddlJobFetcher) initDDLTableInfo() error {
 		return errors.Trace(err)
 	}
 
-	p.ddlTableInfo = &event.DDLTableInfo{}
-	p.ddlTableInfo.DDLJobTable = common.WrapTableInfo(db.ID, db.Name.L, tableInfo)
-	p.ddlTableInfo.JobMetaColumnIDinJobTable = col.ID
+	ddlTableInfo = &event.DDLTableInfo{}
+	ddlTableInfo.DDLJobTable = common.WrapTableInfo(db.ID, db.Name.L, tableInfo)
+	ddlTableInfo.JobMetaColumnIDinJobTable = col.ID
 
 	// for tidb_ddl_history
 	historyTableInfo, err := findTableByName(tbls, "tidb_ddl_history")
@@ -157,8 +203,8 @@ func (p *ddlJobFetcher) initDDLTableInfo() error {
 		return errors.Trace(err)
 	}
 
-	p.ddlTableInfo.DDLHistoryTable = common.WrapTableInfo(db.ID, db.Name.L, historyTableInfo)
-	p.ddlTableInfo.JobMetaColumnIDinHistoryTable = historyTableCol.ID
+	ddlTableInfo.DDLHistoryTable = common.WrapTableInfo(db.ID, db.Name.L, historyTableInfo)
+	ddlTableInfo.JobMetaColumnIDinHistoryTable = historyTableCol.ID
 
 	return nil
 }
@@ -219,4 +265,17 @@ func getAllDDLSpan() []heartbeatpb.TableSpan {
 		EndKey:   common.ToComparableKey(end),
 	})
 	return spans
+}
+
+type resolvedTsItem struct {
+	resolvedTs uint64
+	heapIndex  int
+}
+
+func (m *resolvedTsItem) SetHeapIndex(index int) { m.heapIndex = index }
+
+func (m *resolvedTsItem) GetHeapIndex() int { return m.heapIndex }
+
+func (m *resolvedTsItem) LessThan(other *resolvedTsItem) bool {
+	return m.resolvedTs < other.resolvedTs
 }

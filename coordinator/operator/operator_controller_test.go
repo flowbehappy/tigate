@@ -28,7 +28,7 @@ import (
 )
 
 func TestController_StopChangefeed(t *testing.T) {
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
 	self := node.NewInfo("localhost:8300", "")
@@ -54,7 +54,7 @@ func TestController_StopChangefeed(t *testing.T) {
 }
 
 func TestController_AddOperator(t *testing.T) {
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	ctrl := gomock.NewController(t)
 	backend := mock_changefeed.NewMockBackend(ctrl)
 	self := node.NewInfo("localhost:8300", "")

@@ -170,8 +170,8 @@ func TestGetAbsents(t *testing.T) {
 		absent := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, getTableSpanByID(int64(i+1)), 1)
 		db.AddAbsentReplicaSet(absent)
 	}
-	require.Len(t, db.GetAbsent(nil, 5), 5)
-	require.Len(t, db.GetAbsent(nil, 15), 10)
+	require.Len(t, db.GetAbsentForTest(nil, 5), 5)
+	require.Len(t, db.GetAbsentForTest(nil, 15), 10)
 }
 
 func TestRemoveAllTables(t *testing.T) {
@@ -197,6 +197,11 @@ func TestRemoveAllTables(t *testing.T) {
 	scheduling := NewReplicaSet(db.changefeedID, common.NewDispatcherID(), db.ddlSpan.tsoClient, 1, getTableSpanByID(4), 1)
 	db.AddAbsentReplicaSet(scheduling)
 	db.MarkSpanScheduling(scheduling)
+
+	require.Len(t, db.GetAllTasks(), 4)
+	require.Len(t, db.GetReplicating(), 1)
+	require.Len(t, db.GetAbsent(), 1)
+	require.Len(t, db.GetScheduling(), 1)
 
 	removed = db.TryRemoveAll()
 	require.Len(t, removed, 2)

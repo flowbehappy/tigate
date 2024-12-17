@@ -2,7 +2,6 @@ package eventservice
 
 import (
 	"context"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -26,11 +25,8 @@ import (
 )
 
 const (
-	resolvedTsCacheSize = 8192
-	streamCount         = 4
+	resolvedTsCacheSize = 512
 	basicChannelSize    = 2048
-	// TODO: need to adjust the worker count
-	defaultScanWorkerCount = 512
 )
 
 var (
@@ -68,6 +64,8 @@ type eventBroker struct {
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskQueue chan scanTask
 
+	// sendMessageWorkerCount is the number of the send message workers to spawn.
+	sendMessageWorkerCount int
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
 
@@ -108,10 +106,13 @@ func newEventBroker(
 	option := dynstream.NewOption()
 	option.UseBuffer = true
 
-	messageWorkerCount := runtime.NumCPU()
-	if messageWorkerCount < streamCount {
-		messageWorkerCount = streamCount
-	}
+	// These numbers are define by real test result.
+	// We noted that:
+	// 1. When the number of send message workers is too small, the lag of the resolvedTs keep in a high level.
+	// 2. When the number of send message workers is too large, the lag of the resolvedTs has spikes.
+	// And when the number of send message workers is x, the lag of the resolvedTs is stable.
+	sendMessageWorkerCount := config.DefaultBasicEventHandlerConcurrency
+	scanWorkerCount := config.DefaultBasicEventHandlerConcurrency * 4
 
 	conf := config.GetGlobalServerConfig().Debug.EventService
 
@@ -124,8 +125,9 @@ func newEventBroker(
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
 		taskQueue:               make(chan scanTask, conf.ScanTaskQueueSize),
-		scanWorkerCount:         defaultScanWorkerCount,
-		messageCh:               make([]chan *wrapEvent, messageWorkerCount),
+		sendMessageWorkerCount:  sendMessageWorkerCount,
+		messageCh:               make([]chan *wrapEvent, sendMessageWorkerCount),
+		scanWorkerCount:         scanWorkerCount,
 		cancel:                  cancel,
 		wg:                      wg,
 
@@ -148,7 +150,7 @@ func newEventBroker(
 		},
 	}
 
-	for i := 0; i < messageWorkerCount; i++ {
+	for i := 0; i < c.sendMessageWorkerCount; i++ {
 		c.messageCh[i] = make(chan *wrapEvent, basicChannelSize*4)
 	}
 
@@ -157,7 +159,7 @@ func newEventBroker(
 	c.logUnresetDispatchers(ctx)
 	c.reportDispatcherStatToStore(ctx)
 
-	for i := 0; i < messageWorkerCount; i++ {
+	for i := 0; i < c.sendMessageWorkerCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
@@ -178,17 +180,6 @@ func (c *eventBroker) sendWatermark(
 		d.getEventSenderState())
 	c.getMessageCh(d.workerIndex) <- resolvedEvent
 	metricEventServiceSendResolvedTsCount.Inc()
-
-	// We comment out the following code is because we found when some resolvedTs are dropped,
-	// the lag of the resolvedTs will increase.
-	// select {
-	// case c.getMessageCh(d.workerIndex) <- resolvedEvent:
-	// 	if counter != nil {
-	// 		counter.Inc()
-	// 	}
-	// default:
-	// 	metricEventBrokerDropResolvedTsCount.Inc()
-	// }
 }
 
 func (c *eventBroker) sendReadyEvent(
@@ -541,12 +532,12 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 
 func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int) {
 	c.wg.Add(1)
-	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 50)
+	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 25)
 	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	messageCh := c.messageCh[workerIndex]
 	tickCh := flushResolvedTsTicker.C
 
-	maxBatchSize := 1024
+	maxBatchSize := 128
 	batchM := make([]*wrapEvent, 0, maxBatchSize)
 
 	go func() {
@@ -574,7 +565,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 
 				for _, m := range batchM {
 					if m.msgType == pevent.TypeResolvedEvent {
-						c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
+						c.handleResolvedTs(ctx, resolvedTsCacheMap, m, workerIndex)
 						continue
 					}
 					// Check if the dispatcher is initialized, if so, ignore the handshake event.
@@ -592,10 +583,12 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 					tMsg := messaging.NewSingleTargetMessage(
 						m.serverID,
 						messaging.EventCollectorTopic,
-						m.e)
+						m.e,
+						uint64(workerIndex),
+					)
 					// Note: we need to flush the resolvedTs cache before sending the message
 					// to keep the order of the resolvedTs and the message.
-					c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
+					c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID, workerIndex)
 					c.sendMsg(ctx, tMsg, m.postSendFunc)
 					m.reset()
 				}
@@ -603,14 +596,14 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 
 			case <-tickCh:
 				for serverID, cache := range resolvedTsCacheMap {
-					c.flushResolvedTs(ctx, cache, serverID)
+					c.flushResolvedTs(ctx, cache, serverID, workerIndex)
 				}
 			}
 		}
 	}()
 }
 
-func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID]*resolvedTsCache, m *wrapEvent) {
+func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID]*resolvedTsCache, m *wrapEvent, workerIndex int) {
 	defer m.reset()
 	cache, ok := cacheMap[m.serverID]
 	if !ok {
@@ -619,11 +612,11 @@ func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID
 	}
 	cache.add(m.resolvedTsEvent)
 	if cache.isFull() {
-		c.flushResolvedTs(ctx, cache, m.serverID)
+		c.flushResolvedTs(ctx, cache, m.serverID, workerIndex)
 	}
 }
 
-func (c *eventBroker) flushResolvedTs(ctx context.Context, cache *resolvedTsCache, serverID node.ID) {
+func (c *eventBroker) flushResolvedTs(ctx context.Context, cache *resolvedTsCache, serverID node.ID, workerIndex int) {
 	if cache == nil || cache.len == 0 {
 		return
 	}
@@ -632,7 +625,9 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, cache *resolvedTsCach
 	tMsg := messaging.NewSingleTargetMessage(
 		serverID,
 		messaging.EventCollectorTopic,
-		msg)
+		msg,
+		uint64(workerIndex),
+	)
 	c.sendMsg(ctx, tMsg, nil)
 }
 
@@ -777,7 +772,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	id := info.GetID()
 	span := info.GetTableSpan()
 	startTs := info.GetStartTs()
-	workerIndex := int((common.GID)(id).Hash(uint64(streamCount)))
+	workerIndex := int((common.GID)(id).Hash(uint64(c.sendMessageWorkerCount)))
 	dispatcher := newDispatcherStat(startTs, info, filter, workerIndex)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)

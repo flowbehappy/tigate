@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/ticdc/pkg/operator"
+	"github.com/pingcap/ticdc/pkg/scheduler/operator"
 	"github.com/pingcap/ticdc/server/watcher"
 	"go.uber.org/zap"
 )
@@ -275,4 +275,12 @@ func (oc *Controller) checkAffectedNodes(op operator.Operator[common.ChangeFeedI
 			op.OnNodeRemove(n)
 		}
 	}
+}
+
+func (oc *Controller) NewAddMaintainerOperator(cf *changefeed.Changefeed, dest node.ID) operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus] {
+	return NewAddMaintainerOperator(oc.changefeedDB, cf, dest)
+}
+
+func (oc *Controller) NewMoveMaintainerOperator(cf *changefeed.Changefeed, origin, dest node.ID) operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus] {
+	return NewMoveMaintainerOperator(oc.changefeedDB, cf, origin, dest)
 }

@@ -28,8 +28,6 @@ const (
 	DataGroupResolvedTs = 1
 	DataGroupEntries    = 2
 	DataGroupError      = 3
-
-	kvEventsCacheMaxSize = 32
 )
 
 type regionEvent struct {
@@ -81,14 +79,15 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 		}
 	}
 	if len(span.kvEventsCache) > 0 {
-		return span.consumeKVEvents(span.kvEventsCache, func() {
-			if cap(span.kvEventsCache) > kvEventsCacheMaxSize {
-				span.kvEventsCache = nil
-			} else {
-				span.kvEventsCache = span.kvEventsCache[:0]
-			}
+		await := span.consumeKVEvents(span.kvEventsCache, func() {
+			span.clearKVEventsCache()
 			h.subClient.wakeSubscription(span.subID)
 		})
+		// if not await, the wake callback will not be called, we need clear the cache manually.
+		if !await {
+			span.clearKVEventsCache()
+		}
+		return await
 	}
 	return false
 }
@@ -121,7 +120,8 @@ func (h *regionEventHandler) GetType(event regionEvent) dynstream.EventType {
 	if event.entries != nil {
 		return dynstream.EventType{DataGroup: DataGroupEntries, Property: dynstream.BatchableData}
 	} else if event.resolvedTs != 0 {
-		return dynstream.EventType{DataGroup: DataGroupResolvedTs, Property: dynstream.PeriodicSignal}
+		// Note: resolved ts may from different region, so there are not periodic signal
+		return dynstream.EventType{DataGroup: DataGroupResolvedTs, Property: dynstream.BatchableData}
 	} else if event.err != nil || event.state.isStale() {
 		return dynstream.EventType{DataGroup: DataGroupError, Property: dynstream.BatchableData}
 	} else {
