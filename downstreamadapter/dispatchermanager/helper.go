@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
 	"github.com/pingcap/ticdc/eventpb"
 	"github.com/pingcap/ticdc/heartbeatpb"
@@ -23,136 +24,8 @@ import (
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
+	"go.uber.org/zap"
 )
-
-type HeartBeatTask struct {
-	taskHandle *threadpool.TaskHandle
-	manager    *EventDispatcherManager
-	// Used to determine when to collect complete status
-	statusTick int
-}
-
-func newHeartBeatTask(manager *EventDispatcherManager) *HeartBeatTask {
-	taskScheduler := GetHeartBeatTaskScheduler()
-	t := &HeartBeatTask{
-		manager:    manager,
-		statusTick: 0,
-	}
-	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(time.Second*1))
-	return t
-}
-
-func (t *HeartBeatTask) Execute() time.Time {
-	if t.manager.closed.Load() {
-		return time.Time{}
-	}
-	executeInterval := time.Millisecond * 200
-	completeStatusInterval := int(time.Second * 10 / executeInterval)
-	t.statusTick++
-	needCompleteStatus := (t.statusTick)%completeStatusInterval == 0
-	message := t.manager.aggregateDispatcherHeartbeats(needCompleteStatus)
-	t.manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.manager.GetMaintainerID(), Request: message})
-	return time.Now().Add(executeInterval)
-}
-
-func (t *HeartBeatTask) Cancel() {
-	t.taskHandle.Cancel()
-}
-
-var heartBeatTaskSchedulerOnce sync.Once
-var heartBeatTaskScheduler threadpool.ThreadPool
-
-func GetHeartBeatTaskScheduler() threadpool.ThreadPool {
-	if heartBeatTaskScheduler == nil {
-		heartBeatTaskSchedulerOnce.Do(func() {
-			heartBeatTaskScheduler = threadpool.NewThreadPoolDefault()
-		})
-	}
-	return heartBeatTaskScheduler
-}
-
-func SetHeartBeatTaskScheduler(taskScheduler threadpool.ThreadPool) {
-	heartBeatTaskScheduler = taskScheduler
-}
-
-type SchedulerDispatcherRequest struct {
-	*heartbeatpb.ScheduleDispatcherRequest
-}
-
-func NewSchedulerDispatcherRequest(req *heartbeatpb.ScheduleDispatcherRequest) SchedulerDispatcherRequest {
-	return SchedulerDispatcherRequest{req}
-}
-
-var schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[int, common.GID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]
-var schedulerDispatcherRequestDynamicStreamOnce sync.Once
-
-func GetSchedulerDispatcherRequestDynamicStream() dynstream.DynamicStream[int, common.GID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler] {
-	if schedulerDispatcherRequestDynamicStream == nil {
-		schedulerDispatcherRequestDynamicStreamOnce.Do(func() {
-			option := dynstream.NewOption()
-			option.BatchCount = 128
-			schedulerDispatcherRequestDynamicStream = dynstream.NewParallelDynamicStream(
-				func(id common.GID) uint64 { return id.FastHash() },
-				&SchedulerDispatcherRequestHandler{}, option)
-			schedulerDispatcherRequestDynamicStream.Start()
-		})
-	}
-	return schedulerDispatcherRequestDynamicStream
-}
-
-func SetSchedulerDispatcherRequestDynamicStream(dynamicStream dynstream.DynamicStream[int, common.GID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]) {
-	schedulerDispatcherRequestDynamicStream = dynamicStream
-}
-
-type HeartBeatResponse struct {
-	*heartbeatpb.HeartBeatResponse
-}
-
-func NewHeartBeatResponse(resp *heartbeatpb.HeartBeatResponse) HeartBeatResponse {
-	return HeartBeatResponse{resp}
-}
-
-var heartBeatResponseDynamicStream dynstream.DynamicStream[int, common.GID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]
-var heartBeatResponseDynamicStreamOnce sync.Once
-
-func GetHeartBeatResponseDynamicStream() dynstream.DynamicStream[int, common.GID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler] {
-	if heartBeatResponseDynamicStream == nil {
-		heartBeatResponseDynamicStreamOnce.Do(func() {
-			heartBeatResponseDynamicStream = dynstream.NewParallelDynamicStream(
-				func(id common.GID) uint64 { return id.FastHash() },
-				&HeartBeatResponseHandler{dispatcher.GetDispatcherStatusDynamicStream()})
-			heartBeatResponseDynamicStream.Start()
-		})
-	}
-	return heartBeatResponseDynamicStream
-}
-
-func SetHeartBeatResponseDynamicStream(dynamicStream dynstream.DynamicStream[int, common.GID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]) {
-	heartBeatResponseDynamicStream = dynamicStream
-}
-
-type CheckpointTsMessage struct {
-	*heartbeatpb.CheckpointTsMessage
-}
-
-func NewCheckpointTsMessage(msg *heartbeatpb.CheckpointTsMessage) CheckpointTsMessage {
-	return CheckpointTsMessage{msg}
-}
-
-var checkpointTsMessageDynamicStream dynstream.DynamicStream[int, common.GID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler]
-var checkpointTsMessageDynamicStreamOnce sync.Once
-
-func GetCheckpointTsMessageDynamicStream() dynstream.DynamicStream[int, common.GID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler] {
-	if checkpointTsMessageDynamicStream == nil {
-		checkpointTsMessageDynamicStreamOnce.Do(func() {
-			checkpointTsMessageDynamicStream = dynstream.NewParallelDynamicStream(
-				func(id common.GID) uint64 { return id.FastHash() },
-				&CheckpointTsMessageHandler{})
-			checkpointTsMessageDynamicStream.Start()
-		})
-	}
-	return checkpointTsMessageDynamicStream
-}
 
 type DispatcherMap struct {
 	m     sync.Map
@@ -186,20 +59,20 @@ func (d *DispatcherMap) Get(id common.DispatcherID) (*dispatcher.Dispatcher, boo
 
 func (d *DispatcherMap) GetSeq() uint64 {
 	d.mutex.Lock()
-	d.mutex.Unlock()
+	defer d.mutex.Unlock()
 	return d.seq
 }
 
 func (d *DispatcherMap) Delete(id common.DispatcherID) {
 	d.mutex.Lock()
-	d.mutex.Unlock()
+	defer d.mutex.Unlock()
 	d.m.Delete(id)
 	d.seq++
 }
 
 func (d *DispatcherMap) Set(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) uint64 {
 	d.mutex.Lock()
-	d.mutex.Unlock()
+	defer d.mutex.Unlock()
 	d.m.Store(id, dispatcher)
 	d.seq++
 
@@ -208,7 +81,7 @@ func (d *DispatcherMap) Set(id common.DispatcherID, dispatcher *dispatcher.Dispa
 
 func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *dispatcher.Dispatcher)) uint64 {
 	d.mutex.Lock()
-	d.mutex.Unlock()
+	defer d.mutex.Unlock()
 	d.m.Range(func(key, value interface{}) bool {
 		fn(key.(common.DispatcherID), value.(*dispatcher.Dispatcher))
 		return true
@@ -273,3 +146,308 @@ func (w *Watermark) Set(watermark *heartbeatpb.Watermark) {
 	defer w.mutex.Unlock()
 	w.Watermark = watermark
 }
+
+// HeartbeatTask is a perioic task to collect the heartbeat status from event dispatcher manager and push to heartbeatRequestQueue
+type HeartBeatTask struct {
+	taskHandle *threadpool.TaskHandle
+	manager    *EventDispatcherManager
+	// Used to determine when to collect complete status
+	statusTick int
+}
+
+func newHeartBeatTask(manager *EventDispatcherManager) *HeartBeatTask {
+	taskScheduler := GetHeartBeatTaskScheduler()
+	t := &HeartBeatTask{
+		manager:    manager,
+		statusTick: 0,
+	}
+	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(time.Second*1))
+	return t
+}
+
+func (t *HeartBeatTask) Execute() time.Time {
+	if t.manager.closed.Load() {
+		return time.Time{}
+	}
+	executeInterval := time.Millisecond * 200
+	completeStatusInterval := int(time.Second * 10 / executeInterval)
+	t.statusTick++
+	needCompleteStatus := (t.statusTick)%completeStatusInterval == 0
+	message := t.manager.aggregateDispatcherHeartbeats(needCompleteStatus)
+	t.manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.manager.GetMaintainerID(), Request: message})
+	return time.Now().Add(executeInterval)
+}
+
+func (t *HeartBeatTask) Cancel() {
+	t.taskHandle.Cancel()
+}
+
+var heartBeatTaskSchedulerOnce sync.Once
+var heartBeatTaskScheduler threadpool.ThreadPool
+
+func GetHeartBeatTaskScheduler() threadpool.ThreadPool {
+	if heartBeatTaskScheduler == nil {
+		heartBeatTaskSchedulerOnce.Do(func() {
+			heartBeatTaskScheduler = threadpool.NewThreadPoolDefault()
+		})
+	}
+	return heartBeatTaskScheduler
+}
+
+func SetHeartBeatTaskScheduler(taskScheduler threadpool.ThreadPool) {
+	heartBeatTaskScheduler = taskScheduler
+}
+
+// schedulerDispatcherRequestDynamicStream is responsible for create or remove the dispatchers.
+var schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[int, common.GID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]
+var schedulerDispatcherRequestDynamicStreamOnce sync.Once
+
+func GetSchedulerDispatcherRequestDynamicStream() dynstream.DynamicStream[int, common.GID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler] {
+	if schedulerDispatcherRequestDynamicStream == nil {
+		schedulerDispatcherRequestDynamicStreamOnce.Do(func() {
+			option := dynstream.NewOption()
+			option.BatchCount = 128
+			schedulerDispatcherRequestDynamicStream = dynstream.NewParallelDynamicStream(
+				func(id common.GID) uint64 { return id.FastHash() },
+				&SchedulerDispatcherRequestHandler{}, option)
+			schedulerDispatcherRequestDynamicStream.Start()
+		})
+	}
+	return schedulerDispatcherRequestDynamicStream
+}
+
+func SetSchedulerDispatcherRequestDynamicStream(dynamicStream dynstream.DynamicStream[int, common.GID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]) {
+	schedulerDispatcherRequestDynamicStream = dynamicStream
+}
+
+type SchedulerDispatcherRequest struct {
+	*heartbeatpb.ScheduleDispatcherRequest
+}
+
+func NewSchedulerDispatcherRequest(req *heartbeatpb.ScheduleDispatcherRequest) SchedulerDispatcherRequest {
+	return SchedulerDispatcherRequest{req}
+}
+
+type SchedulerDispatcherRequestHandler struct {
+}
+
+func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest SchedulerDispatcherRequest) common.GID {
+	return common.NewChangefeedGIDFromPB(scheduleDispatcherRequest.ChangefeedID)
+}
+
+func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *EventDispatcherManager, reqs ...SchedulerDispatcherRequest) bool {
+	// If req is about remove dispatcher, then there will only be one request in reqs.
+	infos := make([]dispatcherCreateInfo, 0, len(reqs))
+	for _, req := range reqs {
+		if req.ScheduleDispatcherRequest == nil {
+			log.Warn("scheduleDispatcherRequest is nil, skip")
+			continue
+		}
+		config := req.Config
+		dispatcherID := common.NewDispatcherIDFromPB(config.DispatcherID)
+		switch req.ScheduleAction {
+		case heartbeatpb.ScheduleAction_Create:
+			infos = append(infos, dispatcherCreateInfo{
+				Id:          dispatcherID,
+				TableSpan:   config.Span,
+				StartTs:     config.StartTs,
+				SchemaID:    config.SchemaID,
+				CurrentPDTs: config.CurrentPdTs,
+			})
+		case heartbeatpb.ScheduleAction_Remove:
+			if len(reqs) != 1 {
+				log.Error("invalid remove dispatcher request count in one batch", zap.Int("count", len(reqs)))
+			}
+			eventDispatcherManager.removeDispatcher(dispatcherID)
+		}
+	}
+	if len(infos) > 0 {
+		err := eventDispatcherManager.newDispatchers(infos)
+		if err != nil {
+			select {
+			case eventDispatcherManager.errCh <- err:
+			default:
+				log.Error("error channel is full, discard error",
+					zap.Any("ChangefeedID", eventDispatcherManager.changefeedID.String()),
+					zap.Error(err))
+			}
+		}
+	}
+	return false
+}
+
+func (h *SchedulerDispatcherRequestHandler) GetSize(event SchedulerDispatcherRequest) int { return 0 }
+func (h *SchedulerDispatcherRequestHandler) IsPaused(event SchedulerDispatcherRequest) bool {
+	return false
+}
+func (h *SchedulerDispatcherRequestHandler) GetArea(path common.GID, dest *EventDispatcherManager) int {
+	return 0
+}
+func (h *SchedulerDispatcherRequestHandler) GetTimestamp(event SchedulerDispatcherRequest) dynstream.Timestamp {
+	return 0
+}
+func (h *SchedulerDispatcherRequestHandler) GetType(event SchedulerDispatcherRequest) dynstream.EventType {
+	// we do batch for create dispatcher now.
+	switch event.ScheduleAction {
+	case heartbeatpb.ScheduleAction_Create:
+		return dynstream.EventType{DataGroup: 1, Property: dynstream.BatchableData}
+	case heartbeatpb.ScheduleAction_Remove:
+		return dynstream.EventType{DataGroup: 2, Property: dynstream.NonBatchable}
+	default:
+		log.Panic("unknown schedule action", zap.Int("action", int(event.ScheduleAction)))
+	}
+	return dynstream.DefaultEventType
+}
+
+func (h *SchedulerDispatcherRequestHandler) OnDrop(event SchedulerDispatcherRequest) {}
+
+// heartBeatResponseDynamicStream is responsible for send heartBeatResponse to the related dispatchers.
+var heartBeatResponseDynamicStream dynstream.DynamicStream[int, common.GID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]
+var heartBeatResponseDynamicStreamOnce sync.Once
+
+func GetHeartBeatResponseDynamicStream() dynstream.DynamicStream[int, common.GID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler] {
+	if heartBeatResponseDynamicStream == nil {
+		heartBeatResponseDynamicStreamOnce.Do(func() {
+			heartBeatResponseDynamicStream = dynstream.NewParallelDynamicStream(
+				func(id common.GID) uint64 { return id.FastHash() },
+				&HeartBeatResponseHandler{dispatcher.GetDispatcherStatusDynamicStream()})
+			heartBeatResponseDynamicStream.Start()
+		})
+	}
+	return heartBeatResponseDynamicStream
+}
+
+type HeartBeatResponse struct {
+	*heartbeatpb.HeartBeatResponse
+}
+
+func NewHeartBeatResponse(resp *heartbeatpb.HeartBeatResponse) HeartBeatResponse {
+	return HeartBeatResponse{resp}
+}
+
+func SetHeartBeatResponseDynamicStream(dynamicStream dynstream.DynamicStream[int, common.GID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]) {
+	heartBeatResponseDynamicStream = dynamicStream
+}
+
+type HeartBeatResponseHandler struct {
+	dispatcherStatusDynamicStream dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherStatusWithID, *dispatcher.Dispatcher, *dispatcher.DispatcherStatusHandler]
+}
+
+func NewHeartBeatResponseHandler() HeartBeatResponseHandler {
+	return HeartBeatResponseHandler{dispatcherStatusDynamicStream: dispatcher.GetDispatcherStatusDynamicStream()}
+}
+
+func (h *HeartBeatResponseHandler) Path(HeartbeatResponse HeartBeatResponse) common.GID {
+	return common.NewChangefeedGIDFromPB(HeartbeatResponse.ChangefeedID)
+}
+
+func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatcherManager, resps ...HeartBeatResponse) bool {
+	if len(resps) != 1 {
+		// TODO: Support batch
+		panic("invalid response count")
+	}
+	heartbeatResponse := resps[0]
+	dispatcherStatuses := heartbeatResponse.GetDispatcherStatuses()
+	for _, dispatcherStatus := range dispatcherStatuses {
+		influencedDispatchersType := dispatcherStatus.InfluencedDispatchers.InfluenceType
+		switch influencedDispatchersType {
+		case heartbeatpb.InfluenceType_Normal:
+			for _, dispatcherID := range dispatcherStatus.InfluencedDispatchers.DispatcherIDs {
+				dispId := common.NewDispatcherIDFromPB(dispatcherID)
+				h.dispatcherStatusDynamicStream.Push(
+					dispId,
+					dispatcher.NewDispatcherStatusWithID(dispatcherStatus, dispId))
+			}
+		case heartbeatpb.InfluenceType_DB:
+			schemaID := dispatcherStatus.InfluencedDispatchers.SchemaID
+			excludeDispatcherID := common.NewDispatcherIDFromPB(dispatcherStatus.InfluencedDispatchers.ExcludeDispatcherId)
+			dispatcherIds := eventDispatcherManager.GetAllDispatchers(schemaID)
+			for _, id := range dispatcherIds {
+				if id != excludeDispatcherID {
+					h.dispatcherStatusDynamicStream.Push(id, dispatcher.NewDispatcherStatusWithID(dispatcherStatus, id))
+				}
+			}
+		case heartbeatpb.InfluenceType_All:
+			excludeDispatcherID := common.NewDispatcherIDFromPB(dispatcherStatus.InfluencedDispatchers.ExcludeDispatcherId)
+			eventDispatcherManager.GetDispatcherMap().ForEach(func(id common.DispatcherID, _ *dispatcher.Dispatcher) {
+				if id != excludeDispatcherID {
+					h.dispatcherStatusDynamicStream.Push(id, dispatcher.NewDispatcherStatusWithID(dispatcherStatus, id))
+				}
+			})
+		}
+	}
+	return false
+}
+
+func (h *HeartBeatResponseHandler) GetSize(event HeartBeatResponse) int   { return 0 }
+func (h *HeartBeatResponseHandler) IsPaused(event HeartBeatResponse) bool { return false }
+func (h *HeartBeatResponseHandler) GetArea(path common.GID, dest *EventDispatcherManager) int {
+	return 0
+}
+func (h *HeartBeatResponseHandler) GetTimestamp(event HeartBeatResponse) dynstream.Timestamp {
+	return 0
+}
+func (h *HeartBeatResponseHandler) GetType(event HeartBeatResponse) dynstream.EventType {
+	return dynstream.DefaultEventType
+}
+func (h *HeartBeatResponseHandler) OnDrop(event HeartBeatResponse) {}
+
+// checkpointTsMessageDynamicStream is responsible for push checkpointTsMessage to the corresponding table trigger event dispatcher.
+var checkpointTsMessageDynamicStream dynstream.DynamicStream[int, common.GID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler]
+var checkpointTsMessageDynamicStreamOnce sync.Once
+
+func GetCheckpointTsMessageDynamicStream() dynstream.DynamicStream[int, common.GID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler] {
+	if checkpointTsMessageDynamicStream == nil {
+		checkpointTsMessageDynamicStreamOnce.Do(func() {
+			checkpointTsMessageDynamicStream = dynstream.NewParallelDynamicStream(
+				func(id common.GID) uint64 { return id.FastHash() },
+				&CheckpointTsMessageHandler{})
+			checkpointTsMessageDynamicStream.Start()
+		})
+	}
+	return checkpointTsMessageDynamicStream
+}
+
+type CheckpointTsMessage struct {
+	*heartbeatpb.CheckpointTsMessage
+}
+
+func NewCheckpointTsMessage(msg *heartbeatpb.CheckpointTsMessage) CheckpointTsMessage {
+	return CheckpointTsMessage{msg}
+}
+
+type CheckpointTsMessageHandler struct{}
+
+func NewCheckpointTsMessageHandler() CheckpointTsMessageHandler {
+	return CheckpointTsMessageHandler{}
+}
+
+func (h *CheckpointTsMessageHandler) Path(checkpointTsMessage CheckpointTsMessage) common.GID {
+	return common.NewChangefeedGIDFromPB(checkpointTsMessage.ChangefeedID)
+}
+
+func (h *CheckpointTsMessageHandler) Handle(eventDispatcherManager *EventDispatcherManager, messages ...CheckpointTsMessage) bool {
+	if len(messages) != 1 {
+		// TODO: Support batch
+		panic("invalid message count")
+	}
+	checkpointTsMessage := messages[0]
+	if eventDispatcherManager.tableTriggerEventDispatcher != nil && eventDispatcherManager.sink.SinkType() != common.MysqlSinkType {
+		tableTriggerEventDispatcher := eventDispatcherManager.tableTriggerEventDispatcher
+		tableTriggerEventDispatcher.HandleCheckpointTs(checkpointTsMessage.CheckpointTs)
+	}
+	return false
+}
+
+func (h *CheckpointTsMessageHandler) GetSize(event CheckpointTsMessage) int   { return 0 }
+func (h *CheckpointTsMessageHandler) IsPaused(event CheckpointTsMessage) bool { return false }
+func (h *CheckpointTsMessageHandler) GetArea(path common.GID, dest *EventDispatcherManager) int {
+	return 0
+}
+func (h *CheckpointTsMessageHandler) GetTimestamp(event CheckpointTsMessage) dynstream.Timestamp {
+	return 0
+}
+func (h *CheckpointTsMessageHandler) GetType(event CheckpointTsMessage) dynstream.EventType {
+	return dynstream.DefaultEventType
+}
+func (h *CheckpointTsMessageHandler) OnDrop(event CheckpointTsMessage) {}
