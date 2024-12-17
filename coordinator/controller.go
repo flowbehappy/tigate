@@ -346,6 +346,7 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 		case config.ProgressStopping, config.ProgressRemoving:
 			remove := cfMeta.Status.Progress == config.ProgressRemoving
 			c.operatorController.StopChangefeed(context.Background(), cfID, remove)
+			log.Info("stop changefeed when bootstrapping", zap.String("changefeed", cfID.String()), zap.Any("meta", cfMeta))
 		}
 	}
 	for id, rm := range workingMap {
