@@ -164,7 +164,6 @@ func setupMultipleDatabases() []*sql.DB {
 		configureDBConnection(db)
 		dbs[i] = db
 	}
-	log.Info("setup databases finished", zap.Int("db-num", len(dbs)))
 	return dbs
 }
 
@@ -254,7 +253,6 @@ func handleWorkloadExecution(dbs []*sql.DB, insertConcurrency, updateConcurrency
 		zap.Float64("large-ratio", largeRowRatio),
 		zap.Int("total_thread", thread),
 		zap.Int("batch-size", batchSize),
-		zap.Int("db-num", len(dbs)),
 		zap.String("action", action),
 	)
 

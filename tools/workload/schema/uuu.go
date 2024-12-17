@@ -1,9 +1,11 @@
 package schema
 
 import (
+	"bytes"
 	"fmt"
 	mrand "math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -47,36 +49,43 @@ var count atomic.Int64
 
 // BuildInsertSql returns two insert statements for Data and index_Data tables
 func (c *UUUWorkload) BuildInsertSql(tableN int, batchSize int) string {
-	const avgRowLen = 1200
-	builder := strings.Builder{}
-	builder.Grow(batchSize * avgRowLen)
-
+	var dataBuf, indexBuf bytes.Buffer
 	n := mrand.Int63()
-	isDataTable := count.Add(1)%2 == 0
-
-	if isDataTable {
+	count.Add(1)
+	if count.Load()%2 == 0 {
 		// Data table insert
-		fmt.Fprintf(&builder, "INSERT INTO Data%d (model_id, object_id, object_value, version) VALUES(%d, %d, %s, 1)",
-			tableN, n, n, preGeneratedString)
+		dataBuf.WriteString(fmt.Sprintf("INSERT INTO Data%d (model_id, object_id, object_value, version) VALUES(%d, %d, %s, 1)", tableN, n, n, generateString()))
 		for r := 1; r < batchSize; r++ {
-			n = mrand.Int63()
-			fmt.Fprintf(&builder, ",(%d, %d, %s, 1)", n, n, preGeneratedString)
+			n := mrand.Int63()
+			dataBuf.WriteString(fmt.Sprintf(",(%d, %d, %s, 1)", n, n, generateString()))
 		}
+		return dataBuf.String()
 	} else {
-		// Index table insert
-		fmt.Fprintf(&builder, "INSERT INTO index_Data%d (object_id, reference_id, guid, version) VALUES(%d, %d, %s, 1)",
-			tableN, n, n, preGeneratedString)
+		indexBuf.WriteString(fmt.Sprintf("INSERT INTO index_Data%d (object_id, reference_id, guid, version) VALUES(%d, %d, %s, 1)", tableN, n, n, generateString()))
 		for r := 1; r < batchSize; r++ {
-			n = mrand.Int63()
-			fmt.Fprintf(&builder, ",(%d, %d, %s, 1)", n, n, preGeneratedString)
+			n := mrand.Int63()
+			indexBuf.WriteString(fmt.Sprintf(",(%d, %d, %s, 1)", n, n, generateString()))
 		}
+		return indexBuf.String()
 	}
-
-	return builder.String()
 }
 
 func (c *UUUWorkload) BuildUpdateSql(opts UpdateOption) string {
 	panic("unimplemented")
 }
 
-var preGeneratedString = strings.Repeat("a", 1000)
+var (
+	preGeneratedString string
+	once               sync.Once
+)
+
+func generateString() string {
+	once.Do(func() {
+		builder := strings.Builder{}
+		for i := 0; i < 1000; i++ {
+			builder.WriteString(fmt.Sprintf("%d", i))
+		}
+		preGeneratedString = builder.String()
+	})
+	return preGeneratedString
+}
