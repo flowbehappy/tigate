@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/pingcap/ticdc/downstreamadapter/sink"
-	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/syncpoint"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -25,19 +24,16 @@ type mockSink struct {
 	sinkType common.SinkType
 }
 
-func (s *mockSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {
-	tableProgress.Add(event)
+func (s *mockSink) AddDMLEvent(event *commonEvent.DMLEvent) {
 	s.dmls = append(s.dmls, event)
 }
 
-func (s *mockSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
-	tableProgress.Add(event)
+func (s *mockSink) WriteBlockEvent(event commonEvent.BlockEvent) error {
 	event.PostFlush()
 	return nil
 }
 
-func (s *mockSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
-	tableProgress.Pass(event)
+func (s *mockSink) PassBlockEvent(event commonEvent.BlockEvent) {
 	event.PostFlush()
 }
 
@@ -45,10 +41,6 @@ func (s *mockSink) AddCheckpointTs(ts uint64) {
 }
 
 func (s *mockSink) SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore) {
-}
-
-func (s *mockSink) CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
-	return startTsList, nil
 }
 
 func (s *mockSink) Close(bool) error {

@@ -21,7 +21,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/log"
-	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/worker"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
@@ -141,13 +140,7 @@ func (s *MysqlSink) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore)
 	s.ddlWorker.SetTableSchemaStore(tableSchemaStore)
 }
 
-func (s *MysqlSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {
-	if event.Len() == 0 {
-		return
-	}
-
-	tableProgress.Add(event)
-
+func (s *MysqlSink) AddDMLEvent(event *commonEvent.DMLEvent) {
 	// Considering that the parity of tableID is not necessarily even,
 	// directly dividing by the number of buckets may cause unevenness between buckets.
 	// Therefore, we first take the modulus of the prime number and then take the modulus of the bucket.
@@ -155,13 +148,11 @@ func (s *MysqlSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *type
 	s.dmlWorker[index].GetEventChan() <- event
 }
 
-func (s *MysqlSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
-	tableProgress.Pass(event)
+func (s *MysqlSink) PassBlockEvent(event commonEvent.BlockEvent) {
 	event.PostFlush()
 }
 
-func (s *MysqlSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
-	tableProgress.Add(event)
+func (s *MysqlSink) WriteBlockEvent(event commonEvent.BlockEvent) error {
 	err := s.ddlWorker.WriteBlockEvent(event)
 	if err != nil {
 		atomic.StoreUint32(&s.isNormal, 0)
@@ -172,8 +163,8 @@ func (s *MysqlSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress 
 
 func (s *MysqlSink) AddCheckpointTs(ts uint64) {}
 
-func (s *MysqlSink) CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
-	startTsList, err := s.ddlWorker.CheckStartTsList(tableIds, startTsList)
+func (s *MysqlSink) GetStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
+	startTsList, err := s.ddlWorker.GetStartTsList(tableIds, startTsList)
 	if err != nil {
 		atomic.StoreUint32(&s.isNormal, 0)
 		return nil, err
@@ -181,8 +172,9 @@ func (s *MysqlSink) CheckStartTsList(tableIds []int64, startTsList []int64) ([]i
 	return startTsList, nil
 }
 
-func (s *MysqlSink) Close(removeDDLTsItem bool) error {
-	if removeDDLTsItem {
+func (s *MysqlSink) Close(removeChangefeed bool) error {
+	// when remove the changefeed, we need to remove the ddl ts item in the ddl worker
+	if removeChangefeed {
 		return s.ddlWorker.RemoveDDLTsItem()
 	}
 	for i := 0; i < s.workerCount; i++ {

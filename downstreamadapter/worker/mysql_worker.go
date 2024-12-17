@@ -168,8 +168,8 @@ func (w *MysqlDDLWorker) SetTableSchemaStore(tableSchemaStore *util.TableSchemaS
 	w.mysqlWriter.SetTableSchemaStore(tableSchemaStore)
 }
 
-func (w *MysqlDDLWorker) CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
-	ddlTsList, err := w.mysqlWriter.CheckStartTsList(tableIds)
+func (w *MysqlDDLWorker) GetStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
+	ddlTsList, err := w.mysqlWriter.GetStartTsList(tableIds)
 	if err != nil {
 		return nil, err
 	}
