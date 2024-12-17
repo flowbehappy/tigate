@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/coordinator/operator"
-	"github.com/pingcap/ticdc/coordinator/scheduler"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/bootstrap"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
@@ -48,7 +48,7 @@ type Controller struct {
 
 	nodeChanged *atomic.Bool
 
-	cfScheduller       *scheduler.Scheduler
+	cfScheduller       *scheduler.Controller
 	operatorController *operator.Controller
 	changefeedDB       *changefeed.ChangefeedDB
 	messageCenter      messaging.MessageCenter
@@ -86,15 +86,18 @@ func NewController(
 	taskScheduler threadpool.ThreadPool,
 	batchSize int, balanceInterval time.Duration) *Controller {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(version)
 
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	oc := operator.NewOperatorController(mc, selfNode, changefeedDB, backend, nodeManager, batchSize)
 	c := &Controller{
-		version:             version,
-		batchSize:           batchSize,
-		bootstrapped:        atomic.NewBool(false),
-		cfScheduller:        scheduler.NewScheduler(batchSize, oc, changefeedDB, nodeManager, balanceInterval),
+		version:      version,
+		batchSize:    batchSize,
+		bootstrapped: atomic.NewBool(false),
+		cfScheduller: scheduler.NewController(map[string]scheduler.Scheduler{
+			scheduler.BasicScheduler:   scheduler.NewBasicScheduler(selfNode.ID.String(), batchSize, oc, changefeedDB, nodeManager, oc.NewAddMaintainerOperator),
+			scheduler.BalanceScheduler: scheduler.NewBalanceScheduler(selfNode.ID.String(), batchSize, oc, changefeedDB, nodeManager, balanceInterval, oc.NewMoveMaintainerOperator),
+		}),
 		operatorController:  oc,
 		messageCenter:       mc,
 		changefeedDB:        changefeedDB,
@@ -354,9 +357,9 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 	}
 
 	// start operator and scheduler
-	operatorControllerHandle := c.taskScheduler.Submit(c.cfScheduller, time.Now())
-	schedulerHandle := c.taskScheduler.Submit(c.operatorController, time.Now())
-	c.taskHandlers = append(c.taskHandlers, operatorControllerHandle, schedulerHandle)
+	c.taskHandlers = append(c.taskHandlers, c.cfScheduller.Start(c.taskScheduler)...)
+	operatorControllerHandle := c.taskScheduler.Submit(c.operatorController, time.Now())
+	c.taskHandlers = append(c.taskHandlers, operatorControllerHandle)
 	c.bootstrapped.Store(true)
 }
 

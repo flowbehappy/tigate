@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"go.uber.org/zap"
 )
 
@@ -37,8 +38,8 @@ const (
 )
 
 // TODO: extract group interface
-func getImbalanceThreshold(id GroupID) int {
-	if id == defaultGroupID {
+func getImbalanceThreshold(id replica.GroupID) int {
+	if id == replica.DefaultGroupID {
 		return 1
 	}
 	return ImbalanceThreshold
@@ -46,7 +47,7 @@ func getImbalanceThreshold(id GroupID) int {
 
 type hotSpans struct {
 	lock          sync.Mutex
-	hotSpanGroups map[GroupID]map[common.DispatcherID]*HotSpan
+	hotSpanGroups map[replica.GroupID]map[common.DispatcherID]*HotSpan
 }
 
 type HotSpan struct {
@@ -63,12 +64,12 @@ type HotSpan struct {
 
 func NewHotSpans() *hotSpans {
 	s := &hotSpans{
-		hotSpanGroups: make(map[GroupID]map[common.DispatcherID]*HotSpan),
+		hotSpanGroups: make(map[replica.GroupID]map[common.DispatcherID]*HotSpan),
 	}
 	return s
 }
 
-func (s *hotSpans) getOrCreateGroup(groupID GroupID) map[common.DispatcherID]*HotSpan {
+func (s *hotSpans) getOrCreateGroup(groupID replica.GroupID) map[common.DispatcherID]*HotSpan {
 	group, ok := s.hotSpanGroups[groupID]
 	if !ok {
 		group = make(map[common.DispatcherID]*HotSpan)
@@ -77,7 +78,7 @@ func (s *hotSpans) getOrCreateGroup(groupID GroupID) map[common.DispatcherID]*Ho
 	return group
 }
 
-func (s *hotSpans) getBatchByGroup(groupID GroupID, cache []*HotSpan) []*HotSpan {
+func (s *hotSpans) getBatchByGroup(groupID replica.GroupID, cache []*HotSpan) []*HotSpan {
 	batchSize := cap(cache)
 	if batchSize == 0 {
 		batchSize = 1024
@@ -89,7 +90,7 @@ func (s *hotSpans) getBatchByGroup(groupID GroupID, cache []*HotSpan) []*HotSpan
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	hotSpanCache := s.getOrCreateGroup(groupID)
-	if EnableDynamicThreshold && groupID != defaultGroupID {
+	if EnableDynamicThreshold && groupID != replica.DefaultGroupID {
 		totalEventSizePerSecond := float32(0)
 		for _, span := range hotSpanCache {
 			totalEventSizePerSecond += span.eventSizePerSecond
@@ -113,7 +114,7 @@ func (s *hotSpans) getBatchByGroup(groupID GroupID, cache []*HotSpan) []*HotSpan
 			}
 		}
 	}
-	s.doClear(defaultGroupID, outdatedSpans...)
+	s.doClear(groupID, outdatedSpans...)
 	return cache
 }
 
@@ -130,7 +131,7 @@ func (s *hotSpans) updateHotSpan(span *SpanReplication, status *heartbeatpb.Tabl
 			if span.score > 0 {
 				span.score--
 			}
-			if span.groupID == defaultGroupID && span.score == 0 {
+			if span.groupID == replica.DefaultGroupID && span.score == 0 {
 				delete(hotSpanCache, span.ID)
 			}
 		}
@@ -153,9 +154,9 @@ func (s *hotSpans) updateHotSpan(span *SpanReplication, status *heartbeatpb.Tabl
 	}
 }
 
-func (s *hotSpans) clearHotSpansByGroup(groupID GroupID, spans ...*HotSpan) {
+func (s *hotSpans) clearHotSpansByGroup(groupID replica.GroupID, spans ...*HotSpan) {
 	// extract needClear method to simply the clear behavior
-	if groupID != defaultGroupID {
+	if groupID != replica.DefaultGroupID {
 		return
 	}
 	s.lock.Lock()
@@ -163,11 +164,11 @@ func (s *hotSpans) clearHotSpansByGroup(groupID GroupID, spans ...*HotSpan) {
 	s.doClear(groupID, spans...)
 }
 
-func (s *hotSpans) doClear(groupID GroupID, spans ...*HotSpan) {
-	log.Info("clear hot spans", zap.String("group", printGroupID(groupID)), zap.Int("count", len(spans)))
+func (s *hotSpans) doClear(groupID replica.GroupID, spans ...*HotSpan) {
+	log.Info("clear hot spans", zap.String("group", replica.GetGroupName(groupID)), zap.Int("count", len(spans)))
 	hotSpanCache := s.getOrCreateGroup(groupID)
 	for _, span := range spans {
-		if groupID == defaultGroupID {
+		if groupID == replica.DefaultGroupID {
 			delete(hotSpanCache, span.ID)
 		} else {
 			span.score = 0
@@ -185,7 +186,7 @@ func (s *hotSpans) stat() string {
 		if total > 0 {
 			res.WriteString(" ")
 		}
-		res.WriteString(printGroupID(groupID))
+		res.WriteString(replica.GetGroupName(groupID))
 		res.WriteString(": [")
 		cnts := [HotSpanScoreThreshold + 1]int{}
 		for _, span := range hotSpanCache {
@@ -218,11 +219,11 @@ func (db *ReplicationDB) UpdateHotSpan(span *SpanReplication, status *heartbeatp
 	db.hotSpans.updateHotSpan(span, status)
 }
 
-func (db *ReplicationDB) ClearHotSpansByGroup(groupID GroupID, spans ...*HotSpan) {
+func (db *ReplicationDB) ClearHotSpansByGroup(groupID replica.GroupID, spans ...*HotSpan) {
 	db.hotSpans.clearHotSpansByGroup(groupID, spans...)
 }
 
-func (db *ReplicationDB) GetHotSpansByGroup(groupID GroupID, cache []*HotSpan) []*HotSpan {
+func (db *ReplicationDB) GetHotSpansByGroup(groupID replica.GroupID, cache []*HotSpan) []*HotSpan {
 	return db.hotSpans.getBatchByGroup(groupID, cache)
 }
 

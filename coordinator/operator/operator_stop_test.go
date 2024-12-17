@@ -26,7 +26,7 @@ import (
 )
 
 func TestStopChangefeedOperator_OnNodeRemove(t *testing.T) {
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := changefeed.NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
 		Config:  config.GetDefaultReplicaConfig(),
@@ -43,7 +43,7 @@ func TestStopChangefeedOperator_OnNodeRemove(t *testing.T) {
 }
 
 func TestStopChangefeedOperator_OnTaskRemoved(t *testing.T) {
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := changefeed.NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
 		Config:  config.GetDefaultReplicaConfig(),
@@ -56,7 +56,7 @@ func TestStopChangefeedOperator_OnTaskRemoved(t *testing.T) {
 }
 
 func TestStopChangefeedOperator_PostFinish(t *testing.T) {
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := changefeed.NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
 		Config:  config.GetDefaultReplicaConfig(),

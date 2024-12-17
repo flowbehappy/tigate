@@ -25,11 +25,13 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/ticdc/pkg/operator"
+	"github.com/pingcap/ticdc/pkg/scheduler/operator"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
+
+var _ operator.Controller[common.DispatcherID, *heartbeatpb.TableSpanStatus] = &Controller{}
 
 // Controller is the operator controller, it manages all operators.
 // And the Controller is responsible for the execution of the operator.
@@ -269,4 +271,34 @@ func (oc *Controller) checkAffectedNodes(op operator.Operator[common.DispatcherI
 			op.OnNodeRemove(nodeID)
 		}
 	}
+}
+
+func (oc *Controller) NewAddOperator(replicaSet *replica.SpanReplication, id node.ID) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
+	return &AddDispatcherOperator{
+		replicaSet: replicaSet,
+		dest:       id,
+		db:         oc.replicationDB,
+	}
+}
+
+func (oc *Controller) NewMoveOperator(replicaSet *replica.SpanReplication, origin, dest node.ID) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
+	return &MoveDispatcherOperator{
+		replicaSet: replicaSet,
+		origin:     origin,
+		dest:       dest,
+		db:         oc.replicationDB,
+	}
+}
+
+func (oc *Controller) NewRemoveOperator(replicaSet *replica.SpanReplication) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
+	return &RemoveDispatcherOperator{
+		replicaSet: replicaSet,
+		db:         oc.replicationDB,
+	}
+}
+
+func (oc *Controller) NewSplitOperator(
+	replicaSet *replica.SpanReplication, originNode node.ID, splitSpans []*heartbeatpb.TableSpan,
+) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
+	return NewSplitDispatcherOperator(oc.replicationDB, replicaSet, originNode, splitSpans)
 }

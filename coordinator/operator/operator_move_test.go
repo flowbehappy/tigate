@@ -24,7 +24,7 @@ import (
 )
 
 func TestMoveMaintainerOperator_OnNodeRemove(t *testing.T) {
-	changefeedDB := changefeed.NewChangefeedDB()
+	changefeedDB := changefeed.NewChangefeedDB(1216)
 	cfID := common.NewChangeFeedIDWithName("test")
 	cf := changefeed.NewChangefeed(cfID, &config.ChangeFeedInfo{ChangefeedID: cfID,
 		Config:  config.GetDefaultReplicaConfig(),

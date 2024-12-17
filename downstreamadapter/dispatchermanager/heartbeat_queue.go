@@ -18,10 +18,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/node"
 )
 
-/*
-HeartbeatRequestQueue is a channel for all event dispatcher managers to send heartbeat requests to HeartBeatCollector
-*/
-
+// HeartbeatRequestQueue is a channel for all event dispatcher managers to send heartbeat requests to HeartBeatCollector
 type HeartBeatRequestWithTargetID struct {
 	TargetID node.ID
 	Request  *heartbeatpb.HeartBeatRequest
@@ -33,7 +30,7 @@ type HeartbeatRequestQueue struct {
 
 func NewHeartbeatRequestQueue() *HeartbeatRequestQueue {
 	return &HeartbeatRequestQueue{
-		queue: make(chan *HeartBeatRequestWithTargetID, 100000), // 大小后面再说
+		queue: make(chan *HeartBeatRequestWithTargetID, 100000),
 	}
 }
 
@@ -54,6 +51,7 @@ type BlockStatusRequestWithTargetID struct {
 	Request  *heartbeatpb.BlockStatusRequest
 }
 
+// BlockStatusRequestQueue is a channel for all event dispatcher managers to send block status requests to HeartBeatCollector
 type BlockStatusRequestQueue struct {
 	queue chan *BlockStatusRequestWithTargetID
 }

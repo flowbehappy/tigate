@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/sink"
 	"go.uber.org/atomic"
@@ -97,6 +98,23 @@ func (c *Changefeed) setNodeID(n node.ID) {
 
 func (c *Changefeed) GetNodeID() node.ID {
 	return c.nodeID
+}
+
+func (c *Changefeed) SetNodeID(n node.ID) {
+	c.nodeID = n
+}
+
+func (c *Changefeed) GetID() common.ChangeFeedID {
+	return c.ID
+}
+
+func (c *Changefeed) GetGroupID() replica.GroupID {
+	// currently we only have one scheduler group for changefeed
+	return replica.DefaultGroupID
+}
+
+func (c *Changefeed) ShouldRun() bool {
+	return c.backoff.ShouldRun()
 }
 
 func (c *Changefeed) UpdateStatus(newStatus *heartbeatpb.MaintainerStatus) (bool, model.FeedState, *heartbeatpb.RunningError) {

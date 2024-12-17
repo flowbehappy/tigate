@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/retry"
 	"github.com/pingcap/tiflow/pkg/spanz"
@@ -43,7 +44,7 @@ type SpanReplication struct {
 
 	schemaID   int64
 	nodeID     node.ID
-	groupID    GroupID
+	groupID    replica.GroupID
 	status     *atomic.Pointer[heartbeatpb.TableSpanStatus]
 	blockState *atomic.Pointer[heartbeatpb.State]
 
@@ -58,7 +59,6 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 	checkpointTs uint64) *SpanReplication {
 	r := &SpanReplication{
 		ID:           id,
-		groupID:      defaultGroupID,
 		tsoClient:    tsoClient,
 		schemaID:     SchemaID,
 		Span:         span,
@@ -76,7 +76,7 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 		zap.String("id", id.String()),
 		zap.Int64("schema id", SchemaID),
 		zap.Int64("table id", span.TableID),
-		zap.String("group id", printGroupID(r.groupID)),
+		zap.String("group id", replica.GetGroupName(r.groupID)),
 		zap.String("start", hex.EncodeToString(span.StartKey)),
 		zap.String("end", hex.EncodeToString(span.EndKey)))
 	return r
@@ -111,7 +111,7 @@ func NewWorkingReplicaSet(
 		zap.String("component status", status.ComponentStatus.String()),
 		zap.Int64("schema id", SchemaID),
 		zap.Int64("table id", span.TableID),
-		zap.String("group id", printGroupID(r.groupID)),
+		zap.String("group id", replica.GetGroupName(r.groupID)),
 		zap.String("start", hex.EncodeToString(span.StartKey)),
 		zap.String("end", hex.EncodeToString(span.EndKey)))
 	return r
@@ -129,7 +129,7 @@ func (r *SpanReplication) initStatus(status *heartbeatpb.TableSpanStatus) {
 }
 
 func (r *SpanReplication) initGroupID() {
-	r.groupID = defaultGroupID
+	r.groupID = replica.DefaultGroupID
 	span := tablepb.Span{TableID: r.Span.TableID, StartKey: r.Span.StartKey, EndKey: r.Span.EndKey}
 	// check if the table is split
 	totalSpan := spanz.TableIDToComparableSpan(span.TableID)
@@ -141,7 +141,7 @@ func (r *SpanReplication) initGroupID() {
 			zap.String("end", hex.EncodeToString(span.EndKey)))
 	}
 	if !bytes.Equal(span.StartKey, totalSpan.StartKey) || !bytes.Equal(span.EndKey, totalSpan.EndKey) {
-		r.groupID = getGroupID(groupTable, span.TableID)
+		r.groupID = replica.GenGroupID(replica.GroupTable, span.TableID)
 	}
 }
 
@@ -158,8 +158,8 @@ func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {
 	}
 }
 
-func (r *SpanReplication) IsDropped() bool {
-	return false
+func (r *SpanReplication) ShouldRun() bool {
+	return true
 	// state := r.blockState.Load()
 	// if state != nil && state.NeedDroppedTables != nil {
 	// 	status := r.status.Load()
@@ -200,8 +200,16 @@ func (r *SpanReplication) SetNodeID(n node.ID) {
 	r.nodeID = n
 }
 
+func (r *SpanReplication) GetID() common.DispatcherID {
+	return r.ID
+}
+
 func (r *SpanReplication) GetNodeID() node.ID {
 	return r.nodeID
+}
+
+func (r *SpanReplication) GetGroupID() replica.GroupID {
+	return r.groupID
 }
 
 func (r *SpanReplication) NewAddDispatcherMessage(server node.ID) (*messaging.TargetMessage, error) {
