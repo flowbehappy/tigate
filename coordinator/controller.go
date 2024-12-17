@@ -346,6 +346,7 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 		case config.ProgressStopping, config.ProgressRemoving:
 			remove := cfMeta.Status.Progress == config.ProgressRemoving
 			c.operatorController.StopChangefeed(context.Background(), cfID, remove)
+			log.Info("stop changefeed when bootstrapping", zap.String("changefeed", cfID.String()), zap.Any("meta", cfMeta))
 		}
 	}
 	for id, rm := range workingMap {
@@ -526,7 +527,7 @@ func (c *Controller) collectMetrics() {
 
 		metrics.ChangefeedStateGauge.WithLabelValues("Absent").Set(float64(absent))
 		metrics.ChangefeedStateGauge.WithLabelValues("Working").Set(float64(working))
-		metrics.ChangefeedStateGauge.WithLabelValues("Stopped").Set(float64(working))
+		metrics.ChangefeedStateGauge.WithLabelValues("Stopped").Set(float64(stopped))
 		c.lastPrintStatusTime = time.Now()
 		log.Info("coordinator status",
 			zap.Int("total", total),
