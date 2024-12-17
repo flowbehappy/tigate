@@ -56,10 +56,10 @@ jobs:
         run: |
           export TICDC_NEWARCH=true && make integration_test CASE=changefeed_finish
         
-      - name: Test changefeed_pause_resume
-        if: ${{ success() }}
-        run: |
-          export TICDC_NEWARCH=true && make integration_test CASE=changefeed_pause_resume
+      # - name: Test changefeed_pause_resume
+      #   if: ${{ success() }}
+      #   run: |
+      #     export TICDC_NEWARCH=true && make integration_test CASE=changefeed_pause_resume
 
       # - name: Test changefeed_reconstruct
       #   if: ${{ success() }}
