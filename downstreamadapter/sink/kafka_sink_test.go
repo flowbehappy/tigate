@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/worker/producer"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/stretchr/testify/require"
@@ -14,10 +13,6 @@ import (
 func TestKafkaSinkBasicFunctionality(t *testing.T) {
 	sink, dmlProducer, ddlProducer, err := newKafkaSinkForTest()
 	require.NoError(t, err)
-	tableProgress := types.NewTableProgress()
-	ts, isEmpty := tableProgress.GetCheckpointTs()
-	require.NotEqual(t, ts, 0)
-	require.Equal(t, isEmpty, true)
 
 	count = 0
 
@@ -65,20 +60,16 @@ func TestKafkaSinkBasicFunctionality(t *testing.T) {
 	}
 	dmlEvent.CommitTs = 2
 
-	err = sink.WriteBlockEvent(ddlEvent, tableProgress)
+	err = sink.WriteBlockEvent(ddlEvent)
 	require.NoError(t, err)
 
-	sink.AddDMLEvent(dmlEvent, tableProgress)
+	sink.AddDMLEvent(dmlEvent)
 	time.Sleep(1 * time.Second)
 
-	sink.PassBlockEvent(ddlEvent2, tableProgress)
+	sink.PassBlockEvent(ddlEvent2)
 
 	require.Len(t, dmlProducer.(*producer.MockProducer).GetAllEvents(), 2)
 	require.Len(t, ddlProducer.(*producer.MockProducer).GetAllEvents(), 1)
-
-	ts, isEmpty = tableProgress.GetCheckpointTs()
-	require.Equal(t, ts, uint64(3))
-	require.Equal(t, isEmpty, true)
 
 	require.Equal(t, count, 3)
 }

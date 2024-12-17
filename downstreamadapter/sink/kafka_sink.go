@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/topicmanager"
-	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/worker"
 	"github.com/pingcap/ticdc/downstreamadapter/worker/producer"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -147,21 +146,15 @@ func (s *KafkaSink) IsNormal() bool {
 	return atomic.LoadUint32(&s.isNormal) == 1
 }
 
-func (s *KafkaSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {
-	if event.Len() == 0 {
-		return
-	}
-	tableProgress.Add(event)
+func (s *KafkaSink) AddDMLEvent(event *commonEvent.DMLEvent) {
 	s.dmlWorker.GetEventChan() <- event
 }
 
-func (s *KafkaSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
-	tableProgress.Pass(event)
+func (s *KafkaSink) PassBlockEvent(event commonEvent.BlockEvent) {
 	event.PostFlush()
 }
 
-func (s *KafkaSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
-	tableProgress.Add(event)
+func (s *KafkaSink) WriteBlockEvent(event commonEvent.BlockEvent) error {
 	switch event := event.(type) {
 	case *commonEvent.DDLEvent:
 		if event.TiDBOnly {
@@ -196,7 +189,7 @@ func (s *KafkaSink) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore)
 	s.ddlWorker.SetTableSchemaStore(tableSchemaStore)
 }
 
-func (s *KafkaSink) Close(removeDDLTsItem bool) error {
+func (s *KafkaSink) Close(_ bool) error {
 	err := s.ddlWorker.Close()
 	if err != nil {
 		return errors.Trace(err)
@@ -212,10 +205,6 @@ func (s *KafkaSink) Close(removeDDLTsItem bool) error {
 	s.statistics.Close()
 
 	return nil
-}
-
-func (s *KafkaSink) CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
-	return startTsList, nil
 }
 
 func newKafkaSinkForTest() (*KafkaSink, producer.DMLProducer, ddlproducer.DDLProducer, error) {

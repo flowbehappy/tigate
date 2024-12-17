@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/sink"
-	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/syncpoint"
 	"github.com/pingcap/ticdc/eventpb"
 	"github.com/pingcap/ticdc/heartbeatpb"
@@ -123,7 +122,7 @@ type Dispatcher struct {
 	blockEventStatus BlockEventStatus
 
 	// tableProgress is used to calculate the checkpointTs of the dispatcher
-	tableProgress *types.TableProgress
+	tableProgress *TableProgress
 
 	// resendTaskMap is store all the resend task of ddl/sync point event current.
 	// When we meet a block event that need to report to maintainer, we will create a resend task and store it in the map(avoid message lost)
@@ -169,7 +168,7 @@ func NewDispatcher(
 		filterConfig:          filterConfig,
 		isRemoving:            atomic.Bool{},
 		blockEventStatus:      BlockEventStatus{blockPendingEvent: nil},
-		tableProgress:         types.NewTableProgress(),
+		tableProgress:         NewTableProgress(),
 		schemaID:              schemaID,
 		schemaIDToDispatchers: schemaIDToDispatchers,
 		resendTaskMap:         newResendTaskMap(),
@@ -224,7 +223,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 		if pendingEvent != nil && action.CommitTs == pendingEvent.GetCommitTs() && blockStatus == heartbeatpb.BlockStage_WAITING {
 			d.blockEventStatus.updateBlockStage(heartbeatpb.BlockStage_WRITING)
 			if action.Action == heartbeatpb.Action_Write {
-				err := d.sink.WriteBlockEvent(pendingEvent, d.tableProgress)
+				err := d.AddBlockEventToSink(pendingEvent)
 				if err != nil {
 					select {
 					case d.errCh <- err:
@@ -237,7 +236,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 					return
 				}
 			} else {
-				d.sink.PassBlockEvent(pendingEvent, d.tableProgress)
+				d.PassBlockEventToSink(pendingEvent)
 			}
 		}
 
@@ -283,8 +282,11 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 		case commonEvent.TypeResolvedEvent:
 			atomic.StoreUint64(&d.resolvedTs, event.(commonEvent.ResolvedEvent).ResolvedTs)
 		case commonEvent.TypeDMLEvent:
-			block = true
 			dml := event.(*commonEvent.DMLEvent)
+			if dml.Len() == 0 {
+				return block
+			}
+			block = true
 			dml.ReplicatingTs = d.creatationPDTs
 			dml.AssembleRows(d.tableInfo)
 			dml.AddPostFlushFunc(func() {
@@ -295,7 +297,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 					wakeCallback()
 				}
 			})
-			d.sink.AddDMLEvent(dml, d.tableProgress)
+			d.AddDMLEventToSink(dml)
 		case commonEvent.TypeDDLEvent:
 			if len(dispatcherEvents) != 1 {
 				log.Panic("ddl event should only be singly handled", zap.Any("dispatcherID", d.id))
@@ -334,6 +336,21 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 		}
 	}
 	return block
+}
+
+func (d *Dispatcher) AddDMLEventToSink(event *commonEvent.DMLEvent) {
+	d.tableProgress.Add(event)
+	d.sink.AddDMLEvent(event)
+}
+
+func (d *Dispatcher) AddBlockEventToSink(event commonEvent.BlockEvent) error {
+	d.tableProgress.Add(event)
+	return d.sink.WriteBlockEvent(event)
+}
+
+func (d *Dispatcher) PassBlockEventToSink(event commonEvent.BlockEvent) {
+	d.tableProgress.Pass(event)
+	d.sink.PassBlockEvent(event)
 }
 
 func (d *Dispatcher) SetInitialTableInfo(tableInfo *common.TableInfo) {
@@ -388,7 +405,7 @@ func (d *Dispatcher) shouldBlock(event commonEvent.BlockEvent) bool {
 // 2. If the event is a multi-table DDL / sync point Event, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 	if !d.shouldBlock(event) {
-		err := d.sink.WriteBlockEvent(event, d.tableProgress)
+		err := d.AddBlockEventToSink(event)
 		if err != nil {
 			select {
 			case d.errCh <- err:

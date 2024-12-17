@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/stretchr/testify/require"
 )
@@ -29,10 +28,6 @@ var count = 0
 // Test callback and tableProgress works as expected after AddDMLEvent
 func TestMysqlSinkBasicFunctionality(t *testing.T) {
 	sink, mock := MysqlSinkForTest()
-	tableProgress := types.NewTableProgress()
-	ts, isEmpty := tableProgress.GetCheckpointTs()
-	require.NotEqual(t, ts, 0)
-	require.Equal(t, isEmpty, true)
 
 	count = 0
 
@@ -110,20 +105,16 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	err := sink.WriteBlockEvent(ddlEvent, tableProgress)
+	err := sink.WriteBlockEvent(ddlEvent)
 	require.NoError(t, err)
 
-	sink.AddDMLEvent(dmlEvent, tableProgress)
+	sink.AddDMLEvent(dmlEvent)
 	time.Sleep(1 * time.Second)
 
-	sink.PassBlockEvent(ddlEvent2, tableProgress)
+	sink.PassBlockEvent(ddlEvent2)
 
 	err = mock.ExpectationsWereMet()
 	require.NoError(t, err)
-
-	ts, isEmpty = tableProgress.GetCheckpointTs()
-	require.Equal(t, ts, uint64(3))
-	require.Equal(t, isEmpty, true)
 
 	require.Equal(t, count, 3)
 }
@@ -132,11 +123,6 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 // whether the sink state is correct
 func TestMysqlSinkMeetsDMLError(t *testing.T) {
 	sink, mock := MysqlSinkForTest()
-	tableProgress := types.NewTableProgress()
-	ts, isEmpty := tableProgress.GetCheckpointTs()
-	require.NotEqual(t, ts, 0)
-	require.Equal(t, isEmpty, true)
-
 	count = 0
 
 	helper := commonEvent.NewEventTestHelper(t)
@@ -159,16 +145,12 @@ func TestMysqlSinkMeetsDMLError(t *testing.T) {
 		WillReturnError(errors.New("connect: connection refused"))
 	mock.ExpectRollback()
 
-	sink.AddDMLEvent(dmlEvent, tableProgress)
+	sink.AddDMLEvent(dmlEvent)
 
 	time.Sleep(1 * time.Second)
 
 	err := mock.ExpectationsWereMet()
 	require.NoError(t, err)
-
-	ts, isEmpty = tableProgress.GetCheckpointTs()
-	require.Equal(t, ts, uint64(1))
-	require.Equal(t, isEmpty, false)
 
 	require.Equal(t, count, 0)
 
@@ -179,10 +161,6 @@ func TestMysqlSinkMeetsDMLError(t *testing.T) {
 // whether the sink state is correct
 func TestMysqlSinkMeetsDDLError(t *testing.T) {
 	sink, mock := MysqlSinkForTest()
-	tableProgress := types.NewTableProgress()
-	ts, isEmpty := tableProgress.GetCheckpointTs()
-	require.NotEqual(t, ts, 0)
-	require.Equal(t, isEmpty, true)
 
 	count = 0
 
@@ -214,14 +192,10 @@ func TestMysqlSinkMeetsDDLError(t *testing.T) {
 	mock.ExpectExec("create table t (id int primary key, name varchar(32));").WillReturnError(errors.New("connect: connection refused"))
 	mock.ExpectRollback()
 
-	sink.WriteBlockEvent(ddlEvent, tableProgress)
+	sink.WriteBlockEvent(ddlEvent)
 
 	err := mock.ExpectationsWereMet()
 	require.NoError(t, err)
-
-	ts, isEmpty = tableProgress.GetCheckpointTs()
-	require.Equal(t, ts, uint64(1))
-	require.Equal(t, isEmpty, false)
 
 	require.Equal(t, count, 0)
 
