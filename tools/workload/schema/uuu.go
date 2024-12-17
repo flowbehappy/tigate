@@ -89,7 +89,7 @@ var (
 	once               sync.Once
 )
 
-const columnLen = 1000
+const columnLen = 720
 
 func generateString() string {
 	once.Do(func() {
