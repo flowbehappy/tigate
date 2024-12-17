@@ -76,7 +76,11 @@ const (
 	sysbench = "sysbench"
 	largeRow = "large_row"
 	shopItem = "shop_item"
+	uuu      = "uuu"
 )
+
+// Add a prepared statement cache
+var stmtCache sync.Map // map[string]*sql.Stmt
 
 func init() {
 	flag.StringVar(&dbPrefix, "db-prefix", "", "the prefix of the database name")
@@ -89,7 +93,7 @@ func init() {
 	flag.Float64Var(&percentageForUpdate, "percentage-for-update", 0, "percentage for update: [0, 1.0]")
 	flag.BoolVar(&skipCreateTable, "skip-create-table", false, "do not create tables")
 	flag.StringVar(&action, "action", "prepare", "action of the workload: [prepare, insert, update, delete, write, cleanup]")
-	flag.StringVar(&workloadType, "workload-type", "sysbench", "workload type: [bank, sysbench, express, common, one, bigtable, large_row, wallet, shop_item]")
+	flag.StringVar(&workloadType, "workload-type", "sysbench", "workload type: [bank, sysbench, large_row, shop_item, uuu]")
 	flag.StringVar(&dbHost, "database-host", "127.0.0.1", "database host")
 	flag.StringVar(&dbUser, "database-user", "root", "database user")
 	flag.StringVar(&dbPassword, "database-password", "", "database password")
@@ -186,8 +190,8 @@ func createDBConnection(dbName string) (*sql.DB, error) {
 }
 
 func configureDBConnection(db *sql.DB) {
-	db.SetMaxIdleConns(256)
-	db.SetMaxOpenConns(256)
+	db.SetMaxIdleConns(512)
+	db.SetMaxOpenConns(512)
 	db.SetConnMaxLifetime(time.Minute)
 }
 
@@ -207,6 +211,8 @@ func createWorkload() schema.Workload {
 		workload = schema.NewLargeRowWorkload(rowSize, largeRowSize, largeRowRatio)
 	case shopItem:
 		workload = schema.NewShopItemWorkload(totalRowCount, rowSize)
+	case uuu:
+		workload = schema.NewUUUWorkload()
 	default:
 		log.Panic("unsupported workload type", zap.String("workload", workloadType))
 	}
@@ -392,8 +398,16 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 func doInsert(db *sql.DB, workload schema.Workload) {
 	for {
 		j := rand.Intn(tableCount) + tableStartIndex
-		insertSql := workload.BuildInsertSql(j, batchSize)
-		_, err := execute(db, insertSql, workload, j)
+		var err error
+
+		if workloadType == uuu {
+			insertSql, values := workload.(*schema.UUUWorkload).BuildInsertSqlWithValues(j, batchSize)
+			_, err = executeWithValues(db, insertSql, workload, j, values)
+		} else {
+			insertSql := workload.BuildInsertSql(j, batchSize)
+			_, err = execute(db, insertSql, workload, j)
+		}
+
 		if err != nil {
 			log.Info("insert error", zap.Error(err))
 			errCount.Add(1)
@@ -421,6 +435,41 @@ func execute(db *sql.DB, sql string, workload schema.Workload, n int) (sql.Resul
 		return res, err
 	}
 	return res, nil
+}
+
+func executeWithValues(db *sql.DB, sqlStr string, workload schema.Workload, n int, values []interface{}) (sql.Result, error) {
+	queryCount.Add(1)
+
+	// Try to get prepared statement from cache
+	if stmt, ok := stmtCache.Load(sqlStr); ok {
+		return stmt.(*sql.Stmt).Exec(values...)
+	}
+
+	// Prepare the statement
+	stmt, err := db.Prepare(sqlStr)
+	if err != nil {
+		if !strings.Contains(err.Error(), "Error 1146") {
+			log.Info("prepare error", zap.Error(err))
+			return nil, err
+		}
+		// Create table if not exists
+		_, err := db.Exec(workload.BuildCreateTableStatement(n), values...)
+		if err != nil {
+			log.Info("create table error: ", zap.Error(err))
+			return nil, err
+		}
+		// Try prepare again
+		stmt, err = db.Prepare(sqlStr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Cache the prepared statement
+	stmtCache.Store(sqlStr, stmt)
+
+	// Execute the prepared statement
+	return stmt.Exec(values...)
 }
 
 // reportMetrics prints throughput statistics every 5 seconds
