@@ -62,7 +62,7 @@ func (c *UUUWorkload) BuildInsertSqlWithValues(tableN int, batchSize int) (strin
 		placeholders := make([]string, batchSize)
 		for r := 0; r < batchSize; r++ {
 			n := mrand.Int63()
-			values = append(values, n, n, generateString(), 1)
+			values = append(values, n, n, generateStringForData(), 1)
 			placeholders[r] = "(?,?,?,?)"
 		}
 		return sql + strings.Join(placeholders, ","), values
@@ -73,7 +73,7 @@ func (c *UUUWorkload) BuildInsertSqlWithValues(tableN int, batchSize int) (strin
 
 		for r := 0; r < batchSize; r++ {
 			n := mrand.Int63()
-			values = append(values, n, n, generateString(), 1)
+			values = append(values, n, n, generateStringForIndex(), 1)
 			placeholders[r] = "(?,?,?,?)"
 		}
 		return sql + strings.Join(placeholders, ","), values
@@ -85,19 +85,35 @@ func (c *UUUWorkload) BuildUpdateSql(opts UpdateOption) string {
 }
 
 var (
-	preGeneratedString string
-	once               sync.Once
+	preGeneratedStringForData string
+	columnLenForData          = 1024
+	onceForData               sync.Once
 )
 
-const columnLen = 720
-
-func generateString() string {
-	once.Do(func() {
+func generateStringForData() string {
+	onceForData.Do(func() {
 		builder := strings.Builder{}
-		for i := 0; i < columnLen; i++ {
+		for i := 0; i < columnLenForData; i++ {
 			builder.WriteString(fmt.Sprintf("%d", i))
 		}
-		preGeneratedString = builder.String()
+		preGeneratedStringForData = builder.String()
 	})
-	return preGeneratedString
+	return preGeneratedStringForData
+}
+
+var (
+	preGeneratedStringForIndex string
+	columnLenForIndex          = 256
+	onceForIndex               sync.Once
+)
+
+func generateStringForIndex() string {
+	onceForIndex.Do(func() {
+		builder := strings.Builder{}
+		for i := 0; i < columnLenForIndex; i++ {
+			builder.WriteString(fmt.Sprintf("%d", i))
+		}
+		preGeneratedStringForIndex = builder.String()
+	})
+	return preGeneratedStringForIndex
 }
