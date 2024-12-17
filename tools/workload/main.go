@@ -187,8 +187,8 @@ func createDBConnection(dbName string) (*sql.DB, error) {
 }
 
 func configureDBConnection(db *sql.DB) {
-	db.SetMaxIdleConns(256)
-	db.SetMaxOpenConns(256)
+	db.SetMaxIdleConns(512)
+	db.SetMaxOpenConns(512)
 	db.SetConnMaxLifetime(time.Minute)
 }
 

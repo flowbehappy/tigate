@@ -6,6 +6,7 @@ import (
 	mrand "math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 const createDataTableFormat = `
@@ -38,28 +39,35 @@ func NewUUUWorkload() Workload {
 
 // BuildCreateTableStatement returns the create-table sql for both Data and index_Data tables
 func (c *UUUWorkload) BuildCreateTableStatement(n int) string {
-	return fmt.Sprintf(createDataTableFormat, n) + fmt.Sprintf(createIndexTableFormat, n)
+	if n%2 == 0 {
+		return fmt.Sprintf(createDataTableFormat, n)
+	}
+	return fmt.Sprintf(createDataTableFormat, n)
 }
+
+var count atomic.Int64
 
 // BuildInsertSql returns two insert statements for Data and index_Data tables
 func (c *UUUWorkload) BuildInsertSql(tableN int, batchSize int) string {
 	var dataBuf, indexBuf bytes.Buffer
-
 	n := mrand.Int63()
-	// Data table insert - 修改为包含所有4列
-	dataBuf.WriteString(fmt.Sprintf("INSERT INTO Data%d (model_id, object_id, object_value, version) VALUES(%d, %d, %s, 1)", tableN, n, n, generateString()))
-	// index_Data table insert
-	indexBuf.WriteString(fmt.Sprintf("INSERT INTO index_Data%d (object_id, reference_id, guid, version) VALUES(%d, %d, %s, 1)", tableN, n, n, generateString()))
-
-	for r := 1; r < batchSize; r++ {
-		n := mrand.Int63()
-		// Data table values - 修改为包含所有4列的值
-		dataBuf.WriteString(fmt.Sprintf(",(%d, %d, %s, 1)", n, n, generateString()))
-		// index_Data table values 保持不变
-		indexBuf.WriteString(fmt.Sprintf(",(%d, %d, %s, 1)", n, n, generateString()))
+	count.Add(1)
+	if count.Load()%2 == 0 {
+		// Data table insert
+		dataBuf.WriteString(fmt.Sprintf("INSERT INTO Data%d (model_id, object_id, object_value, version) VALUES(%d, %d, %s, 1)", tableN, n, n, generateString()))
+		for r := 1; r < batchSize; r++ {
+			n := mrand.Int63()
+			dataBuf.WriteString(fmt.Sprintf(",(%d, %d, %s, 1)", n, n, generateString()))
+		}
+		return dataBuf.String()
+	} else {
+		indexBuf.WriteString(fmt.Sprintf("INSERT INTO index_Data%d (object_id, reference_id, guid, version) VALUES(%d, %d, %s, 1)", tableN, n, n, generateString()))
+		for r := 1; r < batchSize; r++ {
+			n := mrand.Int63()
+			indexBuf.WriteString(fmt.Sprintf(",(%d, %d, %s, 1)", n, n, generateString()))
+		}
+		return indexBuf.String()
 	}
-
-	return dataBuf.String() + ";" + indexBuf.String() + ";"
 }
 
 func (c *UUUWorkload) BuildUpdateSql(opts UpdateOption) string {
