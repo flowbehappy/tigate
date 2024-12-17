@@ -103,15 +103,19 @@ func (db *ChangefeedDB) StopByChangefeedID(cfID common.ChangeFeedID, remove bool
 
 	cf, ok := db.changefeeds[cfID]
 	if ok {
+		// remove the changefeed
 		delete(db.changefeeds, cfID)
-		db.removeChangefeedUnLock(cf)
+		delete(db.stopped, cf.ID)
+		db.RemoveReplicaWithoutLock(cf)
 
-		if !remove {
+		if remove {
+			log.Info("remove changefeed", zap.String("changefeed", cf.ID.String()))
+		} else {
+			log.Info("stop changefeed", zap.String("changefeed", cfID.String()))
 			// push back to stopped
 			db.changefeeds[cfID] = cf
 			db.stopped[cfID] = cf
 		}
-		log.Info("stop changefeed", zap.String("changefeed", cfID.String()))
 
 		nodeID := cf.GetNodeID()
 		if cf.GetNodeID() == "" {
@@ -277,14 +281,4 @@ func (db *ChangefeedDB) ReplaceStoppedChangefeed(cf *config.ChangeFeedInfo) {
 	newCf := NewChangefeed(cf.ChangefeedID, cf, oldCf.GetStatus().CheckpointTs)
 	db.stopped[cf.ChangefeedID] = newCf
 	db.changefeeds[cf.ChangefeedID] = newCf
-}
-
-// removeChangefeedUnLock removes the changefeed from the db without lock
-func (db *ChangefeedDB) removeChangefeedUnLock(cf *Changefeed) {
-	log.Info("remove changefeed",
-		zap.String("changefeed", cf.ID.String()))
-
-	db.RemoveReplicaWithoutLock(cf)
-	delete(db.stopped, cf.ID)
-	delete(db.changefeeds, cf.ID)
 }
