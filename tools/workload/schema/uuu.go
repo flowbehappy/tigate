@@ -1,7 +1,6 @@
 package schema
 
 import (
-	"bytes"
 	"fmt"
 	mrand "math/rand"
 	"strings"
@@ -42,31 +41,42 @@ func (c *UUUWorkload) BuildCreateTableStatement(n int) string {
 	if n%2 == 0 {
 		return fmt.Sprintf(createDataTableFormat, n)
 	}
-	return fmt.Sprintf(createDataTableFormat, n)
+	return fmt.Sprintf(createIndexTableFormat, n)
 }
 
 var count atomic.Int64
 
-// BuildInsertSql returns two insert statements for Data and index_Data tables
 func (c *UUUWorkload) BuildInsertSql(tableN int, batchSize int) string {
-	var dataBuf, indexBuf bytes.Buffer
-	n := mrand.Int63()
+	panic("unimplemented")
+}
+
+// BuildInsertSql returns two insert statements for Data and index_Data tables
+func (c *UUUWorkload) BuildInsertSqlWithValues(tableN int, batchSize int) (string, []interface{}) {
+	var sql string
+	values := make([]interface{}, 0, batchSize*4) // 预分配空间：每行4个值
 	count.Add(1)
+
 	if count.Load()%2 == 0 {
 		// Data table insert
-		dataBuf.WriteString(fmt.Sprintf("INSERT INTO Data%d (model_id, object_id, object_value, version) VALUES(%d, %d, %s, 1)", tableN, n, n, generateString()))
-		for r := 1; r < batchSize; r++ {
+		sql = fmt.Sprintf("INSERT INTO Data%d (model_id, object_id, object_value, version) VALUES ", tableN)
+		placeholders := make([]string, batchSize)
+		for r := 0; r < batchSize; r++ {
 			n := mrand.Int63()
-			dataBuf.WriteString(fmt.Sprintf(",(%d, %d, %s, 1)", n, n, generateString()))
+			values = append(values, n, n, generateString(), 1)
+			placeholders[r] = "(?,?,?,?)"
 		}
-		return dataBuf.String()
+		return sql + strings.Join(placeholders, ","), values
 	} else {
-		indexBuf.WriteString(fmt.Sprintf("INSERT INTO index_Data%d (object_id, reference_id, guid, version) VALUES(%d, %d, %s, 1)", tableN, n, n, generateString()))
-		for r := 1; r < batchSize; r++ {
+		// Index table insert
+		sql = fmt.Sprintf("INSERT INTO index_Data%d (object_id, reference_id, guid, version) VALUES ", tableN)
+		placeholders := make([]string, batchSize)
+
+		for r := 0; r < batchSize; r++ {
 			n := mrand.Int63()
-			indexBuf.WriteString(fmt.Sprintf(",(%d, %d, %s, 1)", n, n, generateString()))
+			values = append(values, n, n, generateString(), 1)
+			placeholders[r] = "(?,?,?,?)"
 		}
-		return indexBuf.String()
+		return sql + strings.Join(placeholders, ","), values
 	}
 }
 
@@ -79,10 +89,12 @@ var (
 	once               sync.Once
 )
 
+const columnLen = 1
+
 func generateString() string {
 	once.Do(func() {
 		builder := strings.Builder{}
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < columnLen; i++ {
 			builder.WriteString(fmt.Sprintf("%d", i))
 		}
 		preGeneratedString = builder.String()

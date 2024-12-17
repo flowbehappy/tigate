@@ -79,6 +79,9 @@ const (
 	uuu      = "uuu"
 )
 
+// Add a prepared statement cache
+var stmtCache sync.Map // map[string]*sql.Stmt
+
 func init() {
 	flag.StringVar(&dbPrefix, "db-prefix", "", "the prefix of the database name")
 	flag.IntVar((&dbNum), "db-num", 1, "the number of databases")
@@ -395,8 +398,16 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 func doInsert(db *sql.DB, workload schema.Workload) {
 	for {
 		j := rand.Intn(tableCount) + tableStartIndex
-		insertSql := workload.BuildInsertSql(j, batchSize)
-		_, err := execute(db, insertSql, workload, j)
+		var err error
+
+		if workloadType == uuu {
+			insertSql, values := workload.(*schema.UUUWorkload).BuildInsertSqlWithValues(j, batchSize)
+			_, err = executeWithValues(db, insertSql, workload, j, values)
+		} else {
+			insertSql := workload.BuildInsertSql(j, batchSize)
+			_, err = execute(db, insertSql, workload, j)
+		}
+
 		if err != nil {
 			log.Info("insert error", zap.Error(err))
 			errCount.Add(1)
@@ -424,6 +435,41 @@ func execute(db *sql.DB, sql string, workload schema.Workload, n int) (sql.Resul
 		return res, err
 	}
 	return res, nil
+}
+
+func executeWithValues(db *sql.DB, sqlStr string, workload schema.Workload, n int, values []interface{}) (sql.Result, error) {
+	queryCount.Add(1)
+
+	// Try to get prepared statement from cache
+	if stmt, ok := stmtCache.Load(sqlStr); ok {
+		return stmt.(*sql.Stmt).Exec(values...)
+	}
+
+	// Prepare the statement
+	stmt, err := db.Prepare(sqlStr)
+	if err != nil {
+		if !strings.Contains(err.Error(), "Error 1146") {
+			log.Info("prepare error", zap.Error(err))
+			return nil, err
+		}
+		// Create table if not exists
+		_, err := db.Exec(workload.BuildCreateTableStatement(n), values...)
+		if err != nil {
+			log.Info("create table error: ", zap.Error(err))
+			return nil, err
+		}
+		// Try prepare again
+		stmt, err = db.Prepare(sqlStr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Cache the prepared statement
+	stmtCache.Store(sqlStr, stmt)
+
+	// Execute the prepared statement
+	return stmt.Exec(values...)
 }
 
 // reportMetrics prints throughput statistics every 5 seconds
