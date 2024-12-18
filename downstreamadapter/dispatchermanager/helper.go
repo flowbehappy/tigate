@@ -28,9 +28,31 @@ import (
 )
 
 type DispatcherMap struct {
-	m     sync.Map
-	mutex sync.Mutex // mutex is protected when the seq is need to get or set, and make the seq and map change atomic.
-	seq   uint64     // sequence number is increasing when changed
+	m sync.Map
+	// mutex is used to protect the seq.
+	// Here we don't need to make seq changes always atmoic with the m changed.
+	// Our target is :
+	// The seq get from ForEach should be smaller than the seq get from Set
+	// when ForEach is not access the new dispatcher just Set.
+	// So we add seq after the dispatcher is add in the m for Set, and get the seq before do range for ForRange.
+	mutex sync.Mutex
+	// sequence number is increasing when dispatcher is added.
+	//
+	// Seq is used to prevent the fallback of changefeed's checkpointTs.
+	// When some new dispatcher(table) is being added, the maintainer will block the forward of changefeed's checkpointTs
+	// until the maintainer receive the message that the new dispatcher's component status change to working
+	// Besides, there is no strict order of the heartbeat message and the table status messages, which is means
+	// it can happen that when dispatcher A is created, event dispatcher manager may first send a table status message
+	// to show the new dispatcher is working, and then send a heartbeat message of the current watermark,
+	// which is calculated without the new disaptcher.
+	// When the checkpoinTs of the watermark is large than the startTs of the new dispatcher,
+	// the watermark of next heartbeat, which calculated with the new dispatcher can be less than the previous watermark.
+	// Then it can cause the fallback of changefeed's checkpointTs.
+	// To avoid fallback, we add a seq number in each heartbeat message(including table span messages)
+	// When a table is added the seq number will be increase,
+	// and when the maintainer receive the outdate seq, it will know the heartbeat message is outdate and ignore it.
+	// In this way, even the above case happens, the changefeed's checkpointTs will not fallback.
+	seq uint64
 }
 
 func newDispatcherMap() *DispatcherMap {
@@ -64,29 +86,27 @@ func (d *DispatcherMap) GetSeq() uint64 {
 }
 
 func (d *DispatcherMap) Delete(id common.DispatcherID) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
 	d.m.Delete(id)
-	d.seq++
 }
 
 func (d *DispatcherMap) Set(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) uint64 {
+	d.m.Store(id, dispatcher)
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	d.m.Store(id, dispatcher)
 	d.seq++
-
 	return d.seq
 }
 
 func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *dispatcher.Dispatcher)) uint64 {
+	var seq uint64
 	d.mutex.Lock()
-	defer d.mutex.Unlock()
+	seq = d.seq
+	d.mutex.Unlock()
 	d.m.Range(func(key, value interface{}) bool {
 		fn(key.(common.DispatcherID), value.(*dispatcher.Dispatcher))
 		return true
 	})
-	return d.seq
+	return seq
 }
 
 func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
