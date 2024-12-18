@@ -40,14 +40,14 @@ import (
 // coordinator implements the Coordinator interface
 type coordinator struct {
 	nodeInfo     *node.Info
-	initialized  bool
 	version      int64
 	lastTickTime time.Time
+
+	controller *Controller
 
 	mc            messaging.MessageCenter
 	stream        dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
-	controller    *Controller
 
 	gcManager gc.Manager
 	pdClient  pd.Client
@@ -85,9 +85,20 @@ func New(node *node.Info,
 	c.stream.Start()
 	c.taskScheduler = threadpool.NewThreadPoolDefault()
 
-	ctl := NewController(c.version, c.nodeInfo, c.updatedChangefeedCh, c.stateChangedCh, backend, c.stream, c.taskScheduler, batchSize, balanceCheckInterval)
-	c.controller = ctl
-	if err := c.stream.AddPath("coordinator", ctl); err != nil {
+	controller := NewController(
+		c.version,
+		c.nodeInfo,
+		c.updatedChangefeedCh,
+		c.stateChangedCh,
+		backend,
+		c.stream,
+		c.taskScheduler,
+		batchSize,
+		balanceCheckInterval,
+	)
+
+	c.controller = controller
+	if err := c.stream.AddPath("coordinator", controller); err != nil {
 		log.Panic("failed to add path",
 			zap.Error(err))
 	}

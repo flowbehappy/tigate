@@ -360,8 +360,8 @@ func TestDynamicStreamRemovePath(t *testing.T) {
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1) // Only one event is processed
-	ds.Push("path", &simpleEvent{path: "p1", wg: wg})
-	ds.Push("path", &simpleEvent{path: "p1", wg: wg})
+	ds.Push("p1", &simpleEvent{path: "p1", wg: wg})
+	ds.Push("p1", &simpleEvent{path: "p1", wg: wg})
 
 	// The case is good if it doesn't panic
 	// Sleep is to make sure events are actually processed
@@ -536,13 +536,13 @@ func TestDynamicStreamOrder(t *testing.T) {
 
 	wg := &sync.WaitGroup{}
 	wg.Add(6)
-	ds.Push("path", &testOrder{path: "p1", id: 1, timestamp: 1, wg: wg})
-	ds.Push("path", &testOrder{path: "p2", id: 2, timestamp: 3, wg: wg})
-	ds.Push("path", &testOrder{path: "p3", id: 3, timestamp: 6, wg: wg})
+	ds.Push("p1", &testOrder{path: "p1", id: 1, timestamp: 1, wg: wg})
+	ds.Push("p2", &testOrder{path: "p2", id: 2, timestamp: 3, wg: wg})
+	ds.Push("p3", &testOrder{path: "p3", id: 3, timestamp: 6, wg: wg})
 
-	ds.Push("path", &testOrder{path: "p1", id: 4, timestamp: 2, wg: wg})
-	ds.Push("path", &testOrder{path: "p2", id: 5, timestamp: 4, wg: wg})
-	ds.Push("path", &testOrder{path: "p3", id: 6, timestamp: 5, wg: wg})
+	ds.Push("p1", &testOrder{path: "p1", id: 4, timestamp: 2, wg: wg})
+	ds.Push("p2", &testOrder{path: "p2", id: 5, timestamp: 4, wg: wg})
+	ds.Push("p3", &testOrder{path: "p3", id: 6, timestamp: 5, wg: wg})
 
 	time.Sleep(10 * time.Millisecond) // Make sure all the events are in the pending queue
 	hwg.Done()

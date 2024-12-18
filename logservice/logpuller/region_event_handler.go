@@ -20,8 +20,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"go.uber.org/zap"
+)
+
+var (
+	metricsResolvedTsCount = metrics.PullerEventCounter.WithLabelValues("resolved_ts")
+	metricsEventCount      = metrics.PullerEventCounter.WithLabelValues("event")
 )
 
 const (
@@ -79,6 +85,7 @@ func (h *regionEventHandler) Handle(span *subscribedSpan, events ...regionEvent)
 		}
 	}
 	if len(span.kvEventsCache) > 0 {
+		metricsEventCount.Add(float64(len(span.kvEventsCache)))
 		await := span.consumeKVEvents(span.kvEventsCache, func() {
 			span.clearKVEventsCache()
 			h.subClient.wakeSubscription(span.subID)
