@@ -84,8 +84,8 @@ func NewMaintainerManager(selfNode *node.Info,
 	}
 	m.stream = dynstream.NewDynamicStream(NewStreamHandler())
 	m.stream.Start()
-	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.recvMessages)
 
+	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.recvMessages)
 	mc.RegisterHandler(messaging.MaintainerTopic,
 		func(ctx context.Context, msg *messaging.TargetMessage) error {
 			req := msg.Message[0].(*heartbeatpb.MaintainerCloseResponse)
@@ -94,12 +94,13 @@ func NewMaintainerManager(selfNode *node.Info,
 	return m
 }
 
+// recvMessages is the message handler for maintainer manager
 func (m *Manager) recvMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	switch msg.Type {
-	// receive message from coordinator
-	case messaging.TypeAddMaintainerRequest, messaging.TypeRemoveMaintainerRequest:
-		fallthrough
-	case messaging.TypeCoordinatorBootstrapRequest:
+	// Coordinator related messages
+	case messaging.TypeAddMaintainerRequest,
+		messaging.TypeRemoveMaintainerRequest,
+		messaging.TypeCoordinatorBootstrapRequest:
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -145,7 +146,6 @@ func (m *Manager) Run(ctx context.Context) error {
 		case <-ticker.C:
 			//1.  try to send heartbeat to coordinator
 			m.sendHeartbeat()
-
 			//2. cleanup removed maintainers
 			m.maintainers.Range(func(key, value interface{}) bool {
 				cf := value.(*Maintainer)
@@ -204,6 +204,7 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 	m.maintainers.Range(func(key, value interface{}) bool {
 		maintainer := value.(*Maintainer)
 		response.Statuses = append(response.Statuses, maintainer.GetMaintainerStatus())
+		// fizz: 这有什么用？
 		maintainer.statusChanged.Store(false)
 		maintainer.lastReportTime = time.Now()
 		return true
@@ -212,6 +213,7 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 	msg = m.newCoordinatorTopicMessage(response)
 	err := m.mc.SendCommand(msg)
 	if err != nil {
+		// fizz: 为什么不用重发?
 		log.Warn("send command failed", zap.Error(err))
 	}
 	log.Info("new coordinator online",
@@ -327,7 +329,8 @@ func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 	case messaging.TypeCoordinatorBootstrapRequest:
 		log.Info("received coordinator bootstrap request", zap.String("from", msg.From.String()))
 		m.onCoordinatorBootstrapRequest(msg)
-	case messaging.TypeAddMaintainerRequest, messaging.TypeRemoveMaintainerRequest:
+	case messaging.TypeAddMaintainerRequest,
+		messaging.TypeRemoveMaintainerRequest:
 		if m.coordinatorVersion > 0 {
 			status := m.onDispatchMaintainerRequest(msg)
 			if status == nil {
