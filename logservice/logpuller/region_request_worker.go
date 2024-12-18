@@ -257,6 +257,11 @@ func (s *regionRequestWorker) dispatchResolvedTsEvent(resolvedTsEvent *cdcpb.Res
 				worker:     s,
 				resolvedTs: resolvedTsEvent.Ts,
 			})
+		} else {
+			log.Warn("region request worker receives a resolved ts event for an untracked region",
+				zap.Uint64("workerID", s.workerID),
+				zap.Uint64("subscriptionID", uint64(subscriptionID)),
+				zap.Uint64("regionID", regionID))
 		}
 	}
 }
