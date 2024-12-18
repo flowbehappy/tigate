@@ -303,7 +303,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 	for {
 		// TODO: can region be nil?
 		subID := region.subscribedSpan.subID
-		log.Debug("region request worker gets a singleRegionInfo",
+		log.Info("region request worker gets a singleRegionInfo",
 			zap.Uint64("workerID", s.workerID),
 			zap.Uint64("subscriptionID", uint64(subID)),
 			zap.Uint64("regionID", region.verID.GetID()),
