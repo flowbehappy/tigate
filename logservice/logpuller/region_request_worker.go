@@ -319,6 +319,9 @@ func (s *regionRequestWorker) processRegionSendTask(
 			if err := doSend(req, subID); err != nil {
 				return err
 			}
+			log.Info("region request worker sends a deregister request",
+				zap.Uint64("workerID", s.workerID),
+				zap.Uint64("subscriptionID", uint64(subID)))
 			for _, state := range s.takeRegionStates(subID) {
 				state.markStopped(&sendRequestToStoreErr{})
 			}
