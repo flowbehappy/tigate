@@ -9,9 +9,11 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/log"
 	. "github.com/pingcap/ticdc/pkg/apperror"
 	. "github.com/pingcap/ticdc/utils"
 	"github.com/pingcap/ticdc/utils/deque"
+	"go.uber.org/zap"
 )
 
 const TrackTopPaths = 16
@@ -424,7 +426,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			return false
 		}
 		if _, ok := si.pathMap[pi]; !ok {
-			panic("The path should exist in the stream")
+			log.Panic("The path should exist in the stream", zap.Any("path", pi.path), zap.Any("stream", si.stream.id))
 		}
 		delete(si.pathMap, pi)
 		return true
@@ -609,6 +611,11 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			for i := 0; i < d.baseStreamCount/2; i++ {
 				leastBusy := baseStreamInfos[i]
 				mostBusy := baseStreamInfos[d.baseStreamCount-1-i]
+
+				// If the most busy stream is the same as the least busy stream, do nothing.
+				if mostBusy.stream.id == leastBusy.stream.id {
+					continue
+				}
 
 				ratio1, ok1 := mostBusy.busyRatio(testPeriod)
 				ratio2, ok2 := leastBusy.busyRatio(testPeriod)
