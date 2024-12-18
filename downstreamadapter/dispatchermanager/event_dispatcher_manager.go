@@ -210,15 +210,15 @@ func (e *EventDispatcherManager) initSink(ctx context.Context) error {
 	return nil
 }
 
-func (e *EventDispatcherManager) TryClose(remove bool) bool {
+func (e *EventDispatcherManager) TryClose(removeChangefeed bool) bool {
 	if !e.closing {
 		e.closing = true
-		go e.close(remove)
+		go e.close(removeChangefeed)
 	}
 	return e.closed.Load()
 }
 
-func (e *EventDispatcherManager) close(remove bool) {
+func (e *EventDispatcherManager) close(removeChangefeed bool) {
 	log.Info("closing event dispatcher manager", zap.Stringer("changefeedID", e.changefeedID))
 
 	toCloseDispatchers := make([]*dispatcher.Dispatcher, 0)
@@ -253,7 +253,7 @@ func (e *EventDispatcherManager) close(remove bool) {
 		return
 	}
 
-	err = e.sink.Close(remove)
+	err = e.sink.Close(removeChangefeed)
 	if err != nil && errors.Cause(err) != context.Canceled {
 		log.Error("close sink failed", zap.Error(err))
 		return
@@ -346,14 +346,23 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 		return nil
 	}
 
-	// we batch the creatation for the dispatchers,
-	// mainly because we need to batch the query for startTs
-	newStartTsList, err := e.sink.CheckStartTsList(tableIds, startTsList)
-	if err != nil {
-		return errors.Trace(err)
+	// When sink is mysql-class, we need to query the startTs from the downstream.
+	// Because we have to sync data at least from the last ddl commitTs to avoid write old data to new schema
+	// While for other type sink, they don't have the problem of writing old data to new schema,
+	// so we just return the startTs we get.
+	// Besides, we batch the creatation for the dispatchers,
+	// mainly because we need to batch the query for startTs when sink is mysql-class to reduce the time cost.
+	var newStartTsList []int64
+	var err error
+	if e.sink.SinkType() == common.MysqlSinkType {
+		newStartTsList, err = e.sink.(*sink.MysqlSink).GetStartTsList(tableIds, startTsList)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Info("calculate real startTs for dispatchers", zap.Any("receive startTs", startTsList), zap.Any("real startTs", newStartTsList))
+	} else {
+		newStartTsList = startTsList
 	}
-
-	log.Info("calculate real startTs for dispatchers", zap.Any("receive startTs", startTsList), zap.Any("real startTs", newStartTsList))
 
 	for idx, id := range dispatcherIds {
 		d := dispatcher.NewDispatcher(

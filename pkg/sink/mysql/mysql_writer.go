@@ -367,11 +367,11 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 
 }
 
-// CheckStartTsList return the startTs list for each table in the tableIDs list.
+// GetStartTsList return the startTs list for each table in the tableIDs list.
 // For each table,
 // If no ddl-ts-v1 table or no the row for the table , startTs = 0; -- means the table is new.
 // Otherwise, startTs = ddl-ts value.
-func (w *MysqlWriter) CheckStartTsList(tableIDs []int64) ([]int64, error) {
+func (w *MysqlWriter) GetStartTsList(tableIDs []int64) ([]int64, error) {
 	retStartTsList := make([]int64, len(tableIDs))
 	tableIdIdxMap := make(map[int64]int, 0)
 	for i, tableID := range tableIDs {

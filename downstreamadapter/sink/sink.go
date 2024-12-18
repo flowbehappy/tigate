@@ -17,7 +17,6 @@ import (
 	"context"
 	"net/url"
 
-	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
@@ -27,15 +26,16 @@ import (
 )
 
 type Sink interface {
-	AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress)
-	WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error
-	PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
-	AddCheckpointTs(ts uint64)
-	SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore)
-	CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error)
-	Close(removeDDLTsItem bool) error
 	SinkType() common.SinkType
 	IsNormal() bool
+
+	AddDMLEvent(event *commonEvent.DMLEvent)
+	WriteBlockEvent(event commonEvent.BlockEvent) error
+	PassBlockEvent(event commonEvent.BlockEvent)
+	AddCheckpointTs(ts uint64)
+
+	SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore)
+	Close(removeChangefeed bool) error
 }
 
 func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID common.ChangeFeedID, errCh chan error) (Sink, error) {

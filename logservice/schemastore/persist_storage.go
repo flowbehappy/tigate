@@ -316,12 +316,13 @@ func (p *persistentStorage) unregisterTable(tableID int64) error {
 }
 
 func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {
-	p.mu.Lock()
+	p.mu.RLock()
 	store, ok := p.tableInfoStoreMap[tableID]
 	if !ok {
+		p.mu.RUnlock()
 		return nil, fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 	}
-	p.mu.Unlock()
+	p.mu.RUnlock()
 	return store.getTableInfo(ts)
 }
 
