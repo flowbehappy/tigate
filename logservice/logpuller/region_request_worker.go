@@ -197,7 +197,7 @@ func (s *regionRequestWorker) receiveAndDispatchChangeEvents(
 			return errors.Trace(err)
 		}
 		if len(changeEvent.Events) > 0 {
-			s.dispatchRegionChangeEvents(ctx, changeEvent.Events)
+			s.dispatchRegionChangeEvents(changeEvent.Events)
 		}
 		if changeEvent.ResolvedTs != nil {
 			s.dispatchResolvedTsEvent(changeEvent.ResolvedTs)
@@ -205,7 +205,7 @@ func (s *regionRequestWorker) receiveAndDispatchChangeEvents(
 	}
 }
 
-func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, events []*cdcpb.Event) {
+func (s *regionRequestWorker) dispatchRegionChangeEvents(events []*cdcpb.Event) {
 	for _, event := range events {
 		regionID := event.RegionId
 		subscriptionID := SubscriptionID(event.RequestId)
@@ -221,8 +221,7 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 			case *cdcpb.Event_Admin_:
 				// ignore
 			case *cdcpb.Event_Error:
-				// TODO: change to debug level
-				log.Info("region request worker receives a region error",
+				log.Debug("region request worker receives a region error",
 					zap.Uint64("workerID", s.workerID),
 					zap.Uint64("subscriptionID", uint64(subscriptionID)),
 					zap.Uint64("regionID", event.RegionId),
