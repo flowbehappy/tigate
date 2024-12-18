@@ -306,7 +306,7 @@ func (p *persistentStorage) unregisterTable(tableID int64) error {
 	p.tableRegisteredCount[tableID] -= 1
 	if p.tableRegisteredCount[tableID] <= 0 {
 		if _, ok := p.tableInfoStoreMap[tableID]; !ok {
-			return fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
+			return fmt.Errorf("table %d not found", tableID)
 		}
 		delete(p.tableInfoStoreMap, tableID)
 		log.Info("unregister table",
@@ -320,7 +320,7 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 	store, ok := p.tableInfoStoreMap[tableID]
 	if !ok {
 		p.mu.RUnlock()
-		return nil, fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
+		return nil, fmt.Errorf("table %d not found", tableID)
 	}
 	p.mu.RUnlock()
 	return store.getTableInfo(ts)
