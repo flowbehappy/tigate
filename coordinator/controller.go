@@ -48,7 +48,7 @@ type Controller struct {
 
 	nodeChanged *atomic.Bool
 
-	cfScheduller       *scheduler.Controller
+	cfScheduler        *scheduler.Controller
 	operatorController *operator.Controller
 	changefeedDB       *changefeed.ChangefeedDB
 	messageCenter      messaging.MessageCenter
@@ -94,7 +94,7 @@ func NewController(
 		version:      version,
 		batchSize:    batchSize,
 		bootstrapped: atomic.NewBool(false),
-		cfScheduller: scheduler.NewController(map[string]scheduler.Scheduler{
+		cfScheduler: scheduler.NewController(map[string]scheduler.Scheduler{
 			scheduler.BasicScheduler:   scheduler.NewBasicScheduler(selfNode.ID.String(), batchSize, oc, changefeedDB, nodeManager, oc.NewAddMaintainerOperator),
 			scheduler.BalanceScheduler: scheduler.NewBalanceScheduler(selfNode.ID.String(), batchSize, oc, changefeedDB, nodeManager, balanceInterval, oc.NewMoveMaintainerOperator),
 		}),
@@ -358,7 +358,7 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 	}
 
 	// start operator and scheduler
-	c.taskHandlers = append(c.taskHandlers, c.cfScheduller.Start(c.taskScheduler)...)
+	c.taskHandlers = append(c.taskHandlers, c.cfScheduler.Start(c.taskScheduler)...)
 	operatorControllerHandle := c.taskScheduler.Submit(c.operatorController, time.Now())
 	c.taskHandlers = append(c.taskHandlers, operatorControllerHandle)
 	c.bootstrapped.Store(true)
