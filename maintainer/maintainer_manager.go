@@ -204,7 +204,6 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 	m.maintainers.Range(func(key, value interface{}) bool {
 		maintainer := value.(*Maintainer)
 		response.Statuses = append(response.Statuses, maintainer.GetMaintainerStatus())
-		// fizz: 这有什么用？
 		maintainer.statusChanged.Store(false)
 		maintainer.lastReportTime = time.Now()
 		return true
@@ -213,7 +212,6 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 	msg = m.newCoordinatorTopicMessage(response)
 	err := m.mc.SendCommand(msg)
 	if err != nil {
-		// fizz: 为什么不用重发?
 		log.Warn("send command failed", zap.Error(err))
 	}
 	log.Info("new coordinator online",

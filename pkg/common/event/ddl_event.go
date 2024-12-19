@@ -38,7 +38,7 @@ type DDLEvent struct {
 	// State is the state of sender when sending this event.
 	State EventSenderState `json:"state"`
 	// TODO: just here for compile, may be changed later
-	MultipleTableInfos []*common.TableInfo `json:"multiple_table_infos"`
+	MultipleTableInfos []*common.TableInfo `json:"-"`
 
 	BlockedTables     *InfluencedTables `json:"blocked_tables"`
 	UpdatedSchemas    []SchemaIDChange  `json:"updated_schemas"`

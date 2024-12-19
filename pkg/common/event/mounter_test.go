@@ -668,31 +668,31 @@ func TestNullColumn(t *testing.T) {
 	require.NotNil(t, tableInfo)
 
 	// column b is the 2th column
-	colValue, err := common.FormatColVal(&row.Row, tableInfo.Columns[1], 1)
+	colValue, err := common.FormatColVal(&row.Row, tableInfo.GetColumns()[1], 1)
 	require.NoError(t, err)
 	require.Equal(t, nil, colValue)
 	// column d is the 4th column
-	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[3], 3)
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.GetColumns()[3], 3)
 	require.NoError(t, err)
 	require.Equal(t, nil, colValue)
 	// column f is the 6th column
-	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[5], 5)
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.GetColumns()[5], 5)
 	require.NoError(t, err)
 	require.Equal(t, nil, colValue)
 	// column h is the 8th column
-	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[7], 7)
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.GetColumns()[7], 7)
 	require.NoError(t, err)
 	require.Equal(t, nil, colValue)
 	// column j is the 10th column
-	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[9], 9)
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.GetColumns()[9], 9)
 	require.NoError(t, err)
 	require.Equal(t, nil, colValue)
 	// column l is the 12th column
-	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[11], 11)
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.GetColumns()[11], 11)
 	require.NoError(t, err)
 	require.Equal(t, nil, colValue)
 	// column ah is the 34th column
-	colValue, err = common.FormatColVal(&row.Row, tableInfo.Columns[33], 33)
+	colValue, err = common.FormatColVal(&row.Row, tableInfo.GetColumns()[33], 33)
 	require.NoError(t, err)
 	require.Equal(t, nil, colValue)
 }
@@ -711,7 +711,7 @@ func TestBinary(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, RowTypeInsert, row.RowType)
 	tableInfo := helper.GetTableInfo(job)
-	v, err := common.FormatColVal(&row.Row, tableInfo.Columns[0], 0)
+	v, err := common.FormatColVal(&row.Row, tableInfo.GetColumns()[0], 0)
 	require.NoError(t, err)
 	binaryFormat := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A}
 	require.Equal(t, binaryFormat, v)
