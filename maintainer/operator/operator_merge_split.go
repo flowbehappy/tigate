@@ -32,17 +32,21 @@ import (
 // and then added some new spans to the replication db
 type MergeSplitDispatcherOperator struct {
 	db               *replica.ReplicationDB
+	originNode       node.ID
 	originReplicaSet *replica.SpanReplication
 	checkpointTs     uint64
 
 	primary             common.DispatcherID
-	affectedReplicaSets map[common.DispatcherID]*replica.SpanReplication
+	affectedReplicaSets []*replica.SpanReplication
 	totalRemoved        int
 	splitSpans          []*heartbeatpb.TableSpan
 	splitSpanInfo       string
 
-	finished atomic.Bool
-	lck      sync.Mutex
+	finished   atomic.Bool
+	onFinished func()
+
+	removed atomic.Bool
+	lck     sync.Mutex
 }
 
 // NewMergeSplitDispatcherOperator creates a new MergeSplitDispatcherOperator
@@ -59,20 +63,17 @@ func NewMergeSplitDispatcherOperator(
 		spansInfo += fmt.Sprintf("[%s,%s]",
 			hex.EncodeToString(span.StartKey), hex.EncodeToString(span.EndKey))
 	}
-	affectedReplicaSetsMap := make(map[common.DispatcherID]*replica.SpanReplication)
-	for _, r := range affectedReplicaSets {
-		affectedReplicaSetsMap[r.ID] = r
-	}
 	op := &MergeSplitDispatcherOperator{
 		db:                  db,
+		originNode:          originReplicaSet.GetNodeID(),
 		originReplicaSet:    originReplicaSet,
 		checkpointTs:        originReplicaSet.GetStatus().GetCheckpointTs(),
 		primary:             primary,
-		affectedReplicaSets: affectedReplicaSetsMap,
+		affectedReplicaSets: affectedReplicaSets,
 		totalRemoved:        0,
-
-		splitSpanInfo: spansInfo,
-		splitSpans:    splitSpans,
+		splitSpans:          splitSpans,
+		splitSpanInfo:       spansInfo,
+		onFinished:          onFinished,
 	}
 	return op
 }
@@ -81,7 +82,7 @@ func (m *MergeSplitDispatcherOperator) Start() {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	m.db.MarkSpanScheduling(m.replicaSet)
+	m.db.MarkSpanScheduling(m.originReplicaSet)
 }
 
 func (m *MergeSplitDispatcherOperator) OnNodeRemove(n node.ID) {
@@ -90,21 +91,34 @@ func (m *MergeSplitDispatcherOperator) OnNodeRemove(n node.ID) {
 
 	if n == m.originNode {
 		log.Info("origin node is removed",
-			zap.String("replicaSet", m.replicaSet.ID.String()))
-		m.finished.Store(true)
+			zap.String("replicaSet", m.originReplicaSet.ID.String()))
+		m.markFinished()
 	}
 }
 
-// AffectedNodes returns the nodes that the operator will affect
+func (m *MergeSplitDispatcherOperator) markFinished() {
+	m.finished.Store(true)
+	m.onFinished()
+}
+
 func (m *MergeSplitDispatcherOperator) AffectedNodes() []node.ID {
 	return []node.ID{m.originNode}
 }
 
 func (m *MergeSplitDispatcherOperator) ID() common.DispatcherID {
-	return m.replicaSet.ID
+	return m.originReplicaSet.ID
 }
 
 func (m *MergeSplitDispatcherOperator) IsFinished() bool {
+	if m.removed.Load() {
+		return true
+	}
+
+	if m.originReplicaSet.ID == m.primary {
+		// primary operator wait for all affected replica sets to be removed, since it
+		// is responsible for relpace them with new spans.
+		return m.finished.Load() && m.totalRemoved == len(m.affectedReplicaSets)
+	}
 	return m.finished.Load()
 }
 
@@ -116,15 +130,16 @@ func (m *MergeSplitDispatcherOperator) Check(from node.ID, status *heartbeatpb.T
 		if status.CheckpointTs > m.checkpointTs {
 			m.checkpointTs = status.CheckpointTs
 		}
+		m.originReplicaSet.UpdateStatus(status)
 		log.Info("replica set removed from origin node",
 			zap.Uint64("checkpointTs", m.checkpointTs),
-			zap.String("replicaSet", m.replicaSet.ID.String()))
-		m.finished.Store(true)
+			zap.String("replicaSet", m.originReplicaSet.ID.String()))
+		m.markFinished()
 	}
 }
 
 func (m *MergeSplitDispatcherOperator) Schedule() *messaging.TargetMessage {
-	return m.replicaSet.NewRemoveDispatcherMessage(m.originNode)
+	return m.originReplicaSet.NewRemoveDispatcherMessage(m.originNode)
 }
 
 // OnTaskRemoved is called when the task is removed by ddl
@@ -132,16 +147,20 @@ func (m *MergeSplitDispatcherOperator) OnTaskRemoved() {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	log.Info("task removed", zap.String("replicaSet", m.replicaSet.ID.String()))
-	m.finished.Store(true)
+	log.Info("task removed", zap.String("replicaSet", m.originReplicaSet.ID.String()))
+	m.removed.Store(true)
 }
 
 func (m *MergeSplitDispatcherOperator) PostFinish() {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	log.Info("split dispatcher operator finished", zap.String("id", m.replicaSet.ID.String()))
-	m.db.ReplaceReplicaSet(m.replicaSet, m.splitSpans, m.checkpointTs)
+	if m.originReplicaSet.ID == m.primary {
+		log.Info("merge-split dispatcher operator finished[primary]", zap.String("id", m.originReplicaSet.ID.String()))
+		m.db.ReplaceReplicaSet(m.affectedReplicaSets, m.splitSpans, m.checkpointTs)
+		return
+	}
+	log.Info("merge-split dispatcher operator finished[secondary]", zap.String("id", m.originReplicaSet.ID.String()))
 }
 
 func (m *MergeSplitDispatcherOperator) String() string {
