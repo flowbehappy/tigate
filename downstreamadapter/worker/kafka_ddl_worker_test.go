@@ -23,7 +23,7 @@ import (
 
 func kafkaDDLWorkerForTest(t *testing.T) *KafkaDDLWorker {
 	ctx := context.Background()
-	changefeedID := common.ChangefeedID4Test("test", "test")
+	changefeedID := common.NewChangefeedID4Test("test", "test")
 	openProtocol := "open-protocol"
 	sinkConfig := &config.SinkConfig{Protocol: &openProtocol}
 	uriTemplate := "kafka://%s/%s?kafka-version=0.9.0.0&max-batch-size=1" +

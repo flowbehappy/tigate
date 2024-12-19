@@ -209,7 +209,7 @@ func (s *KafkaSink) Close(_ bool) error {
 
 func newKafkaSinkForTest() (*KafkaSink, producer.DMLProducer, ddlproducer.DDLProducer, error) {
 	ctx := context.Background()
-	changefeedID := common.ChangefeedID4Test("test", "test")
+	changefeedID := common.NewChangefeedID4Test("test", "test")
 	errCh := make(chan error, 1)
 	openProtocol := "open-protocol"
 	sinkConfig := &config.SinkConfig{Protocol: &openProtocol}

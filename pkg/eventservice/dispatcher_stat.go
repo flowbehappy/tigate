@@ -28,19 +28,21 @@ type dispatcherStat struct {
 	// The start ts of the dispatcher
 	startTs uint64
 	// The max resolved ts received from event store.
-	resolvedTs atomic.Uint64
+	eventStoreResolvedTs atomic.Uint64
 	// The max latest commit ts received from event store.
 	latestCommitTs atomic.Uint64
-	// events <= checkpointTs will not needed by the dispatcher anymore
+	// The sentResolvedTs of the events that have been sent to the dispatcher.
+	sentResolvedTs atomic.Uint64
+	// checkpointTs is the ts that reported by the downstream dispatcher.
+	// events <= checkpointTs will not needed anymore, so we can inform eventStore to GC them.
 	// TODO: maintain it
 	checkpointTs atomic.Uint64
-	// The watermark of the events that have been sent to the dispatcher.
-	watermark atomic.Uint64
 	// The reset ts send by the dispatcher.
 	resetTs atomic.Uint64
-	// The seq of the events that have been sent to the dispatcher.
+
+	// The seq of the events that have been sent to the downstream dispatcher.
 	// It start from 1, and increase by 1 for each event.
-	// If the dispatcher is reset, the seq will be set to 1.
+	// If the dispatcher is reset, the seq should be set to 1.
 	seq atomic.Uint64
 
 	// isRunning is used to indicate whether the dispatcher is running.
@@ -58,11 +60,13 @@ type dispatcherStat struct {
 	syncPointInterval time.Duration
 
 	// Scan task related
-	// scanning is used to indicate whether the scan task is running.
+	// taskScanning is used to indicate whether the scan task is running.
 	// If so, we should wait until it is done before we send next resolvedTs event of
 	// this dispatcher.
-	scanning atomic.Bool
+	taskScanning atomic.Bool
 
+	// isRemoved is used to indicate whether the dispatcher is removed.
+	// If so, we should ignore the errors related to this dispatcher.
 	isRemoved atomic.Bool
 }
 
@@ -84,9 +88,9 @@ func newDispatcherStat(
 		dispStat.nextSyncPoint = info.GetSyncPointTs()
 		dispStat.syncPointInterval = info.GetSyncPointInterval()
 	}
-	dispStat.resolvedTs.Store(startTs)
+	dispStat.eventStoreResolvedTs.Store(startTs)
 	dispStat.checkpointTs.Store(startTs)
-	dispStat.watermark.Store(startTs)
+	dispStat.sentResolvedTs.Store(startTs)
 	dispStat.isRunning.Store(true)
 	return dispStat
 }
@@ -104,10 +108,11 @@ func (a *dispatcherStat) updateTableInfo(tableInfo *common.TableInfo) {
 
 // onResolvedTs try to update the resolved ts of the dispatcher.
 func (a *dispatcherStat) onResolvedTs(resolvedTs uint64) bool {
-	if resolvedTs < a.resolvedTs.Load() {
+	if resolvedTs < a.eventStoreResolvedTs.Load() {
 		log.Panic("resolved ts should not fallback")
 	}
-	return util.CompareAndMonotonicIncrease(&a.resolvedTs, resolvedTs)
+	log.Info("fizz onResolvedTs", zap.Uint64("resolvedTs", resolvedTs), zap.Uint64("eventStoreResolvedTs", a.eventStoreResolvedTs.Load()))
+	return util.CompareAndMonotonicIncrease(&a.eventStoreResolvedTs, resolvedTs)
 }
 
 func (a *dispatcherStat) onLatestCommitTs(latestCommitTs uint64) bool {
@@ -116,18 +121,18 @@ func (a *dispatcherStat) onLatestCommitTs(latestCommitTs uint64) bool {
 
 // getDataRange returns the the data range that the dispatcher needs to scan.
 func (a *dispatcherStat) getDataRange() (common.DataRange, bool) {
-	startTs := a.watermark.Load()
+	startTs := a.sentResolvedTs.Load()
 	if startTs < a.resetTs.Load() {
 		startTs = a.resetTs.Load()
 	}
-	if startTs >= a.resolvedTs.Load() {
+	if startTs >= a.eventStoreResolvedTs.Load() {
 		return common.DataRange{}, false
 	}
 	// ts range: (startTs, EndTs]
 	r := common.DataRange{
 		Span:    a.info.GetTableSpan(),
 		StartTs: startTs,
-		EndTs:   a.resolvedTs.Load(),
+		EndTs:   a.eventStoreResolvedTs.Load(),
 	}
 	return r, true
 }

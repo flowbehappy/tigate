@@ -54,7 +54,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 	dispatchers := make([]DispatcherInfo, 0, tableNum)
 	// register 1000,000 tables
 	for i := 0; i < tableNum; i++ {
-		acceptorInfo := newMockDispatcherInfo(common.NewDispatcherID(), int64(i), eventpb.ActionType_ACTION_TYPE_REGISTER)
+		acceptorInfo := newMockDispatcherInfo(t, common.NewDispatcherID(), int64(i), eventpb.ActionType_ACTION_TYPE_REGISTER)
 		dispatchers = append(dispatchers, acceptorInfo)
 		esImpl.registerDispatcher(ctx, acceptorInfo)
 	}
@@ -78,7 +78,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 					continue
 				}
 				spanStats := v.(*mockSpanStats)
-				spanStats.update(spanStats.watermark.Load()+1, nil)
+				spanStats.update(spanStats.resolvedTs.Load()+1, nil)
 			}
 			log.Info("send resolvedTs events for 1 million tables", zap.Duration("cost", time.Since(sendStart)), zap.Any("round", round))
 			round++

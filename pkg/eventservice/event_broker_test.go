@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/eventpb"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -16,101 +15,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewDispatcherStat(t *testing.T) {
-	startTs := uint64(123)
-
-	info := &mockDispatcherInfo{
-		id:        common.NewDispatcherID(),
-		clusterID: 1,
-		startTs:   startTs,
-	}
-
-	spanSubscription := newSpanSubscription(info.GetTableSpan(), startTs)
-	stat := newDispatcherStat(startTs, info, spanSubscription, nil)
-	require.Equal(t, info, stat.info)
-	require.Equal(t, startTs, stat.watermark.Load())
-	require.NotNil(t, stat.spanSubscription)
-	require.Equal(t, startTs, stat.spanSubscription.watermark.Load())
-	require.Nil(t, stat.filter)
-}
-
-func TestDispatcherStatUpdateWatermark(t *testing.T) {
-	startTs := uint64(123)
-	info := &mockDispatcherInfo{
-		id:        common.NewDispatcherID(),
-		clusterID: 1,
-		startTs:   startTs,
-	}
-
-	spanSubscription := newSpanSubscription(info.GetTableSpan(), startTs)
-	stat := newDispatcherStat(startTs, info, spanSubscription, nil)
-
-	// Case 1: no new events, only watermark change
-	stat.spanSubscription.onSubscriptionWatermark(456)
-	require.Equal(t, uint64(456), stat.spanSubscription.watermark.Load())
-	log.Info("pass TestDispatcherStatUpdateWatermark case 1")
-
-	// Case 2: new events, and watermark increase
-	stat.spanSubscription.onSubscriptionWatermark(789)
-	stat.spanSubscription.onNewCommitTs(360)
-	require.Equal(t, uint64(360), stat.spanSubscription.maxEventCommitTs.Load())
-	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
-	log.Info("pass TestDispatcherStatUpdateWatermark case 2")
-
-	// Case 3: new events, and watermark decrease
-	// watermark should not decrease
-	stat.spanSubscription.onSubscriptionWatermark(456)
-	stat.spanSubscription.onNewCommitTs(800)
-	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
-	require.Equal(t, uint64(800), stat.spanSubscription.maxEventCommitTs.Load())
-	log.Info("pass TestDispatcherStatUpdateWatermark case 3")
-
-}
-
 func newTableSpan(tableID int64, start, end string) *heartbeatpb.TableSpan {
 	return &heartbeatpb.TableSpan{
 		TableID:  tableID,
 		StartKey: []byte(start),
 		EndKey:   []byte(end),
 	}
-}
-
-func TestResolvedTsCache(t *testing.T) {
-	rc := newResolvedTsCache(10)
-	require.Equal(t, 0, rc.len)
-	require.Equal(t, 10, len(rc.cache))
-	require.Equal(t, 10, rc.limit)
-
-	// Case 1: insert a new resolved ts
-	rc.add(pevent.ResolvedEvent{
-		DispatcherID: common.NewDispatcherID(),
-		ResolvedTs:   100,
-	})
-	require.Equal(t, 1, rc.len)
-	require.Equal(t, uint64(100), rc.cache[0].ResolvedTs)
-	require.False(t, rc.isFull())
-
-	// Case 2: add more resolved ts until full
-	i := 1
-	for !rc.isFull() {
-		rc.add(pevent.ResolvedEvent{
-			DispatcherID: common.NewDispatcherID(),
-			ResolvedTs:   uint64(100 + i),
-		})
-		i++
-	}
-	require.Equal(t, 10, rc.len)
-	require.Equal(t, uint64(100), rc.cache[0].ResolvedTs)
-	require.Equal(t, uint64(109), rc.cache[9].ResolvedTs)
-	require.True(t, rc.isFull())
-
-	// Case 3: get all resolved ts
-	res := rc.getAll()
-	require.Equal(t, 10, len(res))
-	require.Equal(t, 0, rc.len)
-	require.Equal(t, uint64(100), res[0].ResolvedTs)
-	require.Equal(t, uint64(109), res[9].ResolvedTs)
-	require.False(t, rc.isFull())
 }
 
 func TestSendEvents(t *testing.T) {
@@ -182,15 +92,13 @@ func TestSendEvents(t *testing.T) {
 		}
 	}()
 
-	s := newEventBroker(ctx, 1, eventStore, schemaStore, mc, time.Local)
-	defer s.close()
+	eb := newEventBroker(ctx, 1, eventStore, schemaStore, mc, time.Local)
+	defer eb.close()
 
 	// Register the dispatcher
 	tableID := ddlEvent.TableID
-	info := newMockDispatcherInfo(common.NewDispatcherID(), tableID, eventpb.ActionType_ACTION_TYPE_REGISTER)
-	s.addDispatcher(info)
-	_, ok := s.spans[tableID]
-	require.True(t, ok)
+	info := newMockDispatcherInfo(t, common.NewDispatcherID(), tableID, eventpb.ActionType_ACTION_TYPE_REGISTER)
+	eb.addDispatcher(info)
 
 	schemaStore.AppendDDLEvent(tableID, ddlEvent, ddlEvent1, ddlEvent2)
 

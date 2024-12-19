@@ -32,7 +32,7 @@ func TestHandleBootstrapResponse(t *testing.T) {
 	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}, {ID: "cd"}})
 	require.Len(t, msgs, 2)
 
-	cfId := common.ChangefeedID4Test("ns", "cf")
+	cfId := common.NewChangefeedID4Test("ns", "cf")
 	// not found
 	cached := b.HandleBootstrapResponse(
 		"ef",
@@ -87,7 +87,7 @@ func TestHandleRemoveNodes(t *testing.T) {
 	// bootstrap one node and the remove another, bootstrapper should be initialized
 	cached := b.HandleRemoveNodes([]node.ID{"ef"})
 	require.Nil(t, cached)
-	cfId := common.ChangefeedID4Test("ns", "cf")
+	cfId := common.NewChangefeedID4Test("ns", "cf")
 	cached = b.HandleBootstrapResponse(
 		"ab",
 		&heartbeatpb.MaintainerBootstrapResponse{
@@ -130,7 +130,7 @@ func TestCheckAllNodeInitialized(t *testing.T) {
 	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}})
 	require.Len(t, msgs, 1)
 	require.False(t, b.CheckAllNodeInitialized())
-	cfId := common.ChangefeedID4Test("ns", "cf")
+	cfId := common.NewChangefeedID4Test("ns", "cf")
 	b.HandleBootstrapResponse(
 		"ab",
 		&heartbeatpb.MaintainerBootstrapResponse{
