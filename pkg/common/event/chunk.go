@@ -22,6 +22,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// rawKVToChunkV2 is used to decode the new format of row data.
 func (m *mounter) rawKVToChunkV2(value []byte, tableInfo *common.TableInfo, chk *chunk.Chunk, handle kv.Handle) error {
 	if len(value) == 0 {
 		return nil
@@ -61,6 +62,7 @@ func (m *mounter) rawKVToChunkV2(value []byte, tableInfo *common.TableInfo, chk 
 	return nil
 }
 
+// rawKVToChunkV1 is used to decode the old format of row data.
 func (m *mounter) rawKVToChunkV1(value []byte, tableInfo *common.TableInfo, chk *chunk.Chunk, handle kv.Handle) error {
 	if len(value) == 0 {
 		return nil
