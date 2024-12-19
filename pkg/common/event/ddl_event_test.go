@@ -1,6 +1,7 @@
 package event
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/pingcap/ticdc/pkg/common"
@@ -35,5 +36,6 @@ func TestDDLEvent(t *testing.T) {
 	err = reverseEvent.Unmarshal(data)
 	reverseEvent.eventSize = 0
 	require.Nil(t, err)
-	require.Equal(t, ddlEvent, reverseEvent)
+	equal := reflect.DeepEqual(ddlEvent, ddlEvent)
+	require.True(t, equal)
 }

@@ -224,7 +224,7 @@ func (t DDLEvent) Marshal() ([]byte, error) {
 	data = append(data, dispatcherIDDataSize...)
 
 	if t.TableInfo != nil {
-		tableInfoData, err := json.Marshal(t.TableInfo)
+		tableInfoData, err := t.TableInfo.Marshal()
 		if err != nil {
 			return nil, err
 		}
