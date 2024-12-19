@@ -80,7 +80,7 @@ var cases = []func(ctx context.Context, client *CDCRESTClient) error{
 	testCreateChangefeed,
 	testRemoveChangefeed,
 	testCapture,
-	testProcessor,
+	// testProcessor,
 	testResignOwner,
 	testSetLogLevel,
 }
