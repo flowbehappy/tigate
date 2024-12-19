@@ -49,8 +49,6 @@ func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID 
 		return NewMysqlSink(ctx, changefeedID, 16, config, sinkURI, errCh)
 	case sink.KafkaScheme, sink.KafkaSSLScheme:
 		return NewKafkaSink(ctx, changefeedID, sinkURI, config.SinkConfig, errCh)
-	case sink.BlackHoleScheme:
-		return NewBlackHoleSink()
 	}
-	return nil, cerror.ErrSinkURIInvalid.GenWithStackByArgs(sinkURI)
+	return nil, nil
 }
