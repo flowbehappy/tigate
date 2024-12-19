@@ -272,11 +272,11 @@ func (s *regionRequestWorker) processRegionSendTask(
 	ctx context.Context,
 	conn *ConnAndClient,
 ) error {
-	doSend := func(req *cdcpb.ChangeDataRequest, subscriptionID SubscriptionID) error {
+	doSend := func(req *cdcpb.ChangeDataRequest) error {
 		if err := conn.Client.Send(req); err != nil {
 			log.Warn("region request worker send request to grpc stream failed",
 				zap.Uint64("workerID", s.workerID),
-				zap.Uint64("subscriptionID", uint64(subscriptionID)),
+				zap.Uint64("subscriptionID", req.RequestId),
 				zap.Uint64("regionID", req.RegionId),
 				zap.Uint64("storeID", s.store.storeID),
 				zap.String("addr", s.store.storeAddr),
@@ -315,9 +315,11 @@ func (s *regionRequestWorker) processRegionSendTask(
 		if region.isStopped() {
 			req := &cdcpb.ChangeDataRequest{
 				RequestId: uint64(subID),
-				Request:   &cdcpb.ChangeDataRequest_Deregister_{},
+				Request: &cdcpb.ChangeDataRequest_Deregister_{
+					Deregister: &cdcpb.ChangeDataRequest_Deregister{},
+				},
 			}
-			if err := doSend(req, subID); err != nil {
+			if err := doSend(req); err != nil {
 				return err
 			}
 			log.Info("region request worker sends a deregister request",
@@ -325,6 +327,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 				zap.Uint64("subscriptionID", uint64(subID)))
 			for _, state := range s.takeRegionStates(subID) {
 				state.markStopped(&sendRequestToStoreErr{})
+				// TODO: do we need mark remove here?
 			}
 		} else if region.subscribedSpan.stopped.Load() {
 			// It can be skipped directly because there must be no pending states from
@@ -336,7 +339,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 			state.start()
 			s.addRegionState(subID, region.verID.GetID(), state)
 
-			if err := doSend(s.createRegionRequest(region), subID); err != nil {
+			if err := doSend(s.createRegionRequest(region)); err != nil {
 				return err
 			}
 		}
