@@ -71,7 +71,7 @@ function run() {
 		# 1. wait checkpoint ts updated to etcd
 		# 2. wait dispatch closed
 		# NOTICE: remove this sleep after safemode is supported in dispatcher
-		sleep 15
+		sleep 30 # TODO: the machine of github ci is so terrible, so we just sleep enough here now.
 	done
 
 	cleanup_process $CDC_BINARY
