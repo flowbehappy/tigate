@@ -40,13 +40,13 @@ type basicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] st
 }
 
 func NewBasicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]](
-	changefeedID string, batchSize int,
+	id string, batchSize int,
 	oc operator.Controller[T, S], db replica.ScheduleGroup[T, R],
 	nodeManager *watcher.NodeManager,
 	newAddOperator func(R, node.ID) operator.Operator[T, S],
 ) *basicScheduler[T, S, R] {
 	return &basicScheduler[T, S, R]{
-		id:                 changefeedID,
+		id:                 id,
 		batchSize:          batchSize,
 		operatorController: oc,
 		db:                 db,
