@@ -52,6 +52,7 @@ func TestEventServiceBasic(t *testing.T) {
 
 	mockStore := newMockEventStore(100)
 	mockStore.Run(ctx)
+	defer mockStore.Close(ctx)
 
 	mc := &mockMessageCenter{
 		messageCh: make(chan *messaging.TargetMessage, 100),
@@ -178,6 +179,8 @@ var _ eventstore.EventStore = &mockEventStore{}
 type mockEventStore struct {
 	resolvedTsUpdateInterval time.Duration
 	spansMap                 sync.Map
+	wg                       sync.WaitGroup
+	cancel                   context.CancelFunc
 }
 
 func newMockEventStore(resolvedTsUpdateInterval int) *mockEventStore {
@@ -210,7 +213,11 @@ func (m *mockEventStore) Name() string {
 func (m *mockEventStore) Run(ctx context.Context) error {
 	// Loop all spans and notify the watermarkNotifier.
 	ticker := time.NewTicker(time.Millisecond * 10)
+	ctx, cancel := context.WithCancel(ctx)
+	m.cancel = cancel
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
@@ -228,6 +235,8 @@ func (m *mockEventStore) Run(ctx context.Context) error {
 }
 
 func (m *mockEventStore) Close(ctx context.Context) error {
+	m.cancel()
+	m.wg.Wait()
 	return nil
 }
 
