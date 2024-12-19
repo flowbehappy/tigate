@@ -80,12 +80,10 @@ func TestEventServiceBasic(t *testing.T) {
 
 	sourceSpanStat := v.(*mockSpanStats)
 	// add events to eventStore
-	log.Info("fizz update", zap.Uint64("resolvedTs", kvEvents[len(kvEvents)-1].CRTs+1))
 	resolvedTs := kvEvents[len(kvEvents)-1].CRTs + 1
 	sourceSpanStat.update(resolvedTs, kvEvents...)
 	schemastore := esImpl.schemaStore.(*mockSchemaStore)
 	schemastore.AppendDDLEvent(dispatcherInfo.span.TableID, ddlEvent)
-	log.Info("fizz update ddl", zap.Any("ddlCommitTs", ddlEvent.GetCommitTs()))
 	// receive events from msg center
 	msgCnt := 0
 	for {

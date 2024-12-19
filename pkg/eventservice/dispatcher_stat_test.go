@@ -32,7 +32,7 @@ func TestNewDispatcherStat(t *testing.T) {
 	require.Equal(t, startTs, stat.checkpointTs.Load())
 	require.Equal(t, startTs, stat.sentResolvedTs.Load())
 	require.True(t, stat.isRunning.Load())
-	require.True(t, stat.enableSyncPoint)
+	require.False(t, stat.enableSyncPoint)
 	require.Equal(t, info.GetSyncPointTs(), stat.nextSyncPoint)
 	require.Equal(t, info.GetSyncPointInterval(), stat.syncPointInterval)
 }
@@ -103,7 +103,9 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	// Case 3: new events, and watermark decrease
 	// watermark should not decrease
 	stat.onLatestCommitTs(500)
-	stat.onResolvedTs(300)
+	require.Panics(t, func() {
+		stat.onResolvedTs(300)
+	})
 	require.Equal(t, uint64(500), stat.latestCommitTs.Load())
 	require.Equal(t, uint64(400), stat.eventStoreResolvedTs.Load())
 }
