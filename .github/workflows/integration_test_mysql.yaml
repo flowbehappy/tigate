@@ -61,15 +61,15 @@ jobs:
         run: |
           export TICDC_NEWARCH=true && make integration_test CASE=sql_mode
         
-      # - name: Test changefeed_pause_resume
-      #   if: ${{ success() }}
-      #   run: |
-      #     export TICDC_NEWARCH=true && make integration_test CASE=changefeed_pause_resume
+      - name: Test changefeed_pause_resume
+        if: ${{ success() }}
+        run: |
+          export TICDC_NEWARCH=true && make integration_test CASE=changefeed_pause_resume
 
-      # - name: Test changefeed_reconstruct
-      #   if: ${{ success() }}
-      #   run: |
-      #     export TICDC_NEWARCH=true && make integration_test CASE=changefeed_reconstruct
+      - name: Test changefeed_reconstruct
+        if: ${{ success() }}
+        run: |
+          export TICDC_NEWARCH=true && make integration_test CASE=changefeed_reconstruct
 
       # only upload logs of the last case
       # - name: Copy logs to hack permission

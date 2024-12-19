@@ -71,7 +71,7 @@ function run() {
 		# 1. wait checkpoint ts updated to etcd
 		# 2. wait dispatch closed
 		# NOTICE: remove this sleep after safemode is supported in dispatcher
-		sleep 10
+		sleep 15
 	done
 
 	cleanup_process $CDC_BINARY
