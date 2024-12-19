@@ -184,19 +184,26 @@ func (db *ReplicationDB) GetTasksBySchemaID(schemaID int64) []*SpanReplication {
 }
 
 // ReplaceReplicaSet replaces the old replica set with the new spans
-func (db *ReplicationDB) ReplaceReplicaSet(old *SpanReplication, newSpans []*heartbeatpb.TableSpan, checkpointTs uint64) bool {
+func (db *ReplicationDB) ReplaceReplicaSet(oldReplications []*SpanReplication, newSpans []*heartbeatpb.TableSpan, checkpointTs uint64) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
 	// first check  the old replica set exists, if not, return false
-	if _, ok := db.allTasks[old.ID]; !ok {
-		log.Warn("old replica set not found, skip",
-			zap.String("changefeed", db.changefeedID.Name()),
-			zap.String("span", old.ID.String()))
-		return false
+	for _, old := range oldReplications {
+		if _, ok := db.allTasks[old.ID]; !ok {
+			log.Panic("old replica set not found",
+				zap.String("changefeed", db.changefeedID.Name()),
+				zap.String("span", old.ID.String()))
+		}
+		oldCheckpointTs := old.GetStatus().GetCheckpointTs()
+		if checkpointTs > oldCheckpointTs {
+			checkpointTs = oldCheckpointTs
+		}
+		db.removeSpanUnLock(old)
 	}
 
 	var news []*SpanReplication
+	old := oldReplications[0]
 	for _, span := range newSpans {
 		new := NewReplicaSet(
 			old.ChangefeedID,
@@ -206,11 +213,8 @@ func (db *ReplicationDB) ReplaceReplicaSet(old *SpanReplication, newSpans []*hea
 			span, checkpointTs)
 		news = append(news, new)
 	}
-
-	// remove and insert the new replica set
-	db.removeSpanUnLock(old)
+	// insert the new replica set
 	db.addAbsentReplicaSetUnLock(news...)
-	return true
 }
 
 // AddReplicatingSpan adds a replicating the replicating map, that means the task is already scheduled to a dispatcher

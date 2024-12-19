@@ -119,11 +119,12 @@ func TestReplaceReplicaSet(t *testing.T) {
 	db.AddReplicatingSpan(replicaSpan)
 
 	notExists := &SpanReplication{ID: common.NewDispatcherID()}
-	ok := db.ReplaceReplicaSet(notExists, []*heartbeatpb.TableSpan{{}, {}}, 1)
-	require.False(t, ok)
+	require.PanicsWithValue(t, "old replica set not found", func() {
+		db.ReplaceReplicaSet([]*SpanReplication{notExists}, []*heartbeatpb.TableSpan{{}, {}}, 1)
+	})
 	require.Len(t, db.GetAllTasks(), 2)
 
-	db.ReplaceReplicaSet(replicaSpan, []*heartbeatpb.TableSpan{getTableSpanByID(3), getTableSpanByID(4)}, 5)
+	db.ReplaceReplicaSet([]*SpanReplication{replicaSpan}, []*heartbeatpb.TableSpan{getTableSpanByID(3), getTableSpanByID(4)}, 5)
 	require.Len(t, db.GetAllTasks(), 3)
 	require.Equal(t, 2, db.GetAbsentSize())
 	require.Equal(t, 2, db.GetTaskSizeBySchemaID(1))

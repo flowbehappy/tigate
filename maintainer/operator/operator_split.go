@@ -128,7 +128,7 @@ func (m *SplitDispatcherOperator) PostFinish() {
 	defer m.lck.Unlock()
 
 	log.Info("split dispatcher operator finished", zap.String("id", m.replicaSet.ID.String()))
-	m.db.ReplaceReplicaSet(m.replicaSet, m.splitSpans, m.checkpointTs)
+	m.db.ReplaceReplicaSet([]*replica.SpanReplication{m.replicaSet}, m.splitSpans, m.checkpointTs)
 }
 
 func (m *SplitDispatcherOperator) String() string {

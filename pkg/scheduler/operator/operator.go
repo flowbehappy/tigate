@@ -19,6 +19,25 @@ import (
 	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 )
 
+type OpType int
+
+const (
+	OpAdd           OpType = iota // Add a new task
+	OpRemove                      // Remove a task
+	OpMove                        // Move a task to another node
+	OpStop                        // Stop a task
+	OpSplit                       // Split one task to multiple subtasks
+	OpMerge                       // merge multiple tasks to one task
+	OpMergeAndSplit               // remove old tasks and split to multiple subtasks
+)
+
+type OpOption[T replica.ReplicationID, R replica.Replication[T]] struct {
+	OpType OpType
+	Source node.ID
+	Target node.ID
+	Taks   []R
+}
+
 type Controller[T replica.ReplicationID, S any] interface {
 	// AddOperator adds an operator to the controller
 	AddOperator(op Operator[T, S]) bool
