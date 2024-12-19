@@ -5,7 +5,6 @@ import (
 	"math"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -219,7 +218,7 @@ func (m *mockEventStore) Run(ctx context.Context) error {
 			case <-ticker.C:
 				m.spansMap.Range(func(key, value any) bool {
 					spanStats := value.(*mockSpanStats)
-					spanStats.resolvedTsNotifier(spanStats.resolvedTs.Load(), spanStats.latestCommitTs())
+					spanStats.resolvedTsNotifier(spanStats.getResolvedTs(), spanStats.latestCommitTs())
 					return true
 				})
 			}
@@ -250,7 +249,8 @@ func (m *mockEventStore) GetIterator(dispatcherID common.DispatcherID, dataRange
 		return nil, nil
 	}
 	spanStats := v.(*mockSpanStats)
-	for _, e := range spanStats.pendingEvents {
+	events := spanStats.getAllEvents()
+	for _, e := range events {
 		if e.CRTs > dataRange.StartTs && e.CRTs <= dataRange.EndTs {
 			iter.events = append(iter.events, e)
 		}
@@ -271,7 +271,7 @@ func (m *mockEventStore) RegisterDispatcher(
 		resolvedTsNotifier: notifier,
 		pendingEvents:      make([]*common.RawKVEntry, 0),
 	}
-	spanStats.resolvedTs.Store(uint64(startTS))
+	spanStats.resolvedTs = uint64(startTS)
 	m.spansMap.Store(span.TableID, spanStats)
 	return true, nil
 }
@@ -399,19 +399,39 @@ func (m *mockSchemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, 
 }
 
 type mockSpanStats struct {
+	mu                 sync.RWMutex
 	startTs            uint64
-	resolvedTs         atomic.Uint64
+	resolvedTs         uint64
 	pendingEvents      []*common.RawKVEntry
 	resolvedTsNotifier func(watermark uint64, latestCommitTs uint64)
 }
 
+func (m *mockSpanStats) getAllEvents() []*common.RawKVEntry {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	events := make([]*common.RawKVEntry, 0, len(m.pendingEvents))
+	events = append(events, m.pendingEvents...)
+	return events
+}
+
+func (m *mockSpanStats) getResolvedTs() uint64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.resolvedTs
+}
+
 func (m *mockSpanStats) update(resolvedTs uint64, events ...*common.RawKVEntry) {
+	m.mu.Lock()
 	m.pendingEvents = append(m.pendingEvents, events...)
-	m.resolvedTs.Store(resolvedTs)
+	m.resolvedTs = resolvedTs
+	m.mu.Unlock()
+
 	m.resolvedTsNotifier(resolvedTs, m.latestCommitTs())
 }
 
 func (m *mockSpanStats) latestCommitTs() uint64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if len(m.pendingEvents) == 0 {
 		return 0
 	}
