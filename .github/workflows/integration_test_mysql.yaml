@@ -55,6 +55,11 @@ jobs:
         if: ${{ success() }}
         run: |
           export TICDC_NEWARCH=true && make integration_test CASE=changefeed_finish
+      
+      - name: Test sql_mode
+        if: ${{ success() }}
+        run: |
+          export TICDC_NEWARCH=true && make integration_test CASE=sql_mode
         
       # - name: Test changefeed_pause_resume
       #   if: ${{ success() }}

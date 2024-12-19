@@ -58,20 +58,18 @@ if [ "$SINK_TYPE" == "mysql" ]; then
 		check_contains "b: aaaaa" &&
 		check_contains "c: ab\\\\\\\\c" &&
 		check_contains "c: ab\\\\c"
-fi
 
-stop_tidb_cluster
-start_tidb_cluster --workdir $WORK_DIR
+	ret=$?
+	if [ "$ret" == 0 ]; then
+		echo "check data successfully"
+	else 
+		exit 1
+	fi
+fi
 
 ## case 2
 run_sql "set global sql_mode='ANSI_QUOTES';" ${UP_TIDB_HOST} ${UP_TIDB_PORT}
 run_sql "set global sql_mode='ANSI_QUOTES';" ${DOWN_TIDB_HOST} ${DOWN_TIDB_PORT}
-
-start_ts=$(run_cdc_cli_tso_query ${UP_PD_HOST_1} ${UP_PD_PORT_1})
-run_cdc_server --workdir $WORK_DIR --binary $CDC_BINARY
-
-SINK_URI="mysql://root@127.0.0.1:3306/?max-txn-row=1"
-run_cdc_cli changefeed create --start-ts=$start_ts --sink-uri="$SINK_URI" --changefeed-id="test-2"
 
 run_sql "use test; create table t2(id bigint primary key, a date); insert into t2 values(1, '2023-02-08');" ${UP_TIDB_HOST} ${UP_TIDB_PORT}
 
@@ -80,6 +78,12 @@ if [ "$SINK_TYPE" == "mysql" ]; then
 	sleep 10
 	run_sql "SELECT * from test.t2" ${DOWN_TIDB_HOST} ${DOWN_TIDB_PORT} &&
 		check_contains "a: 2023-02-08"
+	ret=$?
+	if [ "$ret" == 0 ]; then
+		echo "check data successfully"
+	else 
+		exit 1
+	fi
 fi
 
 stop_tidb_cluster
