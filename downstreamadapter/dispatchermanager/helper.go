@@ -57,10 +57,11 @@ type DispatcherMap struct {
 }
 
 func newDispatcherMap() *DispatcherMap {
-	return &DispatcherMap{
-		m:   sync.Map{},
-		seq: 0,
+	dispatcherMap := &DispatcherMap{
+		m: sync.Map{},
 	}
+	dispatcherMap.seq.Store(0)
+	return dispatcherMap
 }
 
 func (d *DispatcherMap) Len() int {
