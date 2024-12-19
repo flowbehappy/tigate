@@ -304,7 +304,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 	for {
 		// TODO: can region be nil?
 		subID := region.subscribedSpan.subID
-		log.Info("region request worker gets a singleRegionInfo",
+		log.Debug("region request worker gets a singleRegionInfo",
 			zap.Uint64("workerID", s.workerID),
 			zap.Uint64("subscriptionID", uint64(subID)),
 			zap.Uint64("regionID", region.verID.GetID()),
@@ -322,9 +322,6 @@ func (s *regionRequestWorker) processRegionSendTask(
 			if err := doSend(req); err != nil {
 				return err
 			}
-			log.Info("region request worker sends a deregister request",
-				zap.Uint64("workerID", s.workerID),
-				zap.Uint64("subscriptionID", uint64(subID)))
 			for _, state := range s.takeRegionStates(subID) {
 				state.markStopped(&sendRequestToStoreErr{})
 				// TODO: do we need mark remove here?
