@@ -111,7 +111,6 @@ func (a *dispatcherStat) onResolvedTs(resolvedTs uint64) bool {
 	if resolvedTs < a.eventStoreResolvedTs.Load() {
 		log.Panic("resolved ts should not fallback")
 	}
-	log.Info("fizz onResolvedTs", zap.Uint64("resolvedTs", resolvedTs), zap.Uint64("eventStoreResolvedTs", a.eventStoreResolvedTs.Load()))
 	return util.CompareAndMonotonicIncrease(&a.eventStoreResolvedTs, resolvedTs)
 }
 

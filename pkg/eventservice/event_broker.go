@@ -715,7 +715,6 @@ func (c *eventBroker) close() {
 }
 
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64, latestCommitTs uint64) {
-	log.Info("fizz onNotify", zap.Uint64("resolvedTs", resolvedTs), zap.Uint64("latestCommitTs", latestCommitTs))
 	if d.onResolvedTs(resolvedTs) {
 		metricEventStoreOutputResolved.Inc()
 		d.onLatestCommitTs(latestCommitTs)
