@@ -21,10 +21,9 @@ import (
 	"google.golang.org/grpc/backoff"
 )
 
-// 这个是最基础的 connection
+// A Conn is a grpc client connection.
 type Conn struct {
 	*grpc.ClientConn
-	streams int
 }
 
 const (

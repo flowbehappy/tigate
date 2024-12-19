@@ -20,7 +20,7 @@ func TestDDLSyncBroadcastMessage(t *testing.T) {
 	options.MaxMessages = 1
 
 	ctx = context.WithValue(ctx, "testing.T", t)
-	changefeed := common.ChangefeedID4Test("test", "test")
+	changefeed := common.NewChangefeedID4Test("test", "test")
 	factory, err := kafka.NewMockFactory(options, changefeed)
 	require.NoError(t, err)
 
@@ -48,7 +48,7 @@ func TestDDLSyncSendMessage(t *testing.T) {
 	options := getOptions()
 
 	ctx = context.WithValue(ctx, "testing.T", t)
-	changefeed := common.ChangefeedID4Test("test", "test")
+	changefeed := common.NewChangefeedID4Test("test", "test")
 	factory, err := kafka.NewMockFactory(options, changefeed)
 	require.NoError(t, err)
 
@@ -77,7 +77,7 @@ func TestDDLProducerSendMsgFailed(t *testing.T) {
 	ctx = context.WithValue(ctx, "testing.T", t)
 
 	// This will make the first send failed.
-	changefeed := common.ChangefeedID4Test("test", "test")
+	changefeed := common.NewChangefeedID4Test("test", "test")
 	factory, err := kafka.NewMockFactory(options, changefeed)
 	require.NoError(t, err)
 
@@ -98,7 +98,7 @@ func TestDDLProducerDoubleClose(t *testing.T) {
 	options := getOptions()
 
 	ctx = context.WithValue(ctx, "testing.T", t)
-	changefeed := common.ChangefeedID4Test("test", "test")
+	changefeed := common.NewChangefeedID4Test("test", "test")
 	factory, err := kafka.NewMockFactory(options, changefeed)
 	require.NoError(t, err)
 

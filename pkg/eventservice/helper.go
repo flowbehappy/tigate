@@ -34,7 +34,7 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 		return false
 	}
 	// The dispatcher has new events. We need to push the task to the task pool.
-	broker.taskQueue <- task
+	broker.taskChan <- task
 	return true
 }
 
@@ -53,7 +53,7 @@ func (h *dispatcherEventsHandler) GetArea(path common.DispatcherID, dest *eventB
 	return d.info.GetChangefeedID().ID()
 }
 func (h *dispatcherEventsHandler) GetTimestamp(event scanTask) dynstream.Timestamp {
-	return dynstream.Timestamp(event.watermark.Load())
+	return dynstream.Timestamp(event.sentResolvedTs.Load())
 }
 func (h *dispatcherEventsHandler) IsPaused(event scanTask) bool { return false }
 func (h *dispatcherEventsHandler) OnDrop(event scanTask)        {}

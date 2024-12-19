@@ -52,7 +52,7 @@ func (r *router) runDispatch(ctx context.Context, wg *sync.WaitGroup, out <-chan
 				}
 				err := handler(ctx, msg)
 				if err != nil {
-					log.Error("router: close, since handle message failed", zap.Error(err), zap.Any("msg", msg))
+					log.Error("Handle message failed", zap.Error(err), zap.Any("msg", msg))
 				}
 			}
 		}
