@@ -400,10 +400,10 @@ func (m *Maintainer) onNodeChanged() {
 }
 
 func (m *Maintainer) calCheckpointTs() {
+	defer m.updateMetrics()
 	if !m.bootstrapped {
 		return
 	}
-	defer m.updateMetrics()
 	// make sure there is no task running
 	// the dispatcher changing come from:
 	// 1. node change

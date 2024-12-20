@@ -9,11 +9,10 @@ TiCDC pulls change logs from TiDB clusters and pushes them to downstream systems
 
 ## Quick Start
 
-### Build TiCDC
-
+### Prerequests
 TiCDC can be built on the following operating systems:
 
-* Linux 
+* Linux
 * MacOS
 
 1. Install GoLang 1.23.2
@@ -32,10 +31,16 @@ export GOPATH=$HOME/go
 export PATH=$PATH:$GOPATH/bin
 ```
 
-2. Checkout Source Code
+### Download the latest release's source code and compile
+
+1. Go to [ticdc/tags](https://github.com/pingcap/ticdc/tags) to find the latest tag, for example `latest-version`
+
+2. Download the repo and checkout the latest tag
 ```bash
-git clone  https://github.com/pingcap/ticdc
+git clone git@github.com:pingcap/ticdc.git
 cd ticdc
+git fetch origin
+git checkout latest-version
 ```
 
 3. Build TiCDC
