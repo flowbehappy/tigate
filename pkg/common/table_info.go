@@ -287,8 +287,8 @@ type TableInfo struct {
 
 	preSQLs struct {
 		isInitialized atomic.Bool
-		m             [4]string `json:"-"`
-	}
+		m             [4]string
+	} `json:"-"`
 }
 
 var count atomic.Int64
@@ -309,7 +309,7 @@ func (ti *TableInfo) InitPrivateFields() {
 	ti.preSQLs.isInitialized.Store(true)
 }
 
-func (ti *TableInfo) MarshalJSON() ([]byte, error) {
+func (ti *TableInfo) Marshal() ([]byte, error) {
 	// otherField | columnSchemaData | columnSchemaDataSize
 	data, err := json.Marshal(ti)
 	if err != nil {
