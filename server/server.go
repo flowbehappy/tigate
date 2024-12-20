@@ -154,6 +154,13 @@ func (c *server) initialize(ctx context.Context) error {
 	for _, subModule := range c.subModules {
 		appctx.SetService(subModule.Name(), subModule)
 	}
+	// start tcp server
+	go func() {
+		err := c.tcpServer.Run(ctx)
+		if err != nil {
+			log.Error("tcp server exist", zap.Error(cerror.Trace(err)))
+		}
+	}()
 	log.Info("server initialized", zap.Any("server", c.info))
 	return nil
 }
@@ -170,10 +177,6 @@ func (c *server) Run(ctx context.Context) error {
 	}()
 
 	g, ctx := errgroup.WithContext(ctx)
-	// start tcp server
-	g.Go(func() error {
-		return c.tcpServer.Run(ctx)
-	})
 	// start all submodules
 	for _, sub := range c.subModules {
 		func(m common.SubModule) {
