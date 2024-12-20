@@ -249,15 +249,17 @@ func (f *Feedback[A, P, D]) String() string {
 	return fmt.Sprintf("DynamicStream Feedback{Area: %v, Path: %v, Pause: %v}", f.Area, f.Path, f.Pause)
 }
 
+// NewDynamicStream creates a new dynamic stream with a single stream by default.
 func NewDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](handler H, option ...Option) DynamicStream[A, P, T, D, H] {
 	opt := NewOption()
+	opt.StreamCount = 1
 	if len(option) > 0 {
 		opt = option[0]
 	}
-	opt.StreamCount = 1
 	return newParallelDynamicStream(func(path P) uint64 { return 0 }, handler, opt)
 }
 
+// NewParallelDynamicStream creates a new dynamic stream with CPU number streams by default.
 func NewParallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](hasher PathHasher[P], handler H, option ...Option) DynamicStream[A, P, T, D, H] {
 	opt := NewOption()
 	if len(option) > 0 {

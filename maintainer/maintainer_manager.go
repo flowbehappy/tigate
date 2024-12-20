@@ -82,7 +82,7 @@ func NewMaintainerManager(selfNode *node.Info,
 		tsoClient:     pdClient,
 		regionCache:   regionCache,
 	}
-	m.stream = dynstream.NewDynamicStream(NewStreamHandler())
+	m.stream = dynstream.NewParallelDynamicStream(func(path common.GID) uint64 { return path.FastHash() }, NewStreamHandler())
 	m.stream.Start()
 
 	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.recvMessages)
