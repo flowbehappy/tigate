@@ -53,7 +53,7 @@ tar -czf newarch_cdc.tar.gz cdc
 ```
 
 ### Patch the new arch TiCDC to your cluster.
-For example,
+Examples:
 ```bash
 # Scale out the old version TiCDC nodes
 tiup cluster scale-out cdc-test scale-out.yml
