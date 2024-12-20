@@ -37,7 +37,7 @@ func RegisterOpenAPIV2Routes(router *gin.Engine, api OpenAPIV2) {
 	v2.Use(middleware.ErrorHandleMiddleware())
 
 	v2.GET("status", api.serverStatus)
-	v2.POST("/log", api.setLogLevel)
+	v2.POST("log", api.setLogLevel)
 	// For compatibility with the old API.
 	// TiDB Operator relies on this API to determine whether the TiCDC node is healthy.
 	router.GET("/status", api.serverStatus)
@@ -45,6 +45,7 @@ func RegisterOpenAPIV2Routes(router *gin.Engine, api OpenAPIV2) {
 	router.GET("/debug/info", gin.WrapF(api.handleDebugInfo))
 
 	coordinatorMiddleware := middleware.ForwardToCoordinatorMiddleware(api.server)
+	v2.GET("health", coordinatorMiddleware, api.serverHealth)
 
 	// changefeed apis
 	changefeedGroup := v2.Group("/changefeeds")
