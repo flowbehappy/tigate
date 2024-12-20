@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/ticdc/server/watcher"
+	"github.com/pingcap/ticdc/utils/chann"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -62,6 +63,8 @@ type Maintainer struct {
 	selfNode   *node.Info
 	controller *Controller
 	barrier    *Barrier
+
+	eventCh *chann.DrainableChann[*Event]
 
 	stream        dynstream.DynamicStream[int, common.GID, *Event, *Maintainer, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
@@ -144,6 +147,7 @@ func NewMaintainer(cfID common.ChangeFeedID,
 	m := &Maintainer{
 		id:                cfID,
 		selfNode:          selfNode,
+		eventCh:           chann.NewAutoDrainChann[*Event](),
 		stream:            stream,
 		taskScheduler:     taskScheduler,
 		startCheckpointTs: checkpointTs,
@@ -187,6 +191,7 @@ func NewMaintainer(cfID common.ChangeFeedID,
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelUpdateMetrics = cancel
 	go m.runUpdateMetrics(ctx)
+	go m.runHandleEvents(ctx)
 	return m
 }
 
@@ -770,6 +775,17 @@ func (m *Maintainer) runUpdateMetrics(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.updateMetrics()
+		}
+	}
+}
+
+func (m *Maintainer) runHandleEvents(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-m.eventCh.Out():
+			m.HandleEvent(event)
 		}
 	}
 }
