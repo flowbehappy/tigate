@@ -255,6 +255,7 @@ func NewDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](ha
 		opt = option[0]
 	}
 	opt.StreamCount = 1
+	// Since the there is only one stream, enable the buffer by default to avoid the blocking.
 	opt.UseBuffer = true
 	return newParallelDynamicStream(func(path P) uint64 { return 0 }, handler, opt)
 }
