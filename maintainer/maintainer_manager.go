@@ -363,11 +363,23 @@ func (m *Manager) dispatcherMaintainerMessage(
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		m.stream.Push(changefeed.Id, &Event{
+		// m.stream.Push(changefeed.Id, &Event{
+		// 	changefeedID: changefeed,
+		// 	eventType:    EventMessage,
+		// 	message:      msg,
+		// })
+		c, ok := m.maintainers.Load(changefeed)
+		if !ok {
+			log.Warn("maintainer is not found",
+				zap.String("changefeedID", changefeed.Name()), zap.String("message", msg.String()))
+			return nil
+		}
+		maintainer := c.(*Maintainer)
+		maintainer.eventCh.In() <- &Event{
 			changefeedID: changefeed,
 			eventType:    EventMessage,
 			message:      msg,
-		})
+		}
 	}
 	return nil
 }
