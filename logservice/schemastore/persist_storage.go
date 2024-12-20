@@ -817,7 +817,7 @@ func buildPersistedDDLEventFromJob(
 			zap.Int64("schemaID", event.CurrentSchemaID),
 			zap.String("schemaName", event.DBInfo.Name.O))
 		event.CurrentSchemaName = event.DBInfo.Name.O
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionRecoverTable:
 		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
 		event.CurrentTableName = event.TableInfo.Name.O
 	case model.ActionDropTable,
@@ -990,7 +990,7 @@ func updateDDLHistory(
 		for tableID := range databaseMap[ddlEvent.CurrentSchemaID].Tables {
 			appendTableHistory(tableID)
 		}
-	case model.ActionCreateTable,
+	case model.ActionCreateTable, model.ActionRecoverTable,
 		model.ActionDropTable:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		// Note: for create table, this ddl event will not be sent to table dispatchers.
@@ -1155,7 +1155,7 @@ func updateDatabaseInfoAndTableInfo(
 			delete(partitionMap, tableID)
 		}
 		delete(databaseMap, event.CurrentSchemaID)
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionRecoverTable:
 		createTable(event.CurrentSchemaID, event.CurrentTableID)
 		if isPartitionTable(event.TableInfo) {
 			partitionInfo := make(BasicPartitionInfo)
@@ -1297,7 +1297,7 @@ func updateRegisteredTableInfoStore(
 	case model.ActionCreateSchema,
 		model.ActionDropSchema:
 		// ignore
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionRecoverTable:
 		if isPartitionTable(event.TableInfo) {
 			allPhysicalIDs := getAllPartitionIDs(event.TableInfo)
 			for _, id := range allPhysicalIDs {
@@ -1500,7 +1500,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
 			DropDatabaseName: rawEvent.CurrentSchemaName,
 		}
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionRecoverTable:
 		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{heartbeatpb.DDLSpan.TableID},

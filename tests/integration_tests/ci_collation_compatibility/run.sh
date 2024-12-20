@@ -45,7 +45,7 @@ function run() {
 	esac
 
 	run_sql_file $CUR/data/test.sql ${UP_TIDB_HOST} ${UP_TIDB_PORT}
-	run_sql "CREATE TABLE ci_collation_compatibility.finish_mark_1 (a int primary key);"
+	run_sql "CREATE TABLE ci_collation_compatibility.finish_mark_1 (a int primary key);" ${UP_TIDB_HOST} ${UP_TIDB_PORT}
 
 	sleep 30
 	check_table_exists "ci_collation_compatibility.t" ${DOWN_TIDB_HOST} ${DOWN_TIDB_PORT}
