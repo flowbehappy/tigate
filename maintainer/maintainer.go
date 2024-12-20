@@ -180,6 +180,8 @@ func NewMaintainer(cfID common.ChangeFeedID,
 		zap.Uint64("checkpointTs", checkpointTs),
 		zap.String("ddl dispatcher", tableTriggerEventDispatcherID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace(), cfID.Name()).Inc()
+	// Should update metrics immediately when maintainer is created
+	m.updateMetrics()
 	return m
 }
 
