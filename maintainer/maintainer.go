@@ -14,6 +14,7 @@
 package maintainer
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"sync"
@@ -103,8 +104,9 @@ type Maintainer struct {
 	lastPrintStatusTime time.Time
 	//lastCheckpointTsTime time.Time
 
-	errLock       sync.Mutex
-	runningErrors map[node.ID]*heartbeatpb.RunningError
+	errLock             sync.Mutex
+	runningErrors       map[node.ID]*heartbeatpb.RunningError
+	cancelUpdateMetrics context.CancelFunc
 
 	changefeedCheckpointTsGauge    prometheus.Gauge
 	changefeedCheckpointTsLagGauge prometheus.Gauge
@@ -181,7 +183,10 @@ func NewMaintainer(cfID common.ChangeFeedID,
 		zap.String("ddl dispatcher", tableTriggerEventDispatcherID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace(), cfID.Name()).Inc()
 	// Should update metrics immediately when maintainer is created
-	m.updateMetrics()
+	// FIXME: Use a correct context
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelUpdateMetrics = cancel
+	go m.runUpdateMetrics(ctx)
 	return m
 }
 
@@ -249,6 +254,7 @@ func (m *Maintainer) HandleEvent(event *Event) bool {
 
 // Close cleanup resources
 func (m *Maintainer) Close() {
+	m.cancelUpdateMetrics()
 	m.cleanupMetrics()
 	m.controller.Stop()
 	log.Info("changefeed maintainer closed",
@@ -734,5 +740,20 @@ func (m *Maintainer) collectMetrics() {
 			zap.Int("total", total),
 			zap.Int("scheduling", scheduling),
 			zap.Int("working", working))
+	}
+}
+
+func (m *Maintainer) runUpdateMetrics(ctx context.Context) {
+	ticker := time.NewTicker(time.Second * 1)
+	log.Info("start update metrics")
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("stop update metrics")
+			return
+		case <-ticker.C:
+			m.updateMetrics()
+		}
 	}
 }
