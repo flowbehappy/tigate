@@ -410,6 +410,10 @@ func (m *Maintainer) onNodeChanged() {
 func (m *Maintainer) calCheckpointTs() {
 	defer m.updateMetrics()
 	if !m.bootstrapped {
+		log.Warn("can not advance checkpointTs since not bootstrapped",
+			zap.String("changefeed", m.id.Name()),
+			zap.Uint64("checkpointTs", m.watermark.CheckpointTs),
+			zap.Uint64("resolvedTs", m.watermark.ResolvedTs))
 		return
 	}
 	// make sure there is no task running
@@ -418,9 +422,19 @@ func (m *Maintainer) calCheckpointTs() {
 	// 2. ddl
 	// 3. interval scheduling, like balance, split
 	if !m.controller.ScheduleFinished() {
+		log.Warn("can not advance checkpointTs since schedule is not finished",
+			zap.String("changefeed", m.id.Name()),
+			zap.Uint64("checkpointTs", m.watermark.CheckpointTs),
+			zap.Uint64("resolvedTs", m.watermark.ResolvedTs),
+		)
 		return
 	}
 	if m.barrier.ShouldBlockCheckpointTs() {
+		log.Warn("can not advance checkpointTs since barrier is blocking",
+			zap.String("changefeed", m.id.Name()),
+			zap.Uint64("checkpointTs", m.watermark.CheckpointTs),
+			zap.Uint64("resolvedTs", m.watermark.ResolvedTs),
+		)
 		return
 	}
 	newWatermark := heartbeatpb.NewMaxWatermark()
@@ -432,9 +446,11 @@ func (m *Maintainer) calCheckpointTs() {
 		}
 		// node level watermark reported, ignore this round
 		if _, ok := m.checkpointTsByCapture[id]; !ok {
-			log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
+			log.Warn("checkpointTs can not be advanced, since missing capture heartbeat",
 				zap.String("changefeed", m.id.Name()),
-				zap.Any("node", id))
+				zap.Any("node", id),
+				zap.Uint64("checkpointTs", m.watermark.CheckpointTs),
+				zap.Uint64("resolvedTs", m.watermark.ResolvedTs))
 			return
 		}
 		newWatermark.UpdateMin(m.checkpointTsByCapture[id])
