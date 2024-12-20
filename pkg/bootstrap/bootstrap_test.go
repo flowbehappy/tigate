@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/node"
 
 	"github.com/pingcap/ticdc/heartbeatpb"
@@ -30,11 +31,13 @@ func TestHandleBootstrapResponse(t *testing.T) {
 	})
 	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}, {ID: "cd"}})
 	require.Len(t, msgs, 2)
+
+	cfId := common.NewChangefeedID4Test("ns", "cf")
 	// not found
 	cached := b.HandleBootstrapResponse(
 		"ef",
 		&heartbeatpb.MaintainerBootstrapResponse{
-			ChangefeedID: "cf",
+			ChangefeedID: cfId.ToPB(),
 			Spans:        []*heartbeatpb.BootstrapTableSpan{{}},
 		})
 	require.Nil(t, cached)
@@ -43,7 +46,7 @@ func TestHandleBootstrapResponse(t *testing.T) {
 	cached = b.HandleBootstrapResponse(
 		"ab",
 		&heartbeatpb.MaintainerBootstrapResponse{
-			ChangefeedID: "cf",
+			ChangefeedID: cfId.ToPB(),
 			Spans:        []*heartbeatpb.BootstrapTableSpan{{}},
 		})
 	require.Nil(t, cached)
@@ -51,7 +54,7 @@ func TestHandleBootstrapResponse(t *testing.T) {
 	cached = b.HandleBootstrapResponse(
 		"cd",
 		&heartbeatpb.MaintainerBootstrapResponse{
-			ChangefeedID: "cf",
+			ChangefeedID: cfId.ToPB(),
 			Spans:        []*heartbeatpb.BootstrapTableSpan{{}, {}},
 		})
 	require.NotNil(t, cached)
@@ -84,10 +87,11 @@ func TestHandleRemoveNodes(t *testing.T) {
 	// bootstrap one node and the remove another, bootstrapper should be initialized
 	cached := b.HandleRemoveNodes([]node.ID{"ef"})
 	require.Nil(t, cached)
+	cfId := common.NewChangefeedID4Test("ns", "cf")
 	cached = b.HandleBootstrapResponse(
 		"ab",
 		&heartbeatpb.MaintainerBootstrapResponse{
-			ChangefeedID: "cf",
+			ChangefeedID: cfId.ToPB(),
 			Spans:        []*heartbeatpb.BootstrapTableSpan{{}, {}},
 		})
 	require.Nil(t, cached)
@@ -126,10 +130,11 @@ func TestCheckAllNodeInitialized(t *testing.T) {
 	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}})
 	require.Len(t, msgs, 1)
 	require.False(t, b.CheckAllNodeInitialized())
+	cfId := common.NewChangefeedID4Test("ns", "cf")
 	b.HandleBootstrapResponse(
 		"ab",
 		&heartbeatpb.MaintainerBootstrapResponse{
-			ChangefeedID: "cf",
+			ChangefeedID: cfId.ToPB(),
 			Spans:        []*heartbeatpb.BootstrapTableSpan{{}},
 		})
 	require.True(t, b.CheckAllNodeInitialized())

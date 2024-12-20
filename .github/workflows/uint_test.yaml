@@ -75,7 +75,7 @@ jobs:
 
   coordinator_unit_test:
     runs-on: ubuntu-latest 
-    name: Coordinator Unit Test
+    name: Coordinator And EventService Unit Test
     steps:
       - name: Check out code
         uses: actions/checkout@v2
@@ -88,3 +88,4 @@ jobs:
       - name: Unit Test
         run: |
           go test --tags=intest -timeout 120s  github.com/pingcap/ticdc/coordinator/...
+

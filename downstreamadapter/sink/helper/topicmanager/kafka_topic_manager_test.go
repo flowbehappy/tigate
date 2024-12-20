@@ -34,7 +34,7 @@ func TestCreateTopic(t *testing.T) {
 		ReplicationFactor: 1,
 	}
 
-	changefeedID := common.ChangefeedID4Test("test", "test")
+	changefeedID := common.NewChangefeedID4Test("test", "test")
 	ctx := context.Background()
 	manager := newKafkaTopicManager(ctx, tikafka.DefaultMockTopicName, changefeedID, adminClient, cfg)
 	defer manager.Close()
@@ -90,7 +90,7 @@ func TestCreateTopicWithDelay(t *testing.T) {
 	}
 
 	topic := "new_topic"
-	changefeedID := common.ChangefeedID4Test("test", "test")
+	changefeedID := common.NewChangefeedID4Test("test", "test")
 	ctx := context.Background()
 	manager := newKafkaTopicManager(ctx, topic, changefeedID, adminClient, cfg)
 	defer manager.Close()

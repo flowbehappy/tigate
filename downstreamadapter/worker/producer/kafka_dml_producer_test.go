@@ -53,7 +53,7 @@ func TestProducerAck(t *testing.T) {
 	require.Equal(t, 1, config.Producer.Flush.MaxMessages)
 
 	ctx = context.WithValue(ctx, "testing.T", t)
-	changefeed := common.ChangefeedID4Test("test", "test")
+	changefeed := common.NewChangefeedID4Test("test", "test")
 	factory, err := kafka.NewMockFactory(options, changefeed)
 	require.NoError(t, err)
 
@@ -127,7 +127,7 @@ func TestProducerSendMsgFailed(t *testing.T) {
 	options.MaxMessageBytes = 1
 
 	ctx = context.WithValue(ctx, "testing.T", t)
-	changefeed := common.ChangefeedID4Test("test", "test")
+	changefeed := common.NewChangefeedID4Test("test", "test")
 	factory, err := kafka.NewMockFactory(options, changefeed)
 	require.NoError(t, err)
 
@@ -194,7 +194,7 @@ func TestProducerDoubleClose(t *testing.T) {
 	defer cancel()
 
 	ctx = context.WithValue(ctx, "testing.T", t)
-	changefeed := common.ChangefeedID4Test("test", "test")
+	changefeed := common.NewChangefeedID4Test("test", "test")
 	factory, err := kafka.NewMockFactory(options, changefeed)
 	require.NoError(t, err)
 

@@ -680,6 +680,7 @@ func (e *eventStore) updateMetricsOnce() {
 	}
 	e.dispatcherMeta.RUnlock()
 	if minResolvedTs == 0 {
+		metrics.EventStoreResolvedTsLagGauge.Set(0)
 		return
 	}
 	minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)

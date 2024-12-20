@@ -26,12 +26,18 @@ import (
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
+	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+)
+
+var (
+	metricsDSInputChanLen    = metrics.DynamicStreamEventChanSize.WithLabelValues("maintainer-manager")
+	metricsDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("maintainer-manager")
 )
 
 // Manager is the manager of all changefeed maintainer in a ticdc watcher, each ticdc watcher will
@@ -164,6 +170,7 @@ func (m *Manager) Run(ctx context.Context) error {
 				}
 				return true
 			})
+			m.updateMetricsOnce()
 		}
 	}
 }
@@ -363,4 +370,10 @@ func (m *Manager) dispatcherMaintainerMessage(
 		})
 	}
 	return nil
+}
+
+func (m *Manager) updateMetricsOnce() {
+	dsMetrics := m.stream.GetMetrics()
+	metricsDSInputChanLen.Set(float64(dsMetrics.EventChanSize))
+	metricsDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 }

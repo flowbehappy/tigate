@@ -11,7 +11,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/eventpb"
 	"github.com/pingcap/ticdc/heartbeatpb"
-	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"go.uber.org/zap"
@@ -65,7 +64,6 @@ const (
 	TypeMaintainerCloseRequest
 	TypeMaintainerCloseResponse
 
-	TypeMessageError
 	TypeMessageHandShake
 )
 
@@ -125,8 +123,6 @@ func (t IOType) String() string {
 		return "MaintainerCloseRequest"
 	case TypeMaintainerCloseResponse:
 		return "MaintainerCloseResponse"
-	case TypeMessageError:
-		return "MessageError"
 	case TypeMessageHandShake:
 		return "MessageHandShake"
 	case TypeCheckpointTsMessage:
@@ -265,8 +261,6 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &heartbeatpb.MaintainerBootstrapRequest{}
 	case TypeCheckpointTsMessage:
 		m = &heartbeatpb.CheckpointTsMessage{}
-	case TypeMessageError:
-		m = &MessageError{AppError: &apperror.AppError{}}
 	default:
 		log.Panic("Unimplemented IOType", zap.Stringer("Type", ioType))
 	}
@@ -336,8 +330,6 @@ func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT, Group ...
 		ioType = TypeCoordinatorBootstrapRequest
 	case *heartbeatpb.HeartBeatResponse:
 		ioType = TypeHeartBeatResponse
-	case *MessageError:
-		ioType = TypeMessageError
 	case *heartbeatpb.MaintainerHeartbeat:
 		ioType = TypeMaintainerHeartbeatRequest
 	case *heartbeatpb.CoordinatorBootstrapResponse:
@@ -381,25 +373,4 @@ func (m *TargetMessage) String() string {
 
 func (m *TargetMessage) GetGroup() uint64 {
 	return m.Group
-}
-
-type MessageError struct {
-	*apperror.AppError
-}
-
-func NewMessageError(err *apperror.AppError) *MessageError {
-	return &MessageError{AppError: err}
-}
-
-func (m *MessageError) Marshal() ([]byte, error) {
-	buf := make([]byte, 58)
-	buf = append(buf, byte(m.Type))
-	buf = append(buf, []byte(m.Reason)...)
-	return buf, nil
-}
-
-func (m *MessageError) Unmarshal(data []byte) error {
-	m.Type = apperror.ErrorType(data[0])
-	m.Reason = string(data[1:])
-	return nil
 }
