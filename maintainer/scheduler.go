@@ -122,7 +122,8 @@ func (s *splitScheduler) Execute() time.Time {
 						zap.String("changefeed", s.changefeedID.Name()),
 						zap.String("span", span.ID.String()),
 						zap.Int("span szie", len(spans)))
-					s.opController.AddOperator(operator.NewSplitDispatcherOperator(s.db, span, span.GetNodeID(), spans))
+					// s.opController.AddOperator(operator.NewSplitDispatcherOperator(s.db, span, span.GetNodeID(), spans))
+					s.opController.AddMergeSplitOperator(ret.Replications, spans)
 				}
 			case pkgReplica.OpMerge:
 				newSpan := spanz.TableIDToComparableSpan(ret.Replications[0].Span.TableID)
