@@ -13,23 +13,23 @@
 
 package replica
 
-// type OpType int
+type OpType int
 
-// const (
-// 	OpSplit         OpType = iota // Split one span to multiple subspans
-// 	OpMerge                       // merge multiple spans to one span
-// 	OpMergeAndSplit               // remove old spans and split to multiple subspans
-// )
+const (
+	OpSplit         OpType = iota // Split one span to multiple subspans
+	OpMerge                       // merge multiple spans to one span
+	OpMergeAndSplit               // remove old spans and split to multiple subspans
+)
 
-// type CheckResult[R Replication] struct {
-// 	OpType       OpType
-// 	Replications []R
-// }
+type CheckResult[T ReplicationID, R Replication[T]] struct {
+	OpType       OpType
+	Replications []R
+}
 
-// type Checker[R Replication, S any] interface {
-// 	UpdateStatus(replication R, status S)
-// 	Check() []CheckResult[R]
-// }
+type Checker[T ReplicationID, R Replication[T], S any] interface {
+	UpdateStatus(replication R, status S)
+	Check() []CheckResult[T, R]
+}
 
 // define the check strategy
 // soft/hard threadhold

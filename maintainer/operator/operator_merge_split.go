@@ -38,7 +38,7 @@ type MergeSplitDispatcherOperator struct {
 
 	primary             common.DispatcherID
 	affectedReplicaSets []*replica.SpanReplication
-	totalRemoved        int
+	totalRemoved        atomic.Int64
 	splitSpans          []*heartbeatpb.TableSpan
 	splitSpanInfo       string
 
@@ -70,10 +70,13 @@ func NewMergeSplitDispatcherOperator(
 		checkpointTs:        originReplicaSet.GetStatus().GetCheckpointTs(),
 		primary:             primary,
 		affectedReplicaSets: affectedReplicaSets,
-		totalRemoved:        0,
+		totalRemoved:        atomic.Int64{},
 		splitSpans:          splitSpans,
 		splitSpanInfo:       spansInfo,
 		onFinished:          onFinished,
+	}
+	if op.primary == originReplicaSet.ID {
+		op.onFinished = op.increaseTotalRemoved
 	}
 	return op
 }
@@ -94,6 +97,10 @@ func (m *MergeSplitDispatcherOperator) OnNodeRemove(n node.ID) {
 			zap.String("replicaSet", m.originReplicaSet.ID.String()))
 		m.markFinished()
 	}
+}
+
+func (m *MergeSplitDispatcherOperator) increaseTotalRemoved() {
+	m.totalRemoved.Add(1)
 }
 
 func (m *MergeSplitDispatcherOperator) markFinished() {
@@ -117,7 +124,7 @@ func (m *MergeSplitDispatcherOperator) IsFinished() bool {
 	if m.originReplicaSet.ID == m.primary {
 		// primary operator wait for all affected replica sets to be removed, since it
 		// is responsible for relpace them with new spans.
-		return m.finished.Load() && m.totalRemoved == len(m.affectedReplicaSets)
+		return m.finished.Load() && int(m.totalRemoved.Load()) == len(m.affectedReplicaSets)
 	}
 	return m.finished.Load()
 }

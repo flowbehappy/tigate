@@ -18,12 +18,15 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/maintainer/split"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/scheduler"
+	pkgReplica "github.com/pingcap/ticdc/pkg/scheduler/replica"
 	"github.com/pingcap/ticdc/server/watcher"
+	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
 )
 
@@ -58,7 +61,7 @@ type splitScheduler struct {
 	checkInterval time.Duration
 	lastCheckTime time.Time
 
-	cachedSpans []*replica.HotSpan
+	batchSize int
 }
 
 func newSplitScheduler(
@@ -66,13 +69,12 @@ func newSplitScheduler(
 	oc *operator.Controller, db *replica.ReplicationDB, nodeManager *watcher.NodeManager,
 ) *splitScheduler {
 	return &splitScheduler{
-		changefeedID: changefeedID,
-		splitter:     splitter,
-		opController: oc,
-		db:           db,
-		nodeManager:  nodeManager,
-		cachedSpans:  make([]*replica.HotSpan, batchSize),
-
+		changefeedID:  changefeedID,
+		splitter:      splitter,
+		opController:  oc,
+		db:            db,
+		nodeManager:   nodeManager,
+		batchSize:     batchSize,
 		maxCheckTime:  time.Second * 5,
 		checkInterval: time.Second * 120,
 	}
@@ -89,38 +91,52 @@ func (s *splitScheduler) Execute() time.Time {
 	log.Info("check split status", zap.String("changefeed", s.changefeedID.Name()),
 		zap.String("hotSpans", s.db.GetHotSpanStat()), zap.String("groupDistribution", s.db.GetGroupStat()))
 
-	batch := cap(s.cachedSpans)
+	batch := s.batchSize
 	needBreak := false
 	for _, group := range s.db.GetGroups() {
 		if needBreak || batch <= 0 {
 			break
 		}
 
-		s.cachedSpans = s.cachedSpans[:0]
-		cachedSpans := s.db.GetHotSpansByGroup(group, s.cachedSpans)
-		batch -= len(cachedSpans)
+		checkResults := s.db.GetHotSpansByGroup(group, s.batchSize)
+		toClearSpans := make([]*replica.SpanReplication, 0, len(checkResults))
+		batch -= len(checkResults)
 
 		checkedIndex, start := 0, time.Now()
-		for ; checkedIndex < len(cachedSpans); checkedIndex++ {
+		for ; checkedIndex < len(checkResults); checkedIndex++ {
 			if time.Since(start) > s.maxCheckTime {
 				needBreak = true
 				break
 			}
-			span := cachedSpans[checkedIndex]
-			if s.db.GetTaskByID(span.ID) == nil {
-				continue
-			}
-			spans := s.splitter.SplitSpans(context.Background(), span.Span, len(s.nodeManager.GetAliveNodes()), int(span.HintMaxSpanNum))
-			if len(spans) > 1 {
-				log.Info("split span",
-					zap.String("changefeed", s.changefeedID.Name()),
-					zap.String("span", span.ID.String()),
-					zap.Int("span szie", len(spans)))
-				s.opController.AddOperator(operator.NewSplitDispatcherOperator(s.db, span.SpanReplication, span.GetNodeID(), spans))
+			ret := checkResults[checkedIndex]
+			toClearSpans = append(toClearSpans, ret.Replications...)
+			switch ret.OpType {
+			case pkgReplica.OpSplit:
+				span := ret.Replications[0]
+				if s.db.GetTaskByID(span.ID) == nil {
+					continue
+				}
+				spans := s.splitter.SplitSpans(context.Background(), span.Span, len(s.nodeManager.GetAliveNodes()), 0)
+				if len(spans) > 1 {
+					log.Info("split span",
+						zap.String("changefeed", s.changefeedID.Name()),
+						zap.String("span", span.ID.String()),
+						zap.Int("span szie", len(spans)))
+					s.opController.AddOperator(operator.NewSplitDispatcherOperator(s.db, span, span.GetNodeID(), spans))
+				}
+			case pkgReplica.OpMerge:
+				newSpan := spanz.TableIDToComparableSpan(ret.Replications[0].Span.TableID)
+				s.opController.AddMergeSplitOperator(ret.Replications, []*heartbeatpb.TableSpan{
+					{
+						TableID:  newSpan.TableID,
+						StartKey: newSpan.StartKey,
+						EndKey:   newSpan.EndKey,
+					},
+				})
 			}
 		}
 		s.lastCheckTime = time.Now()
-		s.db.ClearHotSpansByGroup(group, cachedSpans[:checkedIndex]...)
+		s.db.ClearHotSpansByGroup(group, toClearSpans...)
 	}
 	return s.lastCheckTime.Add(s.checkInterval)
 }

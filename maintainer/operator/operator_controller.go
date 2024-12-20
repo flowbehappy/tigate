@@ -15,6 +15,7 @@ package operator
 
 import (
 	"container/heap"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -300,4 +301,41 @@ func (oc *Controller) NewSplitOperator(
 	replicaSet *replica.SpanReplication, originNode node.ID, splitSpans []*heartbeatpb.TableSpan,
 ) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
 	return NewSplitDispatcherOperator(oc.replicationDB, replicaSet, originNode, splitSpans)
+}
+
+func (oc *Controller) AddMergeSplitOperator(
+	affectedReplicaSets []*replica.SpanReplication,
+	splitSpans []*heartbeatpb.TableSpan,
+) bool {
+	oc.lock.Lock()
+	defer oc.lock.Unlock()
+	for _, replicaSet := range affectedReplicaSets {
+		if _, ok := oc.operators[replicaSet.ID]; ok {
+			log.Info("add operator failed, operator already exists",
+				zap.String("changefeed", oc.changefeedID.Name()),
+				zap.String("dispatcherID", replicaSet.ID.String()),
+			)
+			return false
+		}
+		span := oc.replicationDB.GetTaskByID(replicaSet.ID)
+		if span == nil {
+			log.Warn("add operator failed, span not found",
+				zap.String("changefeed", oc.changefeedID.Name()),
+				zap.String("dispatcherID", replicaSet.ID.String()))
+			return false
+		}
+	}
+	randomIdx := rand.Intn(len(affectedReplicaSets))
+	primaryID := affectedReplicaSets[randomIdx].ID
+	primaryOp := NewMergeSplitDispatcherOperator(oc.replicationDB, primaryID, affectedReplicaSets[randomIdx], affectedReplicaSets, splitSpans, nil)
+	for _, replicaSet := range affectedReplicaSets {
+		var op *MergeSplitDispatcherOperator
+		if replicaSet.ID == primaryID {
+			op = primaryOp
+		} else {
+			op = NewMergeSplitDispatcherOperator(oc.replicationDB, primaryID, replicaSet, nil, nil, primaryOp.onFinished)
+		}
+		oc.pushOperator(op)
+	}
+	return true
 }
