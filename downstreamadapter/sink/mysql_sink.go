@@ -191,7 +191,7 @@ func (s *MysqlSink) Close(removeChangefeed bool) error {
 func MysqlSinkForTest() (*MysqlSink, sqlmock.Sqlmock) {
 	db, mock, _ := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 	ctx := context.Background()
-	changefeedID := common.ChangefeedID4Test("test", "test")
+	changefeedID := common.NewChangefeedID4Test("test", "test")
 	cfg := mysql.NewMysqlConfig()
 	cfg.DMLMaxRetry = 1
 	cfg.MaxAllowedPacket = int64(variable.DefMaxAllowedPacket)

@@ -295,7 +295,6 @@ var count atomic.Int64
 
 func (ti *TableInfo) InitPrivateFields() {
 	if ti == nil {
-		log.Info("fizz nil")
 		return
 	}
 
@@ -308,8 +307,6 @@ func (ti *TableInfo) InitPrivateFields() {
 	ti.preSQLs.m[preSQLReplace] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLReplace], ti.TableName.QuoteString())
 	ti.preSQLs.m[preSQLUpdate] = fmt.Sprintf(ti.columnSchema.PreSQLs[preSQLUpdate], ti.TableName.QuoteString())
 	ti.preSQLs.isInitialized.Store(true)
-
-	log.Info("fizz: init private fields", zap.String("tableName", ti.TableName.Table), zap.Int64("count", count.Add(1)))
 }
 
 func (ti *TableInfo) Marshal() ([]byte, error) {

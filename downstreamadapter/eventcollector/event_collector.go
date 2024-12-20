@@ -337,7 +337,7 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 	// If the message is a log service event, we need to forward it to the
 	// corresponding channel to handle it in multi-thread.
 	if slices.Contains(messaging.LogServiceEventTypes, targetMessage.Type) {
-		c.receiveChannels[targetMessage.Group%uint64(len(c.receiveChannels))] <- targetMessage
+		c.receiveChannels[targetMessage.GetGroup()%uint64(len(c.receiveChannels))] <- targetMessage
 		return nil
 	}
 

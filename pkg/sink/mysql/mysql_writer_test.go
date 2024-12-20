@@ -22,7 +22,7 @@ func newTestMysqlWriter(t *testing.T) (*MysqlWriter, *sql.DB, sqlmock.Sqlmock) {
 		MaxAllowedPacket:   int64(variable.DefMaxAllowedPacket),
 		SyncPointRetention: time.Duration(100 * time.Second),
 	}
-	changefeedID := common.ChangefeedID4Test("test", "test")
+	changefeedID := common.NewChangefeedID4Test("test", "test")
 	statistics := metrics.NewStatistics(changefeedID, "mysqlSink")
 	writer := NewMysqlWriter(ctx, db, cfg, changefeedID, statistics)
 

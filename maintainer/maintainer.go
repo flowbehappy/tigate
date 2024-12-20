@@ -310,6 +310,8 @@ func (m *Maintainer) initialize() error {
 func (m *Maintainer) cleanupMetrics() {
 	metrics.ChangefeedCheckpointTsGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())
 	metrics.ChangefeedCheckpointTsLagGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())
+	metrics.ChangefeedResolvedTsGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())
+	metrics.ChangefeedResolvedTsLagGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())
 	metrics.ChangefeedStatusGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())
 	metrics.ScheduleTaskGuage.DeleteLabelValues(m.id.Namespace(), m.id.Name())
 	metrics.RunningScheduleTaskGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())

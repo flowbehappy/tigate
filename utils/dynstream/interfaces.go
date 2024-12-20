@@ -184,7 +184,7 @@ type Option struct {
 	ReportInterval    time.Duration // The interval of reporting the status of stream, the status is used by the scheduler.
 
 	StreamCount int // The count of streams. I.e. the count of goroutines to handle events. By default 0, means runtime.NumCPU().
-	BatchCount  int // The batch count of handling events. <= 1 means no batch. By default 1.
+	BatchCount  int // The batch size of handling events. <= 1 means no batch. By default 1.
 	BatchBytes  int // The max bytes of the batch. <= 1 means no limit. By default 0.
 
 	EnableMemoryControl bool // Enable the memory control. By default false.
@@ -254,8 +254,7 @@ func NewDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](ha
 	if len(option) > 0 {
 		opt = option[0]
 	}
-	opt.StreamCount = 1
-	return newParallelDynamicStream(func(path P) uint64 { return 0 }, handler, opt)
+	return newDynamicStreamImpl(handler, opt)
 }
 
 func NewParallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](hasher PathHasher[P], handler H, option ...Option) DynamicStream[A, P, T, D, H] {

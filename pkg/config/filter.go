@@ -24,6 +24,14 @@ type FilterConfig struct {
 	EventFilters     []*EventFilterRule `toml:"event-filters" json:"event-filters"`
 }
 
+func NewDefaultFilterConfig() *FilterConfig {
+	return &FilterConfig{
+		Rules:            []string{"*.*"},
+		IgnoreTxnStartTs: []uint64{},
+		EventFilters:     []*EventFilterRule{},
+	}
+}
+
 // EventFilterRule is used by sql event filter and expression filter
 type EventFilterRule struct {
 	Matcher     []string       `toml:"matcher" json:"matcher"`
