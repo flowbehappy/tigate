@@ -37,6 +37,11 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	metricsDSInputChanLen    = metrics.DynamicStreamEventChanSize.WithLabelValues("coordinator")
+	metricsDSPendingQueueLen = metrics.DynamicStreamPendingQueueLen.WithLabelValues("coordinator")
+)
+
 // coordinator implements the Coordinator interface
 type coordinator struct {
 	nodeInfo     *node.Info
@@ -123,6 +128,9 @@ func (c *coordinator) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	defer gcTick.Stop()
+	updateMetricsTicker := time.NewTicker(time.Second * 1)
+	defer updateMetricsTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -143,6 +151,8 @@ func (c *coordinator) Run(ctx context.Context) error {
 			if err := c.handleStateChangedEvent(ctx, event); err != nil {
 				return errors.Trace(err)
 			}
+		case <-updateMetricsTicker.C:
+			c.updateMetricsOnce()
 		}
 	}
 }
@@ -281,4 +291,10 @@ func (c *coordinator) updateGCSafepoint(
 	gcSafepointUpperBound := minCheckpointTs - 1
 	err := c.gcManager.TryUpdateGCSafePoint(ctx, gcSafepointUpperBound, false)
 	return errors.Trace(err)
+}
+
+func (c *coordinator) updateMetricsOnce() {
+	dsMetrics := c.stream.GetMetrics()
+	metricsDSInputChanLen.Set(float64(dsMetrics.EventChanSize))
+	metricsDSPendingQueueLen.Set(float64(dsMetrics.PendingQueueLen))
 }
