@@ -25,7 +25,7 @@ function run() {
 
 	run_cdc_server --workdir $WORK_DIR --binary $CDC_BINARY --logsuffix 1
 	# wait for cdc run
-	ensure $MAX_RETRIES "$CDC_BINARY cli capture list 2>&1 | grep '\"is-owner\": true'"
+	ensure $MAX_RETRIES "$CDC_BINARY cli capture list 2>&1 | grep '\"is_coordinator\": true'"
 	owner_pid=$(ps -C $CDC_BINARY -o pid= | awk '{print $1}')
 	owner_id=$($CDC_BINARY cli capture list 2>&1 | awk -F '"' '/id/{print $4}')
 	echo "owner pid:" $owner_pid
@@ -67,7 +67,7 @@ function run() {
 	# kill the cdc owner server
 	kill_cdc_pid $owner_pid
 	# check that the new owner is elected
-	ensure $MAX_RETRIES "$CDC_BINARY cli capture list --server http://127.0.0.1:8301 2>&1 |grep $capture_id -A1 | grep '\"is-owner\": true'"
+	ensure $MAX_RETRIES "$CDC_BINARY cli capture list --server http://127.0.0.1:8301 2>&1 |grep $capture_id -A1 | grep '\"is_coordinator\": true'"
 	# restart the old owner capture
 	run_cdc_server --workdir $WORK_DIR --binary $CDC_BINARY
 	ensure $MAX_RETRIES "$CDC_BINARY cli capture list 2>&1 | grep '\"address\": \"127.0.0.1:8300\"'"
