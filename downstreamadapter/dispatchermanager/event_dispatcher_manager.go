@@ -99,7 +99,7 @@ type EventDispatcherManager struct {
 	// when we get the error, we will report the error to the maintainer
 	errCh chan error
 
-	closing bool
+	closing atomic.Bool
 	closed  atomic.Bool
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
@@ -211,8 +211,8 @@ func (e *EventDispatcherManager) initSink(ctx context.Context) error {
 }
 
 func (e *EventDispatcherManager) TryClose(removeChangefeed bool) bool {
-	if !e.closing {
-		e.closing = true
+	if !e.closing.Load() {
+		e.closing.Store(true)
 		go e.close(removeChangefeed)
 	}
 	return e.closed.Load()
@@ -611,8 +611,11 @@ func (e *EventDispatcherManager) aggregateDispatcherHeartbeats(needCompleteStatu
 	message.Watermark.Seq = seq
 	e.latestWatermark.Set(message.Watermark)
 
-	for idx, id := range toRemoveDispatcherIDs {
-		e.cleanDispatcher(id, removedDispatcherSchemaIDs[idx])
+	// if the event dispatcher manager is closing, we don't to remove the stopped dispatchers.
+	if !e.closing.Load() {
+		for idx, id := range toRemoveDispatcherIDs {
+			e.cleanDispatcher(id, removedDispatcherSchemaIDs[idx])
+		}
 	}
 
 	e.metricCheckpointTs.Set(float64(message.Watermark.CheckpointTs))
