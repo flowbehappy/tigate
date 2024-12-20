@@ -426,7 +426,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			return false
 		}
 		if _, ok := si.pathMap[pi]; !ok {
-			log.Panic("The path should exist in the stream", zap.Any("path", pi.path), zap.Any("stream", si.stream.id))
+			log.Warn("The path should exist in the stream", zap.Any("path", pi.path), zap.Any("stream", si.stream.id))
 		}
 		delete(si.pathMap, pi)
 		return true
