@@ -19,7 +19,26 @@ import (
 	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 )
 
-type Controller[T replica.ReplicationID, S any] interface {
+// type OpType int
+
+// const (
+// 	OpAdd           OpType = iota // Add a new task
+// 	OpStop                        // Stop a task
+// 	OpRemove                      // Remove a task
+// 	OpMove                        // Move a task to another node
+// 	OpSplit                       // Split one task to multiple subtasks
+// 	OpMerge                       // merge multiple tasks to one task
+// 	OpMergeAndSplit               // remove old tasks and split to multiple subtasks
+// )
+
+// type OpOption[T replica.ReplicationID, R replica.Replication[T]] struct {
+// 	OpType         OpType
+// 	Source         node.ID
+// 	Target         node.ID
+// 	OriginReplicas []R
+// }
+
+type Controller[T replica.ReplicationID, S replica.ReplicationStatus] interface {
 	// AddOperator adds an operator to the controller
 	AddOperator(op Operator[T, S]) bool
 	// GetOperator gets an operator by ID
@@ -31,7 +50,7 @@ type Controller[T replica.ReplicationID, S any] interface {
 // Operator is the interface for the coordinator schedule maintainer
 // operator thread run Start -> Schedule -> PostFinish
 // Check, OnNodeRemove and OnTaskRemoved is called by the other thread when some event is triggered
-type Operator[T replica.ReplicationID, S any] interface {
+type Operator[T replica.ReplicationID, S replica.ReplicationStatus] interface {
 	// ID returns the ID
 	ID() T
 	// Type returns the operator type

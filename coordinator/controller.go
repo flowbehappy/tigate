@@ -40,27 +40,29 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller schedules and balance changefeeds
-// there are 3 main components in the controller, scheduler, ChangefeedDB and operator controller
+// Controller schedules and balance changefeeds, there are 3 main components:
+//  1. scheduler: generate operators for handling different scheduling tasks.
+//  2. operatorController: manage all operators and execute them periodically.
+//  3. changefeedDB: store all changefeeds info and their status in memory.
+//  4. backend: the durable storage for storing changefeed metadata.
 type Controller struct {
-	bootstrapped *atomic.Bool
-	version      int64
+	version int64
 
-	nodeChanged *atomic.Bool
-
-	cfScheduler        *scheduler.Controller
+	scheduler          *scheduler.Controller
 	operatorController *operator.Controller
 	changefeedDB       *changefeed.ChangefeedDB
-	messageCenter      messaging.MessageCenter
-	nodeManager        *watcher.NodeManager
-	batchSize          int
+	backend            changefeed.Backend
 
+	bootstrapped *atomic.Bool
 	bootstrapper *bootstrap.Bootstrapper[heartbeatpb.CoordinatorBootstrapResponse]
+
+	nodeChanged *atomic.Bool
+	nodeManager *watcher.NodeManager
 
 	stream        dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
 	taskHandlers  []*threadpool.TaskHandle
-	backend       changefeed.Backend
+	messageCenter messaging.MessageCenter
 
 	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed
 	stateChangedCh      chan *ChangefeedStateChangeEvent
@@ -92,9 +94,8 @@ func NewController(
 	oc := operator.NewOperatorController(mc, selfNode, changefeedDB, backend, nodeManager, batchSize)
 	c := &Controller{
 		version:      version,
-		batchSize:    batchSize,
 		bootstrapped: atomic.NewBool(false),
-		cfScheduler: scheduler.NewController(map[string]scheduler.Scheduler{
+		scheduler: scheduler.NewController(map[string]scheduler.Scheduler{
 			scheduler.BasicScheduler:   scheduler.NewBasicScheduler(selfNode.ID.String(), batchSize, oc, changefeedDB, nodeManager, oc.NewAddMaintainerOperator),
 			scheduler.BalanceScheduler: scheduler.NewBalanceScheduler(selfNode.ID.String(), batchSize, oc, changefeedDB, nodeManager, balanceInterval, oc.NewMoveMaintainerOperator),
 		}),
@@ -358,7 +359,7 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 	}
 
 	// start operator and scheduler
-	c.taskHandlers = append(c.taskHandlers, c.cfScheduler.Start(c.taskScheduler)...)
+	c.taskHandlers = append(c.taskHandlers, c.scheduler.Start(c.taskScheduler)...)
 	operatorControllerHandle := c.taskScheduler.Submit(c.operatorController, time.Now())
 	c.taskHandlers = append(c.taskHandlers, operatorControllerHandle)
 	c.bootstrapped.Store(true)

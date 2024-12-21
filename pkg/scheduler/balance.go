@@ -28,7 +28,7 @@ import (
 )
 
 // balanceScheduler is used to check the balance status of all spans among all nodes
-type balanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] struct {
+type balanceScheduler[T replica.ReplicationID, S replica.ReplicationStatus, R replica.Replication[T]] struct {
 	id        string
 	batchSize int
 
@@ -50,7 +50,7 @@ type balanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] 
 	newMoveOperator func(r R, source, target node.ID) operator.Operator[T, S]
 }
 
-func NewBalanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]](
+func NewBalanceScheduler[T replica.ReplicationID, S replica.ReplicationStatus, R replica.Replication[T]](
 	id string, batchSize int,
 	oc operator.Controller[T, S], db replica.ScheduleGroup[T, R],
 	nodeManager *watcher.NodeManager, balanceInterval time.Duration,
@@ -92,7 +92,7 @@ func (s *balanceScheduler[T, S, R]) Execute() time.Time {
 }
 
 func (s *balanceScheduler[T, S, R]) schedulerGroup(nodes map[node.ID]*node.Info) int {
-	batch, moved := s.batchSize, 0
+	availableSize, totalMoved := s.batchSize, 0
 	for _, group := range s.db.GetGroups() {
 		// fast path, check the balance status
 		moveSize := CheckBalanceStatus(s.db.GetTaskSizePerNodeByGroup(group), nodes)
@@ -101,12 +101,14 @@ func (s *balanceScheduler[T, S, R]) schedulerGroup(nodes map[node.ID]*node.Info)
 			continue
 		}
 		replicas := s.db.GetReplicatingByGroup(group)
-		moved += Balance(batch, s.random, nodes, replicas, s.doMove)
-		if moved >= batch {
+		moveSize = Balance(availableSize, s.random, nodes, replicas, s.doMove)
+		totalMoved += moveSize
+		if totalMoved >= s.batchSize {
 			break
 		}
+		availableSize -= moveSize
 	}
-	return moved
+	return totalMoved
 }
 
 // TODO: refactor and simplify the implementation and limit max group size
@@ -136,37 +138,39 @@ func (s *balanceScheduler[T, S, R]) schedulerGlobal(nodes map[node.ID]*node.Info
 		}
 	}
 	lowerLimitPerNode := int(math.Floor(float64(totalTasks) / float64(len(nodes))))
-	limitCnt := 0
-	for _, size := range sizePerNode {
-		if size == lowerLimitPerNode {
-			limitCnt++
-		}
-	}
-	if limitCnt == len(nodes) {
-		// all nodes are global balanced
+
+	// fast path check again
+	moveSize = CheckBalanceStatus(sizePerNode, nodes)
+	if moveSize <= 0 {
+		// no need to do the balance, skip
 		return 0
 	}
 
 	moved := 0
 	for _, nodeTasks := range groupNodetasks {
-		availableNodes, victims, next := []node.ID{}, []node.ID{}, 0
+		availableNodes, victims, nextVictim := []node.ID{}, []node.ID{}, 0
 		for id, task := range nodeTasks {
 			if task != zero && sizePerNode[id] > lowerLimitPerNode {
 				victims = append(victims, id)
 			} else if task == zero && sizePerNode[id] < lowerLimitPerNode {
+				// Notice: do not handle equal case (sizePerNode[id] == lowerLimitPerNode).
+				// Otherwise, it will trigger unnecessary and infinite global balance.
+				// For example,
+				// 			Node A: 1, Node B: 1, Node C: 0, lowerLimitPerNode = 1
+				// If Node C is recorded as a available node, a meaningless global balance will be triggered.
 				availableNodes = append(availableNodes, id)
 			}
 		}
 
-		for _, new := range availableNodes {
-			if next >= len(victims) {
+		for _, target := range availableNodes {
+			if nextVictim >= len(victims) {
 				break
 			}
-			old := victims[next]
-			if s.doMove(nodeTasks[old], new) {
-				sizePerNode[old]--
-				sizePerNode[new]++
-				next++
+			victim := victims[nextVictim]
+			if s.doMove(nodeTasks[victim], target) {
+				sizePerNode[victim]--
+				sizePerNode[target]++
+				nextVictim++
 				moved++
 			}
 		}
@@ -217,12 +221,12 @@ func Balance[T replica.ReplicationID, R replica.Replication[T]](
 	replicating []R, move func(R, node.ID) bool,
 ) (movedSize int) {
 	nodeTasks := make(map[node.ID][]R)
-	for _, cf := range replicating {
-		nodeID := cf.GetNodeID()
+	for _, task := range replicating {
+		nodeID := task.GetNodeID()
 		if _, ok := nodeTasks[nodeID]; !ok {
 			nodeTasks[nodeID] = make([]R, 0)
 		}
-		nodeTasks[nodeID] = append(nodeTasks[nodeID], cf)
+		nodeTasks[nodeID] = append(nodeTasks[nodeID], task)
 	}
 
 	absentNodeCnt := 0

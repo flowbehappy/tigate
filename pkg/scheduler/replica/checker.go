@@ -13,24 +13,45 @@
 
 package replica
 
-// type OpType int
+import "github.com/pingcap/ticdc/pkg/node"
 
-// const (
-// 	OpSplit         OpType = iota // Split one span to multiple subspans
-// 	OpMerge                       // merge multiple spans to one span
-// 	OpMergeAndSplit               // remove old spans and split to multiple subspans
-// )
+type OpType int
 
-// type CheckResult[R Replication] struct {
-// 	OpType       OpType
-// 	Replications []R
-// }
+const (
+	OpSplit         OpType = iota // Split one span to multiple subspans
+	OpMerge                       // merge multiple spans to one span
+	OpMergeAndSplit               // remove old spans and split to multiple subspans
+)
 
-// type Checker[R Replication, S any] interface {
-// 	UpdateStatus(replication R, status S)
-// 	Check() []CheckResult[R]
-// }
+type CheckResult[T ReplicationID, R Replication[T]] struct {
+	OpType       OpType
+	Replications []R
+}
 
-// define the check strategy
-// soft/hard threadhold
-// split/merge/mergeAndSplit result
+type Checker[T ReplicationID, R Replication[T], S any] interface {
+	UpdateStatus(replication R, status S)
+	Check() []CheckResult[T, R]
+}
+
+type GroupCheckResult any
+type ReplicationStatus any
+
+type StatusChecker[T ReplicationID, R Replication[T], S ReplicationStatus, C GroupCheckResult] interface {
+	AddReplica(replication R)
+	RemoveReplica(replication R)
+	UpdateStatus(replication R, status S)
+	Check(nodes map[node.ID]*node.Info) []C
+}
+
+// implement a empty status checker
+type EmptyStatusChecker[T ReplicationID, R Replication[T], S ReplicationStatus] struct{}
+
+func (c *EmptyStatusChecker[T, R, S]) AddReplica(replication R) {}
+
+func (c *EmptyStatusChecker[T, R, S]) RemoveReplica(replication R) {}
+
+func (c *EmptyStatusChecker[T, R, S]) UpdateStatus(replication R, status S) {}
+
+func (c *EmptyStatusChecker[T, R, S]) Check(nodes map[node.ID]*node.Info) []GroupCheckResult {
+	return nil
+}

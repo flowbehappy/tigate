@@ -78,15 +78,10 @@ func (s *hotSpans) getOrCreateGroup(groupID replica.GroupID) map[common.Dispatch
 	return group
 }
 
-func (s *hotSpans) getBatchByGroup(groupID replica.GroupID, cache []*HotSpan) []*HotSpan {
-	batchSize := cap(cache)
-	if batchSize == 0 {
-		batchSize = 1024
-		cache = make([]*HotSpan, batchSize)
-	}
-	cache = cache[:0]
+func (s *hotSpans) getBatchByGroup(groupID replica.GroupID, batchSize int) []replica.CheckResult[common.DispatcherID, *SpanReplication] {
+	cache := make([]replica.CheckResult[common.DispatcherID, *SpanReplication], 0, batchSize)
 
-	outdatedSpans := make([]*HotSpan, 0)
+	outdatedSpans := make([]*SpanReplication, 0)
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	hotSpanCache := s.getOrCreateGroup(groupID)
@@ -106,15 +101,34 @@ func (s *hotSpans) getBatchByGroup(groupID replica.GroupID, cache []*HotSpan) []
 
 	for _, span := range hotSpanCache {
 		if time.Since(span.lastUpdateTime) > clearTimeout*time.Second {
-			outdatedSpans = append(outdatedSpans, span)
+			outdatedSpans = append(outdatedSpans, span.SpanReplication)
 		} else if span.score >= HotSpanScoreThreshold {
-			cache = append(cache, span)
+			cache = append(cache, replica.CheckResult[common.DispatcherID, *SpanReplication]{
+				OpType:       replica.OpSplit,
+				Replications: []*SpanReplication{span.SpanReplication},
+			})
 			if len(cache) >= batchSize {
 				break
 			}
 		}
 	}
 	s.doClear(groupID, outdatedSpans...)
+
+	if len(cache) == 0 && groupID != replica.DefaultGroupID && len(hotSpanCache) > 0 {
+		// maybe merge all spans
+		totalEventSizePerSecond := float32(0)
+		result := replica.CheckResult[common.DispatcherID, *SpanReplication]{
+			OpType:       replica.OpMerge,
+			Replications: make([]*SpanReplication, 0, len(hotSpanCache)),
+		}
+		for _, span := range hotSpanCache {
+			totalEventSizePerSecond += span.GetStatus().EventSizePerSecond
+			result.Replications = append(result.Replications, span.SpanReplication)
+		}
+		if totalEventSizePerSecond < HotSpanWriteThreshold {
+			cache = append(cache, result)
+		}
+	}
 	return cache
 }
 
@@ -154,7 +168,7 @@ func (s *hotSpans) updateHotSpan(span *SpanReplication, status *heartbeatpb.Tabl
 	}
 }
 
-func (s *hotSpans) clearHotSpansByGroup(groupID replica.GroupID, spans ...*HotSpan) {
+func (s *hotSpans) clearHotSpansByGroup(groupID replica.GroupID, spans ...*SpanReplication) {
 	// extract needClear method to simply the clear behavior
 	if groupID != replica.DefaultGroupID {
 		return
@@ -164,15 +178,11 @@ func (s *hotSpans) clearHotSpansByGroup(groupID replica.GroupID, spans ...*HotSp
 	s.doClear(groupID, spans...)
 }
 
-func (s *hotSpans) doClear(groupID replica.GroupID, spans ...*HotSpan) {
+func (s *hotSpans) doClear(groupID replica.GroupID, spans ...*SpanReplication) {
 	log.Info("clear hot spans", zap.String("group", replica.GetGroupName(groupID)), zap.Int("count", len(spans)))
 	hotSpanCache := s.getOrCreateGroup(groupID)
 	for _, span := range spans {
-		if groupID == replica.DefaultGroupID {
-			delete(hotSpanCache, span.ID)
-		} else {
-			span.score = 0
-		}
+		delete(hotSpanCache, span.ID)
 	}
 }
 
@@ -219,12 +229,12 @@ func (db *ReplicationDB) UpdateHotSpan(span *SpanReplication, status *heartbeatp
 	db.hotSpans.updateHotSpan(span, status)
 }
 
-func (db *ReplicationDB) ClearHotSpansByGroup(groupID replica.GroupID, spans ...*HotSpan) {
+func (db *ReplicationDB) ClearHotSpansByGroup(groupID replica.GroupID, spans ...*SpanReplication) {
 	db.hotSpans.clearHotSpansByGroup(groupID, spans...)
 }
 
-func (db *ReplicationDB) GetHotSpansByGroup(groupID replica.GroupID, cache []*HotSpan) []*HotSpan {
-	return db.hotSpans.getBatchByGroup(groupID, cache)
+func (db *ReplicationDB) GetHotSpansByGroup(groupID replica.GroupID, batchSize int) []replica.CheckResult[common.DispatcherID, *SpanReplication] {
+	return db.hotSpans.getBatchByGroup(groupID, batchSize)
 }
 
 func (db *ReplicationDB) GetHotSpanStat() string {

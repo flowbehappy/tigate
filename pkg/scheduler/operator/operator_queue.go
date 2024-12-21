@@ -20,18 +20,18 @@ import (
 	"github.com/pingcap/ticdc/pkg/scheduler/replica"
 )
 
-type OperatorWithTime[T replica.ReplicationID, S any] struct {
+type OperatorWithTime[T replica.ReplicationID, S replica.ReplicationStatus] struct {
 	OP          Operator[T, S]
 	Time        time.Time
 	EnqueueTime time.Time
 	Removed     bool
 }
 
-func NewOperatorWithTime[T replica.ReplicationID, S any](op Operator[T, S], time time.Time) *OperatorWithTime[T, S] {
+func NewOperatorWithTime[T replica.ReplicationID, S replica.ReplicationStatus](op Operator[T, S], time time.Time) *OperatorWithTime[T, S] {
 	return &OperatorWithTime[T, S]{OP: op, Time: time, EnqueueTime: time}
 }
 
-type OperatorQueue[T replica.ReplicationID, S any] []*OperatorWithTime[T, S]
+type OperatorQueue[T replica.ReplicationID, S replica.ReplicationStatus] []*OperatorWithTime[T, S]
 
 func (opn OperatorQueue[T, S]) Len() int { return len(opn) }
 

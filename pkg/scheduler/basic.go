@@ -27,7 +27,7 @@ import (
 // basicScheduler generates operators for the spans, and push them to the operator controller
 // it generates add operator for the absent spans, and move operator for the unbalanced replicating spans
 // currently, it only supports balance the spans by size
-type basicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] struct {
+type basicScheduler[T replica.ReplicationID, S replica.ReplicationStatus, R replica.Replication[T]] struct {
 	id        string
 	batchSize int
 
@@ -39,14 +39,14 @@ type basicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] st
 	newAddOperator func(r R, target node.ID) operator.Operator[T, S] // scheduler r to target node
 }
 
-func NewBasicScheduler[T replica.ReplicationID, S any, R replica.Replication[T]](
-	changefeedID string, batchSize int,
+func NewBasicScheduler[T replica.ReplicationID, S replica.ReplicationStatus, R replica.Replication[T]](
+	id string, batchSize int,
 	oc operator.Controller[T, S], db replica.ScheduleGroup[T, R],
 	nodeManager *watcher.NodeManager,
 	newAddOperator func(R, node.ID) operator.Operator[T, S],
 ) *basicScheduler[T, S, R] {
 	return &basicScheduler[T, S, R]{
-		id:                 changefeedID,
+		id:                 id,
 		batchSize:          batchSize,
 		operatorController: oc,
 		db:                 db,
