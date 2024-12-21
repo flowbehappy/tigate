@@ -13,6 +13,8 @@
 
 package replica
 
+import "github.com/pingcap/ticdc/pkg/node"
+
 type OpType int
 
 const (
@@ -31,6 +33,25 @@ type Checker[T ReplicationID, R Replication[T], S any] interface {
 	Check() []CheckResult[T, R]
 }
 
-// define the check strategy
-// soft/hard threadhold
-// split/merge/mergeAndSplit result
+type GroupCheckResult any
+type ReplicationStatus any
+
+type StatusChecker[T ReplicationID, R Replication[T], S ReplicationStatus, C GroupCheckResult] interface {
+	AddReplica(replication R)
+	RemoveReplica(replication R)
+	UpdateStatus(replication R, status S)
+	Check(nodes map[node.ID]*node.Info) []C
+}
+
+// implement a empty status checker
+type EmptyStatusChecker[T ReplicationID, R Replication[T], S ReplicationStatus] struct{}
+
+func (c *EmptyStatusChecker[T, R, S]) AddReplica(replication R) {}
+
+func (c *EmptyStatusChecker[T, R, S]) RemoveReplica(replication R) {}
+
+func (c *EmptyStatusChecker[T, R, S]) UpdateStatus(replication R, status S) {}
+
+func (c *EmptyStatusChecker[T, R, S]) Check(nodes map[node.ID]*node.Info) []GroupCheckResult {
+	return nil
+}

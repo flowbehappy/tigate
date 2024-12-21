@@ -63,6 +63,8 @@ type ScheduleGroup[T ReplicationID, R Replication[T]] interface {
 	GetTaskSizePerNode() map[node.ID]int
 	GetImbalanceGroupNodeTask(nodes map[node.ID]*node.Info) (groups map[GroupID]map[node.ID]R, valid bool)
 	GetTaskSizePerNodeByGroup(groupID GroupID) map[node.ID]int
+
+	GetGroupChecker(groupID GroupID) StatusChecker[T, R, ReplicationStatus, GroupCheckResult]
 }
 
 type ReplicationDB[T ReplicationID, R Replication[T]] interface {
@@ -108,6 +110,13 @@ func (db *replicationDB[T, R]) GetGroups() []GroupID {
 		}
 	})
 	return groups
+}
+
+func (db *replicationDB[T, R]) GetGroupChecker(groupID GroupID) (ret StatusChecker[T, R, ReplicationStatus, GroupCheckResult]) {
+	db.withRLock(func() {
+		ret = db.mustGetGroup(groupID).checker
+	})
+	return
 }
 
 func (db *replicationDB[T, R]) GetAbsent() []R {

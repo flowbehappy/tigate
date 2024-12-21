@@ -114,7 +114,7 @@ func (s *hotSpans) getBatchByGroup(groupID replica.GroupID, batchSize int) []rep
 	}
 	s.doClear(groupID, outdatedSpans...)
 
-	if len(cache) == 0 && groupID != replica.DefaultGroupID {
+	if len(cache) == 0 && groupID != replica.DefaultGroupID && len(hotSpanCache) > 0 {
 		// maybe merge all spans
 		totalEventSizePerSecond := float32(0)
 		result := replica.CheckResult[common.DispatcherID, *SpanReplication]{
@@ -122,7 +122,7 @@ func (s *hotSpans) getBatchByGroup(groupID replica.GroupID, batchSize int) []rep
 			Replications: make([]*SpanReplication, 0, len(hotSpanCache)),
 		}
 		for _, span := range hotSpanCache {
-			totalEventSizePerSecond += span.eventSizePerSecond
+			totalEventSizePerSecond += span.GetStatus().EventSizePerSecond
 			result.Replications = append(result.Replications, span.SpanReplication)
 		}
 		if totalEventSizePerSecond < HotSpanWriteThreshold {
@@ -182,11 +182,7 @@ func (s *hotSpans) doClear(groupID replica.GroupID, spans ...*SpanReplication) {
 	log.Info("clear hot spans", zap.String("group", replica.GetGroupName(groupID)), zap.Int("count", len(spans)))
 	hotSpanCache := s.getOrCreateGroup(groupID)
 	for _, span := range spans {
-		if groupID == replica.DefaultGroupID {
-			delete(hotSpanCache, span.ID)
-		} else {
-			hotSpanCache[span.ID].score = 0
-		}
+		delete(hotSpanCache, span.ID)
 	}
 }
 

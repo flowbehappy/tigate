@@ -28,7 +28,7 @@ import (
 )
 
 // balanceScheduler is used to check the balance status of all spans among all nodes
-type balanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] struct {
+type balanceScheduler[T replica.ReplicationID, S replica.ReplicationStatus, R replica.Replication[T]] struct {
 	id        string
 	batchSize int
 
@@ -50,7 +50,7 @@ type balanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]] 
 	newMoveOperator func(r R, source, target node.ID) operator.Operator[T, S]
 }
 
-func NewBalanceScheduler[T replica.ReplicationID, S any, R replica.Replication[T]](
+func NewBalanceScheduler[T replica.ReplicationID, S replica.ReplicationStatus, R replica.Replication[T]](
 	id string, batchSize int,
 	oc operator.Controller[T, S], db replica.ScheduleGroup[T, R],
 	nodeManager *watcher.NodeManager, balanceInterval time.Duration,
